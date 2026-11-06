@@ -10,3 +10,10 @@ dependencies = [
     "pytest>=9.2.0",
     "uvicorn>=0.54.0",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "native: marks tests that require a compiled native backend",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+addopts = "-m 'not slow'"

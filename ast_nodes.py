@@ -38,6 +38,7 @@ __all__ = [
     "GenericParam",
     "Ident",
     "IfExpr",
+    "IfLet",
     "ImplBlock",
     "Index",
     "Item",
@@ -421,7 +422,15 @@ class StructLiteral(Node):
 class IfExpr(Node):
     cond: Expr
     then_block: Block
-    else_branch: Expr | Block | IfExpr | None
+    else_branch: Expr | Block | IfExpr | IfLet | None
+
+
+@dataclass
+class IfLet(Node):
+    pattern: Pattern
+    value: Expr
+    then_block: Block
+    else_branch: Expr | Block | IfExpr | IfLet | None
 
 
 @dataclass
@@ -518,14 +527,30 @@ class Try(Node):
 class Paren(Node):
     inner: Expr
 
+@dataclass
+class OptionSome(Node):
+    value: Expr
+
+@dataclass
+class OptionNone(Node):
+    pass
+
+@dataclass
+class ResultOk(Node):
+    value: Expr
+
+@dataclass
+class ResultErr(Node):
+    value: Expr
 
 Expr = (
     LitInt | LitFloat | LitStr | LitChar | LitBool
     | Ident | Path | Unary | Binary | Assign | CompoundAssign
     | Call | MethodCall | Field | Index | TupleExpr | ArrayExpr
-    | RepeatArray | StructLiteral | IfExpr | MatchExpr | Block
+    | RepeatArray | StructLiteral | IfExpr | IfLet | MatchExpr | Block
     | Loop | While | For | Closure | Range | Cast
     | Return | Break | Continue | MacroCall | Await | Try | Paren
+    | OptionSome | OptionNone | ResultOk | ResultErr
 )
 
 

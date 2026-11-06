@@ -176,6 +176,7 @@ def test_pretty_includes_original_and_generated_lines():
     assert generated.splitlines()[rust_line - 1] in pretty
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("source", "expected_message", "source_line"),
     [
@@ -215,9 +216,9 @@ def test_pretty_includes_original_and_generated_lines():
     ],
 )
 def test_native_errors_map_back_to_polyglot_source(
-    tmp_path, source, expected_message, source_line,
+    source, expected_message, source_line,
 ):
-    backend = NativeBackend(cache_dir=tmp_path)
+    backend = NativeBackend()
     program = parse(lex(source))
 
     with pytest.raises(RustCompileError) as raised:

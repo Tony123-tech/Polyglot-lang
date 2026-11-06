@@ -12,6 +12,7 @@ from ast_nodes import (
     PatIdent,
     PatLiteral,
     PatOr,
+    PatPath,
     PatRef,
     PatRest,
     PatSlice,
@@ -22,7 +23,9 @@ from ast_nodes import (
 )
 
 
-def warn_match_issues(match: MatchExpr) -> None:
+def warn_match_issues(
+    match: MatchExpr, *, scrutinee_type: str | None = None,
+) -> None:
     seen_literals: set[tuple[str, object]] = set()
     unreachable_warned = False
     duplicate_warned = False
@@ -52,6 +55,24 @@ def warn_match_issues(match: MatchExpr) -> None:
             seen_literals.add(literal)
         if arm.guard is None and _is_catch_all(arm.pattern):
             catch_all_seen = True
+
+    variants = set().union(
+        *(_pattern_variants(arm.pattern) for arm in match.arms),
+    )
+    if scrutinee_type == "Option" and "None" not in variants:
+        warnings.warn(
+            f"non-exhaustive Option match missing None arm "
+            f"at {match.line}:{match.col}",
+            UserWarning,
+            stacklevel=3,
+        )
+    elif scrutinee_type == "Result" and "Err" not in variants:
+        warnings.warn(
+            f"non-exhaustive Result match missing Err arm "
+            f"at {match.line}:{match.col}",
+            UserWarning,
+            stacklevel=3,
+        )
 
     if isinstance(match.scrutinee, Ident):
         shadow_warned = False
@@ -100,4 +121,18 @@ def _bound_names(pattern: Pattern) -> set[str]:
         return set().union(*(_bound_names(child) for child in pattern.args))
     if isinstance(pattern, PatRest):
         return set()
+    return set()
+
+
+def _pattern_variants(pattern: Pattern) -> set[str]:
+    if isinstance(pattern, PatEnum):
+        return {pattern.path.split("::")[-1]}
+    if isinstance(pattern, PatPath):
+        return {pattern.path.split("::")[-1]}
+    if isinstance(pattern, PatBinding):
+        return _pattern_variants(pattern.inner)
+    if isinstance(pattern, PatOr):
+        return set().union(
+            *(_pattern_variants(alt) for alt in pattern.alts),
+        )
     return set()

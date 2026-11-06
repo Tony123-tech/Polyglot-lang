@@ -60,6 +60,7 @@ from ast_nodes import (
     GenericParam,
     Ident,
     IfExpr,
+    IfLet,
     ImplBlock,
     Index,
     Item,
@@ -76,6 +77,8 @@ from ast_nodes import (
     MatchExpr,
     MethodCall,
     ModDecl,
+    OptionNone,
+    OptionSome,
     Paren,
     PatBinding,
     PatBox,
@@ -98,6 +101,8 @@ from ast_nodes import (
     Program,
     Range,
     RepeatArray,
+    ResultErr,
+    ResultOk,
     Return,
     Stmt,
     StructDecl,
@@ -817,7 +822,7 @@ class Parser:
                 continue
 
             e = self.parse_expr()
-            if self.eat(TokenType.SEMI):
+            if self.eat(TokenType.SEMI) or isinstance(e, IfLet):
                 stmts.append(ExprStmt(e.line, e.col, e))
             elif self.check(TokenType.RBRACE):
                 tail = e
@@ -1053,6 +1058,22 @@ class Parser:
             operand = self.parse_expr(PREFIX_PREC)
             return Await(tok.line, tok.col, operand)
 
+        # Option / Result constructors
+        if tok.type == TokenType.IDENT and tok.value in ("Some", "Ok", "Err") and self.peek(1).type == TokenType.LPAREN:
+            self.advance()
+            self.expect(TokenType.LPAREN)
+            value = self.parse_expr()
+            self.expect(TokenType.RPAREN)
+            cls = {
+                "Some": OptionSome,
+                "Ok": ResultOk,
+                "Err": ResultErr,
+            }[tok.value]
+            return cls(tok.line, tok.col, value)
+
+        if tok.type == TokenType.IDENT and tok.value == "None":
+            self.advance()
+            return OptionNone(tok.line, tok.col)
         # macro: name ! ( ... ) / [ ... ] / { ... }
         if tok.type == TokenType.IDENT and self.peek(1).type == TokenType.BANG:
             name = tok.value
@@ -1216,8 +1237,22 @@ class Parser:
 
     # ---- control flow ------------------------------------------------------
 
-    def parse_if(self) -> IfExpr:
+    def parse_if(self) -> IfExpr | IfLet:
         tok = self.expect(TokenType.IF)
+        if self.eat(TokenType.LET):
+            pattern = self.parse_pattern()
+            self.expect(TokenType.EQ)
+            value = self.parse_expr()
+            then_block = self.parse_block()
+            else_branch: Expr | Block | IfExpr | IfLet | None = None
+            if self.eat(TokenType.ELSE):
+                if self.check(TokenType.IF):
+                    else_branch = self.parse_if()
+                else:
+                    else_branch = self.parse_block()
+            return IfLet(
+                tok.line, tok.col, pattern, value, then_block, else_branch,
+            )
         cond = self.parse_expr()
         then_block = self.parse_block()
         else_branch: Expr | Block | IfExpr | None = None

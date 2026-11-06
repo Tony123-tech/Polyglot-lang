@@ -18,6 +18,7 @@ import importlib.machinery
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -25,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from ast_nodes import Program
-from backends.base import Backend
+from backends.base import BackendBase
 from backends.rust.codegen import RustCodegen
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ _DIAGNOSTIC_START_RE = re.compile(
 # Backend
 # ---------------------------------------------------------------------------
 
-class NativeBackend(Backend):
+class NativeBackend(BackendBase):
     name = "native"
 
     def __init__(
@@ -224,6 +225,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.26", features = ["extension-module"] }
+futures = "0.3"
 """
 
     # ---- load steps --------------------------------------------------------
@@ -262,6 +264,8 @@ def _build_env() -> dict[str, str]:
     env = os.environ.copy()
     env["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1"
     env.setdefault("CARGO_PROFILE_RELEASE_DEBUG", "false")
+    if shutil.which("sccache"):
+        env["RUSTC_WRAPPER"] = "sccache"
     return env
 
 

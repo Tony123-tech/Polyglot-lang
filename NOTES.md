@@ -674,4 +674,56 @@ Shared match diagnostics report the first unreachable arm and first duplicate li
 - Feature 99: `test_error_type_and_message_contract`
 - Feature 100: `test_match_warnings_emitted_once_per_expression`
 
+## N5 test harness restoration
+
+Replaced the malformed `tests/test_native_n5.py` implementation copy with a `SOURCES` module consumed by the session-scoped `native_ns` fixture. All native sources are merged during collection and compiled as one generated extension for the session; every source function is prefixed `n5_`. Added parity coverage for the existing Option predicates/unwrapping and Python-only Result predicates.
+
+- Covered by `tests/test_native_n5.py::test_native_option_methods`, `test_python_option_methods_parity`, and `test_python_result_predicates`.
+- `pytest -q`: 227 passed, 9 skipped.
+
+## N5 batch 5
+
+Added Option `and_then`, `or_else`, and `filter` in the Python runtime; native Option combinator calls use Rust's standard Option methods. Native `filter` codegen now applies the Vec iterator/collect lowering only when the receiver is known to be a Vec, avoiding the Option collision. Python filter dispatch preserves existing Vec behavior while handling Option values. Option `map` remains intentionally unsupported because the code generator's `map` lowering is reserved for Vec.
+
+- Covered by `tests/test_native_n5.py::test_native_option_methods` and `test_python_option_methods_parity`.
+- Existing Vec filter behavior remains covered by `tests/test_native_n3.py::test_native_vec_filter` and `test_python_vec_filter_parity`.
+- `pytest -q tests/test_native_n3.py tests/test_native_n5.py`: 43 passed.
+
+## N5 batch 6
+
+Added Python Result `and_then`/`or_else` and Result-to-Option `ok()`/`err()`, plus Option-to-Result `ok_or()`/`ok_or_else()`. The Result `and_then`/`or_else` operations remain Python-only: native Result values in local bindings cannot safely encode Rust `Err` as a Python exception. Native `ok()`/`err()` and Option `ok_or()` are verified through expressions returning ordinary Python-compatible values. Native Result constructors now annotate their inferred error type as `PyErr` where needed, preventing inference failures in conversion expressions.
+
+- Covered by `tests/test_native_n5.py::test_native_option_methods`, `test_python_option_methods_parity`, and `test_python_result_conversions_and_combinators`.
+- `test_native_result_and_then_or_else_requires_typed_err` is explicitly skipped because native Result `Err` cannot be represented in the existing local-binding model.
+- `pytest -q tests/test_native_n5.py`: 19 passed, 1 skipped.
+
+## N5 batch 7
+
+Implemented `?` for Result values. Native generation emits Rust's `?` operator, preserving parse errors through the PyO3 `PyResult` return. Python `_Result.__try__()` returns Ok values and raises a private sentinel for Err; functions declared to return Result catch only that sentinel and return its Result value. Python string parsing under `?` returns an internal Result while existing non-`?` parse behavior remains unchanged.
+
+- Covered by `tests/test_native_n5.py::test_native_result_try_operator` and `test_python_result_try_operator`, including Python Err propagation.
+- `pytest -q tests/test_native_n5.py`: 21 passed, 1 skipped.
+
+## N5 batch 8
+
+Added parser and AST support for `if let Some(binding) = expression`. Native generation emits Rust `if let`. Python binds the expression once to a temporary, checks `_Option` and `is_some()`, then binds the payload before translating the branches. Other if-let pattern forms remain unsupported and raise `TranslateError`.
+
+- Covered by `tests/test_native_n5.py::test_native_if_let_some_and_none` and `test_python_if_let_some_and_none_parity`.
+- `pytest -q tests/test_native_n5.py`: 23 passed, 1 skipped.
+
+## N5 batch 9 — out of scope
+
+`while let Some(x) = iter.next()` is out of scope. Native Rust iterators already produce `Option` from `next()`, but the Python backend has no corresponding iterator adapter with Rust-style Option-returning `next()`; Python's built-in iterator protocol instead raises `StopIteration`. Adding an adapter, lifetime/consumption behavior, and parity tests would be a significant feature rather than a safe lowering. The batch is explicitly skipped rather than simulating mismatched behavior.
+
+- `tests/test_native_n5.py::test_n5_while_let_option_iterator_not_supported` records the reason.
+
+## N5 batch 10
+
+Extended shared match diagnostics to warn on known Option/Result scrutinees with a Some/Ok arm but no None/Err arm, respectively. Both backends pass scrutinee type information from function parameters and typed/local constructor bindings, so unrelated user enums with variants named Some do not trigger false warnings. Complete matches remain warning-free, and diagnostics do not reject the program.
+
+- Covered by `tests/test_native_n5.py::test_option_result_match_warn_once_per_match`, which checks exactly one warning per incomplete match through both translators and confirms complete/custom-enum matches do not warn.
+- `pytest -q tests/test_native_n5.py tests/test_native_n2a_patterns.py`: 127 passed, 10 skipped.
+- Final `pytest -q`: 243 passed, 11 skipped.
+- `pytest -q tests/test_native_n5.py`: 24 passed, 2 skipped.
+
 Batch 5 validation: `pytest -v` completed with 133 passed and 8 skipped in 13.35 seconds; `ruff check --fix .` passed.
