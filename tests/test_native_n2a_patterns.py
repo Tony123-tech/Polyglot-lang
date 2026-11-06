@@ -1,5 +1,5 @@
 """N2a match-pattern expansion tests."""
-
+# pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false
 import warnings
 
 import pytest

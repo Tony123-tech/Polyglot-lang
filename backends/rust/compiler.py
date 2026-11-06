@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -31,33 +32,54 @@ from backends.rust.codegen import RustCodegen
 # Errors
 # ---------------------------------------------------------------------------
 
+@dataclass
 class RustCompileError(RuntimeError):
-    """Raised when cargo build fails."""
+    """Structured Cargo error with generated and source locations."""
 
-    def __init__(
-        self,
-        rust_message: str,
-        generated_source: str,
-        error_line: int | None = None,
-        error_col: int | None = None,
-        error_code: str | None = None,
-    ) -> None:
+    message: str
+    rust_line: int | None = None
+    rust_col: int | None = None
+    source_line: int | None = None
+    source_col: int | None = None
+    source_line_text: str | None = None
+    raw_stderr: str = ""
+    generated_source: str = ""
+    error_code: str | None = None
+    warnings: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        RuntimeError.__init__(self, self.message)
+
+    @property
+    def error_line(self) -> int | None:
+        return self.rust_line
+
+    @property
+    def error_col(self) -> int | None:
+        return self.rust_col
+
+    @property
+    def rust_message(self) -> str:
+        return self.raw_stderr
+
+    def __str__(self) -> str:
         location = ""
-        if error_line is not None:
-            location = f" at line {error_line}"
-            if error_col is not None:
-                location += f":{error_col}"
-        code = f" [{error_code}]" if error_code else ""
-        summary = f"Rust compile error{code}{location}"
-        super().__init__(summary)
-        self.rust_message = rust_message
-        self.generated_source = generated_source
-        self.error_line = error_line
-        self.error_col = error_col
-        self.error_code = error_code
+        if self.rust_line is not None:
+            location = f" at line {self.rust_line}"
+            if self.rust_col is not None:
+                location += f":{self.rust_col}"
+        code = f" [{self.error_code}]" if self.error_code else ""
+        return f"Rust compile error: {self.message}{code}{location}"
 
     def pretty(self) -> str:
         lines = [str(self)]
+        if self.source_line is not None:
+            lines.append(
+                f"Polyglot source at {self.source_line}:"
+                f"{self.source_col or 1}"
+            )
+            if self.source_line_text is not None:
+                lines.append(f"  {self.source_line_text}")
         if self.error_line is not None:
             src_lines = self.generated_source.splitlines()
             start = max(0, self.error_line - 3)
@@ -71,9 +93,17 @@ class RustCompileError(RuntimeError):
         return "\n".join(lines)
 
 
-_ERROR_RE = re.compile(
-    r"error(?:\[(?P<code>E\d+)\])?:\s*(?P<msg>[^\n]+)\n"
-    r"\s*-->\s*(?P<file>[^:]+):(?P<line>\d+):(?P<col>\d+)"
+_ERROR_HEAD_RE = re.compile(
+    r"(?m)^\s*error(?:\[(?P<code>E\d+)\])?:\s*(?P<msg>[^\n]+)"
+)
+_ERROR_LOCATION_RE = re.compile(
+    r"(?m)^\s*-->\s*src/lib\.rs:(?P<line>\d+):(?P<col>\d+)\s*$"
+)
+_WARNING_RE = re.compile(
+    r"(?m)^\s*warning(?:\[[^\]]+\])?:\s*(?P<msg>[^\n]+)"
+)
+_DIAGNOSTIC_START_RE = re.compile(
+    r"^(?:error(?:\[[^\]]+\])?:|warning(?:\[[^\]]+\])?:)"
 )
 
 
@@ -104,12 +134,18 @@ class NativeBackend(Backend):
 
     def compile(self, program: Program) -> dict[str, Any]:
         self._check_trust()
-        source = RustCodegen().generate(program)
+        codegen = RustCodegen()
+        source = codegen.generate(program)
         key = hashlib.sha256(source.encode()).hexdigest()[:16]
         build_dir = self.cache_dir / key
 
         if not self._is_built(build_dir):
-            self._build(source, build_dir)
+            self._build(
+                source,
+                build_dir,
+                codegen.line_map,
+                codegen.source_line_text_map,
+            )
 
         ext = self._find_extension(build_dir)
         mod = self._load_extension(ext)
@@ -127,7 +163,13 @@ class NativeBackend(Backend):
             or any(release.glob("*.pyd"))
         )
 
-    def _build(self, source: str, build_dir: Path) -> None:
+    def _build(
+        self,
+        source: str,
+        build_dir: Path,
+        line_map: dict[int, tuple[int, int]],
+        source_line_text_map: dict[int, str] | None = None,
+    ) -> None:
         first_build = not build_dir.exists()
         if first_build:
             build_dir.mkdir(parents=True)
@@ -164,7 +206,10 @@ class NativeBackend(Backend):
             env=env,
         )
         if result.returncode != 0:
-            raise _parse_cargo_error(result.stdout, result.stderr, source)
+            raise _parse_cargo_error(
+                result.stdout, result.stderr, source, line_map,
+                source_line_text_map,
+            )
 
     def _cargo_toml(self) -> str:
         return """\
@@ -221,18 +266,60 @@ def _build_env() -> dict[str, str]:
 
 
 def _parse_cargo_error(
-    stdout: str, stderr: str, source: str
+    stdout: str,
+    stderr: str,
+    source: str,
+    line_map: dict[int, tuple[int, int]] | None = None,
+    source_line_text_map: dict[int, str] | None = None,
 ) -> RustCompileError:
-    match = _ERROR_RE.search(stderr)
-    if match is None:
-        return RustCompileError(
-            rust_message=f"{stdout}\n{stderr}".strip(),
-            generated_source=source,
-        )
-    return RustCompileError(
-        rust_message=stderr.strip(),
-        generated_source=source,
-        error_line=int(match.group("line")),
-        error_col=int(match.group("col")),
-        error_code=match.group("code"),
+    combined = _deduplicate_error_blocks(
+        f"{stdout}\n{stderr}".strip()
     )
+    head = _ERROR_HEAD_RE.search(combined)
+    location = _ERROR_LOCATION_RE.search(
+        combined, head.end() if head is not None else 0,
+    )
+    rust_line = int(location.group("line")) if location else None
+    rust_col = int(location.group("col")) if location else None
+    source_origin = (
+        line_map.get(rust_line)
+        if line_map is not None and rust_line is not None
+        else None
+    )
+    return RustCompileError(
+        message=head.group("msg") if head else "Cargo build failed",
+        raw_stderr=combined,
+        generated_source=source,
+        rust_line=rust_line,
+        rust_col=rust_col,
+        source_line=source_origin[0] if source_origin else None,
+        source_col=source_origin[1] if source_origin else None,
+        source_line_text=(
+            source_line_text_map.get(rust_line)
+            if source_line_text_map is not None and rust_line is not None
+            else None
+        ),
+        error_code=head.group("code") if head else None,
+        warnings=[match.group("msg") for match in _WARNING_RE.finditer(combined)],
+    )
+
+
+def _deduplicate_error_blocks(output: str) -> str:
+    lines = output.splitlines()
+    result: list[str] = []
+    seen_errors: set[tuple[str, ...]] = set()
+    index = 0
+    while index < len(lines):
+        if not lines[index].startswith("error"):
+            result.append(lines[index])
+            index += 1
+            continue
+        end = index + 1
+        while end < len(lines) and not _DIAGNOSTIC_START_RE.match(lines[end]):
+            end += 1
+        block = tuple(lines[index:end])
+        if block not in seen_errors:
+            result.extend(block)
+            seen_errors.add(block)
+        index = end
+    return "\n".join(result)

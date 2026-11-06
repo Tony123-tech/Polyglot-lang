@@ -178,6 +178,292 @@ A SHA-256 digest of the merged source is used as the cache key. The shared cache
 
 **Lesson:** Cross-language APIs should preserve receiver and qualification semantics explicitly in both code generation and expression translation.
 
+## N2c batch 1
+
+The native code generator already emits `#[pyclass]` and a module registration call for every struct declaration. A native integration test now defines two independent structs with constructors and verifies that both classes can be instantiated from Python. No code-generation change was needed.
+
+- Covered by `tests/test_native_features.py::test_native_register_multiple_pyclasses`.
+- `pytest -q`: 134 passed, 8 skipped.
+
+## N2c batch 2
+
+A shared stable dependency ordering now emits a referenced inner struct before its containing struct in both backends. Native and Python tests declare `Outer` before `Inner` and verify that an `Outer` instance contains a usable `Inner` instance.
+
+- Covered by `tests/test_native_features.py::test_native_struct_field_of_struct` and `tests/test_point.py::test_python_struct_field_of_later_struct`.
+- `pytest -q`: 136 passed, 8 skipped.
+
+## N2c batch 3
+
+Simple enums containing only unit variants are now emitted as PyO3 classes and registered with the module. Python backend variants retain the standard `Enum` representation, accessed as `Choice.A` and `Choice.B`; native variants are class attributes on the PyO3 enum class. Payload enums remain unchanged.
+
+- Covered by `tests/test_native_features.py::test_native_unit_enum_variants` and `tests/test_point.py::test_python_unit_enum_variant_representation`.
+- `pytest -q`: 138 passed, 8 skipped.
+
+## N2c batch 4
+
+The Python backend now represents payload enum variants as callable class attributes that produce tagged tuples, allowing `Maybe::Some(value)` and payload-pattern matching while preserving unit-variant matching. PyO3 0.26 safely exposes only the unit-enum form used here; payload enums stay internal to generated Rust and are not exported. The native exposure test is explicitly skipped with that limitation.
+
+- Covered by `tests/test_point.py::test_python_payload_enum_representation`.
+- Native limitation: `tests/test_native_features.py::test_native_payload_enum_is_exposed`.
+- `pytest -q`: 139 passed, 9 skipped.
+
+## N2c batch 5
+
+`impl` blocks on unit enums now contribute methods to the Python enum class and are emitted as `#[pymethods] impl` blocks for native PyO3 enums. The parity tests call the method through variants in both backends. Payload enum methods remain Python-only because payload enums are not exposed as native classes.
+
+- Covered by `tests/test_native_features.py::test_native_unit_enum_variants` and `tests/test_point.py::test_python_unit_enum_variant_representation`.
+- `pytest -q`: 139 passed, 9 skipped.
+
+## N2c batch 6
+
+Structs with `Vec<i64>` fields are constructible from Python in both backends. PyO3 converts Python lists at the constructor boundary, and the exposed field reads back as a Python list.
+
+- Covered by `tests/test_native_features.py::test_native_struct_with_vec_field` and `tests/test_point.py::test_python_struct_with_vec_field`.
+- `pytest -q`: 141 passed, 9 skipped.
+
+## N2c batch 7
+
+Struct methods returning `Self` are supported by returning a cloned pyclass instance in native Rust and the cloned dataclass value in Python. Both tests verify that the returned object has equivalent fields but is not the original instance.
+
+- Covered by `tests/test_native_features.py::test_native_struct_method_returns_self` and `tests/test_point.py::test_point_method_returns_self`.
+- Python translation uses shallow `copy.copy` for Rust's `.clone()` method.
+- `pytest -q`: 143 passed, 9 skipped.
+
+## N2c batch 8
+
+Generic struct declarations are erased to a concrete native pyclass, with each declared type parameter mapped to `i64`; the Python backend maps the corresponding field and method annotations to `int`. This is a deliberate native limitation: generic arguments are not runtime-specialized and all type parameters default to `i64`.
+
+- Covered by `tests/test_native_features.py::test_native_generic_struct_defaults_to_i64` and `tests/test_point.py::test_python_generic_struct_defaults_type_parameter_to_int`.
+- `pytest -q`: 145 passed, 9 skipped.
+
+## N2c batch 9
+
+The native code generator groups `impl` blocks by target and emits one Rust `impl` and one `#[pymethods]` block per class, preventing duplicate PyO3 registration scaffolding. The Python translator already combines methods from all impl blocks into the class body. Both backends now test methods defined in separate blocks.
+
+- Covered by `tests/test_native_features.py::test_native_multiple_impl_blocks` and `tests/test_point.py::test_point_methods_across_impl_blocks`.
+- `pytest -q`: 147 passed, 9 skipped.
+
+## N2c batch 10
+
+A combined regression program declares a struct, unit enum, and `impl` blocks for both. The native backend registers both classes and their methods; the Python backend provides matching behavior.
+
+- Covered by `tests/test_native_features.py::test_native_struct_enum_impl_regression` and `tests/test_point.py::test_python_struct_enum_impl_program_regression`.
+- `pytest -q`: 149 passed, 9 skipped.
+
+## N2d batch 11
+
+`RustCompileError` is now a dataclass carrying message, Rust and source locations, raw stderr, generated source, and error code. Cargo output parsing extracts `error[...]` and `--> src/lib.rs:LINE:COL`, while compatibility properties preserve `error_line`, `error_col`, and `rust_message`.
+
+- Added direct parser tests in `tests/test_rust_compile_error.py`.
+- `pytest -q`: 151 passed, 9 skipped.
+
+## N2d batch 12
+
+`RustCodegen` now exposes a one-based `line_map` from generated Rust line numbers to original `(line, col)` positions. `set_origin` records the current AST node, and `emit` associates generated lines with that origin. Item, struct, enum, impl, function, and statement generation establish origins.
+
+- Covered by `tests/test_rust_compile_error.py::test_rust_codegen_records_source_origin_for_emitted_lines`.
+- `pytest -q`: 152 passed, 9 skipped.
+
+## N2d batch 13
+
+The `RustCodegen` instance is retained through compilation, and its line map is passed into the Cargo build error parser. Rust error locations now populate `source_line` and `source_col` when an origin is available; linker errors and unmapped generated lines retain `None`.
+
+- Covered by `tests/test_rust_compile_error.py::test_cargo_error_maps_rust_line_to_source_origin`.
+- `pytest -q`: 153 passed, 9 skipped.
+
+## N2d batch 14
+
+Source line text is now retained from lexer tokens through `Program` and code generation. The structured compiler error receives the original line text and `pretty()` prints both the original Polyglot line/location and the offending generated Rust context. Token and Program additions are optional, preserving existing construction call sites.
+
+- Covered by `tests/test_rust_compile_error.py::test_pretty_includes_original_and_generated_lines`.
+- `pytest -q`: 154 passed, 9 skipped.
+
+## N2d batch 15
+
+Four native compiler errors are now exercised end to end: a return-type mismatch, assignment to an immutable local, a non-exhaustive match, and an unresolved constant pattern. The code generator now preserves local binding mutability instead of marking every binding mutable. Existing Vec mutation fixtures were updated to use `let mut`. Cargo diagnostic location parsing now selects the location following the first error header rather than a preceding warning.
+
+- Covered by the parametrized `tests/test_rust_compile_error.py::test_native_errors_map_back_to_polyglot_source`.
+- Unresolved-constant diagnostics in inline match expressions currently map to the enclosing match line.
+- `pytest -q`: 158 passed, 9 skipped.
+
+## N2d batch 16
+
+`RustCompileError` now has a warnings list populated from Cargo warning headers when an error is also present. The build path continues to raise only when Cargo exits unsuccessfully; a warning-only successful result is explicitly tested as non-exceptional.
+
+- Covered by `tests/test_rust_compile_error.py::test_rust_compile_error_captures_warnings_without_replacing_error` and `test_warning_only_cargo_result_does_not_raise`.
+- `pytest -q`: 160 passed, 9 skipped.
+
+## N2d batch 17
+
+Only the first Cargo error is promoted into the structured `RustCompileError` fields. The complete stderr remains in `raw_stderr`, retaining additional distinct diagnostics for callers and reports.
+
+- Covered by `tests/test_rust_compile_error.py::test_rust_compile_error_keeps_later_errors_in_raw_stderr`.
+- `pytest -q`: 161 passed, 9 skipped.
+
+## N2d batch 18
+
+Linker-style errors without a `src/lib.rs` location remain valid structured errors with message and raw stderr; source and Rust line/column fields stay unset rather than fabricating a location.
+
+- Covered by `tests/test_rust_compile_error.py::test_rust_compile_error_without_source_location`.
+- `pytest -q`: 161 passed, 9 skipped.
+
+## N2d batch 19
+
+Identical Cargo error blocks are removed from retained raw stderr while distinct later errors remain available. The first error continues to populate the primary structured fields.
+
+- Covered by `tests/test_rust_compile_error.py::test_rust_compile_error_deduplicates_identical_diagnostics`.
+- `pytest -q`: 162 passed, 9 skipped.
+
+## N2d batch 20
+
+The full existing suite was rerun against the structured error type. `RustCompileError` remains a `RuntimeError` subclass, and compatibility aliases for `error_line`, `error_col`, and `rust_message` are verified.
+
+- Covered by `tests/test_rust_compile_error.py::test_rust_compile_error_preserves_runtime_error_compatibility`.
+- `pytest -q`: 163 passed, 9 skipped.
+
+## N3 batch 21
+
+Iteration over `Vec<String>` and `Vec<(i64, i64)>` is verified in both backends. Python `for` translation now supports tuple destructuring patterns in addition to identifier targets, matching Rust's loop binding behavior for pair elements.
+
+- Covered by `tests/test_native_n3.py::test_native_iter_vec_string`, `test_native_iter_vec_tuple`, and `test_python_iter_vec_parity`.
+- `pytest -q`: 167 passed, 9 skipped.
+
+## N3 batch 22
+
+`Vec::contains` now emits Rust's reference-taking `contains(&value)` call. The Python backend lowers the same method to a membership test, with native and Python cases covering present and absent values.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_contains` and `test_python_vec_contains_parity`.
+- `pytest -q`: 169 passed, 9 skipped.
+
+## N3 batch 23
+
+`Vec::sort` now works through the existing method path. `sort_by` supports both native Rust Ordering closures and the requested numeric-subtraction shorthand, which is lowered to `.cmp()` for Rust and `functools.cmp_to_key` for Python.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_sort_and_sort_by` and `test_python_vec_sort_parity`.
+- Closure parsing now treats unparenthesized closure parameters as pattern atoms so the closing pipe is not consumed as an or-pattern operator.
+- `pytest -q`: 172 passed, 9 skipped.
+
+## N3 batch 24
+
+The `Vec.map` shorthand is supported in both backends. Native code generation consumes the vector, maps the closure, and collects a `Vec`; Python translation emits a list comprehension. The supported closure shape is one identifier parameter.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_map` and `test_python_vec_map_parity`.
+- `pytest -q`: 174 passed, 9 skipped.
+
+## N3 batch 25
+
+The `Vec.filter` shorthand is supported in both backends. Native code uses `into_iter().filter(...).collect::<Vec<_>>()`; Python emits a filtering list comprehension. One-parameter identifier closures are supported.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_filter` and `test_python_vec_filter_parity`.
+- `pytest -q`: 176 passed, 9 skipped.
+
+## N3 batch 26
+
+The `Vec.fold(initial, closure)` shorthand is supported in both backends. Native code lowers it to `into_iter().fold(...)`, and Python calls `functools.reduce` with the same initial value and accumulator argument order.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_fold` and `test_python_vec_fold_parity`.
+- `pytest -q`: 178 passed, 9 skipped.
+
+## N3 batch 27
+
+Vector range indexing is supported as `&values[start..end]`. Native code returns an owned vector copy to cross the Python extension boundary; Python uses a list slice. The returned values match the requested half-open slice.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_slice` and `test_python_vec_slice_parity`.
+- `pytest -q`: 180 passed, 9 skipped.
+
+## N3 batch 28
+
+Vector concatenation is supported through `extend` in both backends. Native code uses `Vec::extend`, and Python calls `list.extend`; direct `Vec + Vec` remains unsupported because Rust does not define that operator for vectors.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_extend` and `test_python_vec_extend_parity`.
+- `pytest -q`: 182 passed, 9 skipped.
+
+## N3 batch 29
+
+`Vec.insert`, `remove`, `retain`, and `dedup` are supported in both backends. Native index arguments are cast to `usize`; Python `remove` is translated to `pop(index)`, and runtime helpers preserve in-place `retain` and adjacent-only `dedup` semantics.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_insert_remove_retain_dedup` and `test_python_vec_mutation_parity`.
+- `pytest -q`: 187 passed, 9 skipped.
+
+## N3 batch 30
+
+`Vec.windows(size)` and `chunks(size)` now return `Vec<Vec<i64>>` natively and lists of lists in Python. Native slices are copied into owned vectors for PyO3 conversion. Python raises `ValueError` for nonpositive sizes, matching the native operation's invalid-size failure rather than returning misleading empty output.
+
+- Covered by `tests/test_native_n3.py::test_native_vec_windows_and_chunks` and `test_python_vec_windows_and_chunks_parity`.
+- `pytest -q`: 190 passed, 9 skipped.
+
+## N4 batch 31
+
+String byte length, Unicode character iteration, and UTF-8 byte iteration are supported. Python's `.len()` lowering now counts UTF-8 bytes for strings while preserving normal `len()` behavior for vectors and other containers.
+
+- Covered by `tests/test_native_n4.py::test_native_string_len_chars_bytes` and `test_python_string_len_chars_bytes_parity`.
+- Python `.bytes()` matches PyO3's `Vec<u8>` conversion by returning a `bytes` object.
+- `pytest -q`: 194 passed, 9 skipped.
+
+## N4 batch 32
+
+String splitting returns `Vec<String>`/Python lists, and vector joining uses a string separator and returns a string in both backends.
+
+- Covered by `tests/test_native_n4.py::test_native_string_split_join` and `test_python_string_split_join_parity`.
+- `pytest -q`: 197 passed, 9 skipped.
+
+## N4 batch 33
+
+String replacement, trimming, prefix checks, and suffix checks are available across both backends. Native string references are passed to Rust's `&str` APIs, and Rust's borrowed trim result is converted to an owned `String` for the Python boundary.
+
+- Covered by `tests/test_native_n4.py::test_native_string_replace_trim_prefix_suffix` and `test_python_string_replace_trim_prefix_suffix_parity`.
+- `pytest -q`: 202 passed, 9 skipped.
+
+## N4 batch 34
+
+Unicode-aware uppercase and lowercase conversions are supported. Native `to_uppercase`/`to_lowercase` and Python `upper`/`lower` are tested with a sharp-s case whose uppercase expands to two characters.
+
+- Covered by `tests/test_native_n4.py::test_native_string_case_conversion` and `test_python_string_case_conversion_parity`.
+- `pytest -q`: 205 passed, 9 skipped.
+
+## N4 batch 35
+
+The parser now accepts turbofish type arguments on method calls without changing existing `MethodCall` construction. `.parse::<i64>()` lowers to Rust's typed parse with `unwrap()` and Python's `int()`. Invalid-input error behavior is backend-specific; successful parsing is verified.
+
+- Covered by `tests/test_native_n4.py::test_native_string_parse_i64` and `test_python_string_parse_i64_parity`.
+- `pytest -q`: 207 passed, 9 skipped.
+
+## N4 batch 36
+
+`format!` with multiple positional arguments is verified in both backends. Named format arguments are not added in this batch because the current macro parser represents them as assignment expressions rather than format-specific arguments.
+
+- Covered by `tests/test_native_n4.py::test_native_format_multiple_arguments` and `test_python_format_multiple_arguments_parity`.
+- `pytest -q`: 209 passed, 9 skipped.
+
+## N4 batch 37
+
+`write!` into a mutable `String` is supported for identifier targets and positional formatting arguments. Native generation brings `std::fmt::Write` into scope and unwraps the infallible String write result; Python translates the macro statement into string concatenation.
+
+- Covered by `tests/test_native_n4.py::test_native_write_macro_into_string` and `test_python_write_macro_into_string_parity`.
+- A generated `&mut` reference originally lacked required spacing; native write tests now cover the corrected syntax.
+- `pytest -q`: 211 passed, 9 skipped.
+
+## N4 batch 38
+
+String `+` concatenation is recognized by native code generation for expressions with known string parameters, string literals, or string-returning methods, and is emitted with `format!` to avoid Rust's `String + &str` ownership requirements. Python retains native string `+`.
+
+- Covered by `tests/test_native_n4.py::test_native_string_concatenation` and `test_python_string_concatenation_parity`.
+- `pytest -q`: 213 passed, 9 skipped.
+
+## N4 batch 39
+
+String range slicing uses UTF-8 byte offsets in both backends. Native code returns an owned `String`; Python slices encoded bytes and decodes the result, so invalid UTF-8 boundaries raise instead of silently changing indexing semantics.
+
+- Covered by `tests/test_native_n4.py::test_native_string_slice_uses_utf8_byte_offsets` and `test_python_string_slice_uses_utf8_byte_offsets`.
+- `pytest -q`: 215 passed, 9 skipped.
+
+## N4 batch 40
+
+String equality and ordering use Rust's native `String` comparison and Python's lexicographic string comparison. Both backends verify less-than behavior for ASCII strings.
+
+- Covered by `tests/test_native_n4.py::test_native_string_comparison_and_ordering` and `test_python_string_comparison_and_ordering_parity`.
+- Validation is recorded after the batch test run.
+
 ### Status after N2d
 
 - Native test sources are merged and compiled once per pytest session, with the same build flow available for CI pre-builds.

@@ -216,7 +216,12 @@ class Parser:
         while not self.at_end():
             items.append(self.parse_item())
         first = self.tokens[0] if self.tokens else Token(TokenType.EOF, "", 1, 1, 0)
-        return Program(first.line, first.col, items)
+        source_lines = {
+            token.line: token.source_line_text
+            for token in self.tokens
+            if token.source_line_text is not None
+        }
+        return Program(first.line, first.col, items, source_lines)
 
     # ---- attributes --------------------------------------------------------
 
@@ -892,6 +897,14 @@ class Parser:
                 if not self.check(TokenType.IDENT):
                     self.error("expected field or method name after '.'")
                 m = self.advance()
+                generic_args: list[Type] = []
+                if self.eat(TokenType.COLONCOLON):
+                    self.expect(TokenType.LT)
+                    while not self.check(TokenType.GT):
+                        generic_args.append(self.parse_type())
+                        if not self.eat(TokenType.COMMA):
+                            break
+                    self.expect(TokenType.GT)
                 if self.check(TokenType.LPAREN):
                     self.advance()
                     args: list[Expr] = []
@@ -900,7 +913,9 @@ class Parser:
                         if not self.eat(TokenType.COMMA):
                             break
                     self.expect(TokenType.RPAREN)
-                    left = MethodCall(tok.line, tok.col, left, m.value, args)
+                    left = MethodCall(
+                        tok.line, tok.col, left, m.value, args, generic_args,
+                    )
                 else:
                     left = Field(tok.line, tok.col, left, m.value)
                 continue
@@ -1279,7 +1294,7 @@ class Parser:
         else:
             self.expect(TokenType.PIPE)
             while not self.check(TokenType.PIPE):
-                p = self.parse_pattern()
+                p = self.parse_pattern_atom()
                 ty = None
                 if self.eat(TokenType.COLON):
                     ty = self.parse_type()

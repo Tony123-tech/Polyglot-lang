@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import ast
 import sys
+from copy import copy
+from functools import cmp_to_key, reduce
 
 from ast_nodes import (
     ArrayExpr,
@@ -120,6 +122,7 @@ from ast_nodes import (
 )
 from backends.base import Backend
 from match_diagnostics import warn_match_issues
+from struct_order import order_struct_declarations
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -191,6 +194,62 @@ def _runtime_assert_ne(a, b) -> None:
         raise AssertionError(f"{a!r} == {b!r}")
 
 
+def _runtime_rust_len(value) -> int:
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    return len(value)
+
+
+def _runtime_rust_slice(value, start, end):
+    if isinstance(value, str):
+        data = value.encode("utf-8")
+        if start > end:
+            raise ValueError("slice index starts at %d but ends at %d" % (start, end))
+        return data[start:end].decode("utf-8")
+    if start > end:
+        raise ValueError("slice index starts at %d but ends at %d" % (start, end))
+    return value[start:end]
+
+
+def _runtime_vec_retain(values: list, predicate) -> None:
+    values[:] = [value for value in values if predicate(value)]
+
+
+def _runtime_vec_dedup(values: list) -> None:
+    if values:
+        values[:] = [
+            values[0],
+            *(value for previous, value in zip(values, values[1:])
+              if value != previous),
+        ]
+
+
+def _runtime_vec_windows(values: list, size: int) -> list[list]:
+    if size <= 0:
+        raise ValueError("window size must be positive")
+    return [
+        values[start:start + size]
+        for start in range(max(0, len(values) - size + 1))
+    ]
+
+
+def _runtime_vec_chunks(values: list, size: int) -> list[list]:
+    if size <= 0:
+        raise ValueError("chunk size must be positive")
+    return [
+        values[start:start + size]
+        for start in range(0, len(values), size)
+    ]
+
+
+class _PythonEnumVariant:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __call__(self, *values):
+        return (self, *values)
+
+
 # ---------------------------------------------------------------------------
 # Import helpers
 # ---------------------------------------------------------------------------
@@ -223,6 +282,8 @@ class Translator:
         self.enum_variants: dict[str, set[str]] = {}
         self.constant_names: set[str] = set()
         self.impl_blocks: dict[str, list[ImplBlock]] = {}
+        self.generic_struct_names: set[str] = set()
+        self.generic_type_names: set[str] = set()
 
     # ---- entry -------------------------------------------------------------
 
@@ -232,6 +293,8 @@ class Translator:
         self.enum_names.clear()
         self.enum_variants.clear()
         self.constant_names.clear()
+        self.generic_struct_names.clear()
+        self.generic_type_names.clear()
         # Pass 1: collect struct / enum / impl names.
         for item in program.items:
             if isinstance(item, StructDecl):
@@ -239,6 +302,11 @@ class Translator:
                 self.struct_fields[item.name] = {
                     name for name, _ty, _is_pub in item.fields
                 }
+                if item.generics:
+                    self.generic_struct_names.add(item.name)
+                    self.generic_type_names.update(
+                        param.name for param in item.generics
+                    )
             elif isinstance(item, EnumDecl):
                 self.enum_names.add(item.name)
                 self.enum_variants[item.name] = {
@@ -253,12 +321,18 @@ class Translator:
         # Pass 2: emit statements. impl blocks are consumed here.
         body: list[ast.stmt] = []
         emitted_classes: set[str] = set()
+        struct_items = [
+            item for item in program.items if isinstance(item, StructDecl)
+        ]
+        for item in order_struct_declarations(struct_items):
+            body.append(self.translate_struct(item))
+            emitted_classes.add(item.name)
+
         for item in program.items:
             if isinstance(item, ImplBlock):
                 continue
             if isinstance(item, StructDecl):
-                body.append(self.translate_struct(item))
-                emitted_classes.add(item.name)
+                continue
             elif isinstance(item, EnumDecl):
                 body.append(self.translate_enum(item))
                 emitted_classes.add(item.name)
@@ -297,6 +371,16 @@ class Translator:
         ns["_panic"] = _runtime_panic
         ns["_assert_eq"] = _runtime_assert_eq
         ns["_assert_ne"] = _runtime_assert_ne
+        ns["_rust_len"] = _runtime_rust_len
+        ns["_rust_slice"] = _runtime_rust_slice
+        ns["_PythonEnumVariant"] = _PythonEnumVariant
+        ns["_clone"] = copy
+        ns["_cmp_to_key"] = cmp_to_key
+        ns["_reduce"] = reduce
+        ns["_vec_retain"] = _runtime_vec_retain
+        ns["_vec_dedup"] = _runtime_vec_dedup
+        ns["_vec_windows"] = _runtime_vec_windows
+        ns["_vec_chunks"] = _runtime_vec_chunks
 
         # Register the namespace as a module so @dataclass can look it up
         # via sys.modules[cls.__module__].
@@ -453,6 +537,7 @@ class Translator:
 
     def translate_enum(self, e: EnumDecl) -> ast.ClassDef:
         body: list[ast.stmt] = []
+        has_payloads = any(v.fields is not None for v in e.variants)
         for v in e.variants:
             body.append(ast.Assign(
                 targets=[
@@ -461,14 +546,28 @@ class Translator:
                         ctx=ast.Store(),
                     ),
                 ],
-                value=ast.Call(
-                    func=ast.Name(id="auto", ctx=ast.Load()),
-                    args=[], keywords=[],
+                value=(
+                    ast.Call(
+                        func=ast.Name(
+                            id="_PythonEnumVariant", ctx=ast.Load(),
+                        ),
+                        args=[ast.Constant(value=v.name)],
+                        keywords=[],
+                    )
+                    if has_payloads
+                    else ast.Call(
+                        func=ast.Name(id="auto", ctx=ast.Load()),
+                        args=[], keywords=[],
+                    )
                 ),
             ))
+        for impl in self.impl_blocks.get(e.name, []):
+            body.extend(self._impl_methods(impl))
         if not body:
             body = [ast.Pass()]
-        bases: list[ast.expr] = [ast.Name(id="Enum", ctx=ast.Load())]
+        bases: list[ast.expr] = (
+            [] if has_payloads else [ast.Name(id="Enum", ctx=ast.Load())]
+        )
         return ast.ClassDef(
             name=e.name, bases=bases, keywords=[], body=body,
             decorator_list=[],
@@ -540,6 +639,8 @@ class Translator:
                 return [self._translate_assign_stmt(expr)]
             if isinstance(expr, CompoundAssign):
                 return [self._translate_compound_assign_stmt(expr)]
+            if isinstance(expr, MacroCall) and expr.path == "write":
+                return [self._translate_write_macro(expr)]
             if isinstance(expr, IfExpr):
                 return [self.translate_if_stmt(expr)]
             if isinstance(expr, While):
@@ -564,6 +665,36 @@ class Translator:
         raise TranslateError(
             f"unsupported statement {type(s).__name__}",
             getattr(s, "line", 0), getattr(s, "col", 0),
+        )
+
+    def _translate_write_macro(self, macro: MacroCall) -> ast.AugAssign:
+        if not isinstance(macro.args, list) or len(macro.args) < 2:
+            raise TranslateError(
+                "write! expects a mutable string and format string",
+                macro.line, macro.col,
+            )
+        target_expr = macro.args[0]
+        if isinstance(target_expr, Unary) and target_expr.op in ("&", "&mut"):
+            target_expr = target_expr.operand
+        if not isinstance(target_expr, Ident):
+            raise TranslateError(
+                "write! target must be an identifier",
+                macro.line, macro.col,
+            )
+        format_value = self.translate_expr(macro.args[1])
+        values = [self.translate_expr(arg) for arg in macro.args[2:]]
+        if values:
+            format_value = ast.Call(
+                func=ast.Attribute(
+                    value=format_value, attr="format", ctx=ast.Load(),
+                ),
+                args=values,
+                keywords=[],
+            )
+        return ast.AugAssign(
+            target=ast.Name(id=target_expr.name, ctx=ast.Store()),
+            op=ast.Add(),
+            value=format_value,
         )
 
     def _translate_assign_stmt(self, e: Assign) -> ast.Assign:
@@ -617,15 +748,36 @@ class Translator:
         return ast.While(test=test, body=body, orelse=[])
 
     def translate_for(self, f: For) -> ast.For:
-        if not isinstance(f.pattern, PatIdent):
+        if isinstance(f.pattern, PatIdent):
+            target: ast.expr = ast.Name(
+                id=f.pattern.name, ctx=ast.Store(),
+            )
+        elif isinstance(f.pattern, PatTuple):
+            target = ast.Tuple(
+                elts=[self._for_pattern_target(p) for p in f.pattern.elems],
+                ctx=ast.Store(),
+            )
+        else:
             raise TranslateError(
                 f"unsupported for pattern {type(f.pattern).__name__}",
                 f.line, f.col,
             )
-        target = ast.Name(id=f.pattern.name, ctx=ast.Store())
         iter_expr = self.translate_expr(f.iter)
         body = self.translate_block_as_body(f.body)
         return ast.For(target=target, iter=iter_expr, body=body, orelse=[])
+
+    def _for_pattern_target(self, pattern: Pattern) -> ast.expr:
+        if isinstance(pattern, PatIdent):
+            return ast.Name(id=pattern.name, ctx=ast.Store())
+        if isinstance(pattern, PatTuple):
+            return ast.Tuple(
+                elts=[self._for_pattern_target(p) for p in pattern.elems],
+                ctx=ast.Store(),
+            )
+        raise TranslateError(
+            f"unsupported for pattern {type(pattern).__name__}",
+            pattern.line, pattern.col,
+        )
 
     def translate_loop(self, lp: Loop) -> ast.While:
         body = self.translate_block_as_body(lp.body)
@@ -1162,12 +1314,210 @@ class Translator:
             return ast.Call(func=func, args=args, keywords=[])
         if isinstance(e, MethodCall):
             recv = self.translate_expr(e.receiver)
+            if e.method in ("windows", "chunks") and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(
+                        id=f"_vec_{e.method}", ctx=ast.Load(),
+                    ),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "retain" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_retain", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "dedup" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_vec_dedup", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "remove" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv, attr="pop", ctx=ast.Load(),
+                    ),
+                    args=[self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "fold" and len(e.args) == 2:
+                return ast.Call(
+                    func=ast.Name(id="_reduce", ctx=ast.Load()),
+                    args=[
+                        self.translate_expr(e.args[1]),
+                        recv,
+                        self.translate_expr(e.args[0]),
+                    ],
+                    keywords=[],
+                )
+            if e.method == "map" and len(e.args) == 1:
+                closure = e.args[0]
+                if (
+                    not isinstance(closure, Closure)
+                    or len(closure.params) != 1
+                    or not isinstance(closure.params[0][0], PatIdent)
+                ):
+                    raise TranslateError(
+                        "Vec.map expects a single identifier parameter",
+                        e.line, e.col,
+                    )
+                target = ast.Name(
+                    id=closure.params[0][0].name, ctx=ast.Store(),
+                )
+                body = (
+                    self.translate_expr(closure.body.tail)
+                    if isinstance(closure.body, Block)
+                    and closure.body.tail is not None
+                    else self.translate_expr(closure.body)
+                )
+                return ast.ListComp(
+                    elt=body,
+                    generators=[
+                        ast.comprehension(
+                            target=target,
+                            iter=recv,
+                            ifs=[],
+                            is_async=0,
+                        ),
+                    ],
+                )
+            if e.method == "filter" and len(e.args) == 1:
+                closure = e.args[0]
+                if (
+                    not isinstance(closure, Closure)
+                    or len(closure.params) != 1
+                    or not isinstance(closure.params[0][0], PatIdent)
+                ):
+                    raise TranslateError(
+                        "Vec.filter expects a single identifier parameter",
+                        e.line, e.col,
+                    )
+                target = ast.Name(
+                    id=closure.params[0][0].name, ctx=ast.Store(),
+                )
+                body = (
+                    self.translate_expr(closure.body.tail)
+                    if isinstance(closure.body, Block)
+                    and closure.body.tail is not None
+                    else self.translate_expr(closure.body)
+                )
+                return ast.ListComp(
+                    elt=ast.Name(
+                        id=closure.params[0][0].name,
+                        ctx=ast.Load(),
+                    ),
+                    generators=[
+                        ast.comprehension(
+                            target=target,
+                            iter=recv,
+                            ifs=[body],
+                            is_async=0,
+                        ),
+                    ],
+                )
+            if e.method == "sort_by" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv, attr="sort", ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[
+                        ast.keyword(
+                            arg="key",
+                            value=ast.Call(
+                                func=ast.Name(
+                                    id="_cmp_to_key", ctx=ast.Load(),
+                                ),
+                                args=[self.translate_expr(e.args[0])],
+                                keywords=[],
+                            ),
+                        ),
+                    ],
+                )
+            if e.method == "contains" and len(e.args) == 1:
+                return ast.Compare(
+                    left=self.translate_expr(e.args[0]),
+                    ops=[ast.In()],
+                    comparators=[recv],
+                )
+            if e.method == "clone" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_clone", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
             if e.method == "as_slice" and not e.args:
                 return recv
             if e.method == "len" and not e.args:
                 return ast.Call(
-                    func=ast.Name(id="len", ctx=ast.Load()),
+                    func=ast.Name(id="_rust_len", ctx=ast.Load()),
                     args=[recv],
+                    keywords=[],
+                )
+            if e.method == "chars" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="list", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "bytes" and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv, attr="encode", ctx=ast.Load(),
+                    ),
+                    args=[ast.Constant(value="utf-8")],
+                    keywords=[],
+                )
+            if e.method == "parse" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="int", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "split" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv, attr="split", ctx=ast.Load(),
+                    ),
+                    args=[self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "join" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=self.translate_expr(e.args[0]),
+                        attr="join",
+                        ctx=ast.Load(),
+                    ),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "trim" and not e.args:
+                method = "strip"
+                args: list[ast.expr] = []
+            elif e.method in ("to_uppercase", "to_lowercase"):
+                method = {
+                    "to_uppercase": "upper",
+                    "to_lowercase": "lower",
+                }[e.method]
+                args = []
+            elif e.method in ("replace", "starts_with", "ends_with"):
+                method = {
+                    "starts_with": "startswith",
+                    "ends_with": "endswith",
+                }.get(e.method, e.method)
+                args = [self.translate_expr(arg) for arg in e.args]
+            else:
+                method = ""
+                args = []
+            if method:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv, attr=method, ctx=ast.Load(),
+                    ),
+                    args=args,
                     keywords=[],
                 )
             attr = ast.Attribute(value=recv, attr=e.method, ctx=ast.Load())
@@ -1178,6 +1528,18 @@ class Translator:
             return ast.Attribute(value=recv, attr=e.name, ctx=ast.Load())
         if isinstance(e, Index):
             recv = self.translate_expr(e.receiver)
+            if isinstance(e.index, Range):
+                return ast.Call(
+                    func=ast.Name(id="_rust_slice", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_opt_expr(e.index.start)
+                        or ast.Constant(value=None),
+                        self.translate_opt_expr(e.index.end)
+                        or ast.Constant(value=None),
+                    ],
+                    keywords=[],
+                )
             idx = self.translate_expr(e.index)
             return ast.Subscript(value=recv, slice=idx, ctx=ast.Load())
         if isinstance(e, TupleExpr):
@@ -1466,7 +1828,11 @@ class Translator:
         if ty is None:
             return None
         if isinstance(ty, TypeName):
+            if ty.name in self.generic_type_names:
+                return ast.Name(id="int", ctx=ast.Load())
             base = TYPE_MAP.get(ty.name, ty.name)
+            if ty.name in self.generic_struct_names:
+                return ast.Name(id=base, ctx=ast.Load())
             if ty.args:
                 if len(ty.args) > 1:
                     slice_multi: ast.expr = ast.Tuple(

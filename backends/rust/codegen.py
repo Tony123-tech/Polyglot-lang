@@ -49,6 +49,7 @@ from ast_nodes import (
     MatchExpr,
     MethodCall,
     ModDecl,
+    Node,
     Paren,
     PatBinding,
     PatBox,
@@ -90,6 +91,7 @@ from ast_nodes import (
     While,
 )
 from match_diagnostics import warn_match_issues
+from struct_order import order_struct_declarations
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -110,12 +112,28 @@ class RustCodegen:
         self.exported_fns: list[str] = []
         self.exported_classes: list[str] = []
         self.struct_names: set[str] = set()
+        self.pyclass_names: set[str] = set()
+        self.generic_struct_names: set[str] = set()
+        self.generic_type_names: set[str] = set()
+        self.string_bindings: set[str] = set()
+        self.line_map: dict[int, tuple[int, int]] = {}
+        self.source_line_text_map: dict[int, str] = {}
+        self.source_lines: dict[int, str] = {}
+        self._origin: tuple[int, int] | None = None
         self._in_pymethods = False
 
     # ---- helpers ----------------------------------------------------------
 
     def emit(self, line: str = "") -> None:
         self.lines.append("    " * self.indent_level + line)
+        if self._origin is not None:
+            self.line_map[len(self.lines)] = self._origin
+            source_text = self.source_lines.get(self._origin[0])
+            if source_text is not None:
+                self.source_line_text_map[len(self.lines)] = source_text
+
+    def set_origin(self, node: Node) -> None:
+        self._origin = (node.line, node.col)
 
     def indent(self) -> None:
         self.indent_level += 1
@@ -128,12 +146,30 @@ class RustCodegen:
         self.exported_fns = []
         self.exported_classes = []
         self.struct_names = set()
+        self.pyclass_names = set()
+        self.generic_struct_names = set()
+        self.generic_type_names = set()
+        self.string_bindings = set()
+        self.line_map = {}
+        self.source_line_text_map = {}
+        self.source_lines = program.source_lines
+        self._origin = None
         self.indent_level = 0
         self._in_pymethods = False
 
         for item in program.items:
             if isinstance(item, StructDecl):
                 self.struct_names.add(item.name)
+                self.pyclass_names.add(item.name)
+                if item.generics:
+                    self.generic_struct_names.add(item.name)
+                    self.generic_type_names.update(
+                        param.name for param in item.generics
+                    )
+            elif isinstance(item, EnumDecl) and all(
+                variant.fields is None for variant in item.variants
+            ):
+                self.pyclass_names.add(item.name)
 
         # Suppress warnings from aggressive `mut` / stub bodies.
         self.emit(
@@ -141,10 +177,30 @@ class RustCodegen:
         )
         self.emit()
         self.emit("use pyo3::prelude::*;")
+        self.emit("use std::fmt::Write as FmtWrite;")
         self.emit()
 
+        structs = [
+            item for item in program.items if isinstance(item, StructDecl)
+        ]
+        for struct in order_struct_declarations(structs):
+            self.generate_struct(struct)
+        emitted_impls: set[str] = set()
         for item in program.items:
-            self.generate_item(item)
+            if not isinstance(item, StructDecl):
+                if isinstance(item, ImplBlock):
+                    target = self.type_to_rust(item.ty)
+                    if target in emitted_impls:
+                        continue
+                    impls = [
+                        candidate for candidate in program.items
+                        if isinstance(candidate, ImplBlock)
+                        and self.type_to_rust(candidate.ty) == target
+                    ]
+                    self.generate_impls(impls)
+                    emitted_impls.add(target)
+                else:
+                    self.generate_item(item)
 
         self.emit()
         self.emit("#[pymodule]")
@@ -165,6 +221,7 @@ class RustCodegen:
     # ---- items ------------------------------------------------------------
 
     def generate_item(self, item: Item) -> None:
+        self.set_origin(item)
         if isinstance(item, FnDecl):
             self.generate_fn(item, as_method=False)
         elif isinstance(item, StructDecl):
@@ -191,6 +248,16 @@ class RustCodegen:
             pass
 
     def generate_fn(self, fn: FnDecl, *, as_method: bool) -> None:
+        self.set_origin(fn)
+        previous_string_bindings = self.string_bindings
+        self.string_bindings = set(previous_string_bindings)
+        self.string_bindings.update(
+            param.pattern.name
+            for param in fn.params
+            if isinstance(param.pattern, PatIdent)
+            and isinstance(param.ty, TypeName)
+            and param.ty.name == "String"
+        )
         is_ctor = as_method and fn.name == "new"
 
         if not as_method:
@@ -228,8 +295,10 @@ class RustCodegen:
         self.dedent()
         self.emit("}")
         self.emit()
+        self.string_bindings = previous_string_bindings
 
     def generate_struct(self, s: StructDecl) -> None:
+        self.set_origin(s)
         self.exported_classes.append(s.name)
         self.emit("#[pyclass]")
         self.emit("#[derive(Clone, Debug)]")
@@ -243,6 +312,15 @@ class RustCodegen:
         self.emit()
 
     def generate_enum(self, e: EnumDecl) -> None:
+        self.set_origin(e)
+        is_unit_enum = all(variant.fields is None for variant in e.variants)
+        if is_unit_enum:
+            self.exported_classes.append(e.name)
+            self.emit("#[pyclass(eq, eq_int)]")
+            self.emit("#[derive(Debug, PartialEq, Eq, Clone)]")
+        else:
+            # TODO: expose payload enums once PyO3 has a safe representation.
+            pass
         self.emit(f"enum {e.name} {{")
         self.indent()
         for v in e.variants:
@@ -256,8 +334,14 @@ class RustCodegen:
         self.emit()
 
     def generate_impl(self, impl: ImplBlock) -> None:
-        target = self.type_to_rust(impl.ty)
-        use_pymethods = target in self.struct_names
+        self.generate_impls([impl])
+
+    def generate_impls(self, impls: list[ImplBlock]) -> None:
+        if not impls:
+            return
+        self.set_origin(impls[0])
+        target = self.type_to_rust(impls[0].ty)
+        use_pymethods = target in self.pyclass_names
 
         if use_pymethods:
             self.emit("#[pymethods]")
@@ -265,9 +349,10 @@ class RustCodegen:
 
         self.emit(f"impl {target} {{")
         self.indent()
-        for item in impl.items:
-            if isinstance(item, FnDecl):
-                self.generate_fn(item, as_method=True)
+        for impl in impls:
+            for item in impl.items:
+                if isinstance(item, FnDecl):
+                    self.generate_fn(item, as_method=True)
         self.dedent()
         self.emit("}")
         self.emit()
@@ -285,18 +370,24 @@ class RustCodegen:
         for stmt in block.stmts:
             self.generate_stmt(stmt)
         if block.tail is not None:
+            self.set_origin(block.tail)
             self.emit(self.expr_to_rust(block.tail))
         elif as_fn_body and not block.stmts:
             self.emit("()")
 
     def generate_stmt(self, stmt: Stmt) -> None:
+        self.set_origin(stmt)
         if isinstance(stmt, LetStmt):
-            # Always emit `mut` to avoid "cannot assign twice" / "cannot push".
-            mut = "mut "
+            mut = "mut " if stmt.mutable else ""
             pat = self.pattern_to_rust(stmt.pattern)
             ty = f": {self.type_to_rust(stmt.ty)}" if stmt.ty else ""
             if stmt.value is not None:
                 self.emit(f"let {mut}{pat}{ty} = {self.expr_to_rust(stmt.value)};")
+                if (
+                    isinstance(stmt.pattern, PatIdent)
+                    and self._is_string_expr(stmt.value)
+                ):
+                    self.string_bindings.add(stmt.pattern.name)
             else:
                 self.emit(f"let {mut}{pat}{ty};")
         elif isinstance(stmt, ExprStmt):
@@ -441,8 +532,23 @@ class RustCodegen:
         if isinstance(e, Paren):
             return f"({self.expr_to_rust(e.inner)})"
         if isinstance(e, Unary):
-            return f"({e.op}{self.expr_to_rust(e.operand)})"
+            if (
+                e.op == "&"
+                and isinstance(e.operand, Index)
+                and isinstance(e.operand.index, Range)
+            ):
+                return self.expr_to_rust(e.operand)
+            op = "&mut " if e.op == "&mut" else e.op
+            return f"({op}{self.expr_to_rust(e.operand)})"
         if isinstance(e, Binary):
+            if e.op == "+" and (
+                self._is_string_expr(e.left)
+                or self._is_string_expr(e.right)
+            ):
+                return (
+                    f'format!("{{}}{{}}", {self.expr_to_rust(e.left)}, '
+                    f"{self.expr_to_rust(e.right)})"
+                )
             return (
                 f"({self.expr_to_rust(e.left)} {e.op} "
                 f"{self.expr_to_rust(e.right)})"
@@ -462,14 +568,125 @@ class RustCodegen:
             return f"{self.expr_to_rust(e.func)}({args})"
         if isinstance(e, MethodCall):
             recv = self.expr_to_rust(e.receiver)
+            if e.method == "chars" and not e.args:
+                return f"{recv}.chars().collect::<Vec<char>>()"
+            if e.method == "bytes" and not e.args:
+                return f"{recv}.bytes().collect::<Vec<u8>>()"
+            if e.method == "parse" and not e.args:
+                target = (
+                    self.type_to_rust(e.generic_args[0])
+                    if e.generic_args
+                    else "i64"
+                )
+                return f"{recv}.parse::<{target}>().unwrap()"
+            if e.method == "split" and len(e.args) == 1:
+                separator = self.expr_to_rust(e.args[0])
+                return (
+                    f"{recv}.split(&{separator})"
+                    ".map(String::from).collect::<Vec<_>>()"
+                )
+            if e.method == "join" and len(e.args) == 1:
+                separator = self.expr_to_rust(e.args[0])
+                return f"{recv}.join(&{separator})"
+            if e.method == "trim" and not e.args:
+                return f"{recv}.trim().to_string()"
+            if e.method == "replace" and len(e.args) == 2:
+                old = self.expr_to_rust(e.args[0])
+                new = self.expr_to_rust(e.args[1])
+                return f"{recv}.replace(&{old}, &{new})"
+            if e.method in ("starts_with", "ends_with") and len(e.args) == 1:
+                arg = self.expr_to_rust(e.args[0])
+                return f"{recv}.{e.method}(&{arg})"
+            if (
+                e.method == "map"
+                and len(e.args) == 1
+                and isinstance(e.args[0], Closure)
+            ):
+                return (
+                    f"{recv}.into_iter().map("
+                    f"{self.expr_to_rust(e.args[0])})"
+                    ".collect::<Vec<_>>()"
+                )
+            if (
+                e.method == "filter"
+                and len(e.args) == 1
+                and isinstance(e.args[0], Closure)
+            ):
+                return (
+                    f"{recv}.into_iter().filter("
+                    f"{self.expr_to_rust(e.args[0])})"
+                    ".collect::<Vec<_>>()"
+                )
+            if e.method == "fold" and len(e.args) == 2:
+                return (
+                    f"{recv}.into_iter().fold("
+                    f"{self.expr_to_rust(e.args[0])}, "
+                    f"{self.expr_to_rust(e.args[1])})"
+                )
             if e.method == "len" and not e.args:
                 return f"({recv}.len() as i64)"
+            if e.method == "contains" and len(e.args) == 1:
+                arg = self.expr_to_rust(e.args[0])
+                return f"{recv}.contains(&{arg})"
+            if e.method == "insert" and len(e.args) == 2:
+                index = self.expr_to_rust(e.args[0])
+                value = self.expr_to_rust(e.args[1])
+                return f"{recv}.insert(({index}) as usize, {value})"
+            if e.method == "remove" and len(e.args) == 1:
+                index = self.expr_to_rust(e.args[0])
+                return f"{recv}.remove(({index}) as usize)"
+            if e.method in ("windows", "chunks") and len(e.args) == 1:
+                size = self.expr_to_rust(e.args[0])
+                return (
+                    f"{recv}.{e.method}(({size}) as usize)"
+                    ".map(|window| window.to_vec())"
+                    ".collect::<Vec<_>>()"
+                )
+            if (
+                e.method == "sort_by"
+                and len(e.args) == 1
+                and isinstance(e.args[0], Closure)
+                and len(e.args[0].params) == 2
+                and isinstance(e.args[0].body, Binary)
+                and e.args[0].body.op == "-"
+            ):
+                left_pat = e.args[0].params[0][0]
+                right_pat = e.args[0].params[1][0]
+                body = e.args[0].body
+                if (
+                    isinstance(left_pat, PatIdent)
+                    and isinstance(right_pat, PatIdent)
+                    and isinstance(body.left, Ident)
+                    and isinstance(body.right, Ident)
+                    and body.left.name == left_pat.name
+                    and body.right.name == right_pat.name
+                ):
+                    return (
+                        f"{recv}.sort_by(|{left_pat.name}, "
+                        f"{right_pat.name}| {left_pat.name}.cmp("
+                        f"{right_pat.name}))"
+                    )
             args = ", ".join(self.expr_to_rust(a) for a in e.args)
             return f"{self.expr_to_rust(e.receiver)}.{e.method}({args})"
         if isinstance(e, Field):
             return f"{self.expr_to_rust(e.receiver)}.{e.name}"
         if isinstance(e, Index):
             recv = self.expr_to_rust(e.receiver)
+            if isinstance(e.index, Range):
+                start = (
+                    self.expr_to_rust(e.index.start)
+                    if e.index.start is not None
+                    else ""
+                )
+                end = (
+                    self.expr_to_rust(e.index.end)
+                    if e.index.end is not None
+                    else ""
+                )
+                op = "..=" if e.index.inclusive else ".."
+                if self._is_string_expr(e.receiver):
+                    return f"{recv}[{start}{op}{end}].to_string()"
+                return f"{recv}[{start}{op}{end}].to_vec()"
             idx = self.expr_to_rust(e.index)
             return f"{recv}[({idx}) as usize]"
         if isinstance(e, TupleExpr):
@@ -577,6 +794,18 @@ class RustCodegen:
                 if rest:
                     return f"{e.path}!({fmt_str}, {rest})"
                 return f"{e.path}!({fmt_str})"
+            if e.path == "write":
+                if len(e.args) < 2:
+                    return "write!().unwrap()"
+                target = self.expr_to_rust(e.args[0])
+                format_string = self._format_str(e.args[1])
+                rest = ", ".join(
+                    self.expr_to_rust(arg) for arg in e.args[2:]
+                )
+                args = f"{target}, {format_string}"
+                if rest:
+                    args += f", {rest}"
+                return f"write!({args}).unwrap()"
             args = ", ".join(self.expr_to_rust(a) for a in e.args)
             if e.path == "vec":
                 return f"vec![{args}]"
@@ -584,6 +813,23 @@ class RustCodegen:
         if isinstance(e, Block):
             return f"{{ {self._block_as_expr(e)} }}"
         return f"/* expr {type(e).__name__} */"
+
+    def _is_string_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, LitStr):
+            return True
+        if isinstance(expr, Ident):
+            return expr.name in self.string_bindings
+        if isinstance(expr, MethodCall):
+            return expr.method in {
+                "replace",
+                "trim",
+                "to_uppercase",
+                "to_lowercase",
+                "parse",
+            }
+        if isinstance(expr, MacroCall):
+            return expr.path == "format"
+        return False
 
     def _block_as_expr(self, block: Block) -> str:
         parts: list[str] = []
@@ -613,8 +859,12 @@ class RustCodegen:
             return "()"
         if isinstance(ty, TypeName):
             name = ty.name
+            if name in self.generic_type_names:
+                return "i64"
             if name == "str":
                 name = "String"
+            if name in self.generic_struct_names:
+                return name
             if ty.args:
                 args = ", ".join(self.type_to_rust(a) for a in ty.args)
                 if name == "Vec":
@@ -672,10 +922,16 @@ class RustCodegen:
             return f"&{mut}{self.pattern_to_rust(pat.inner)}"
         if isinstance(pat, PatLiteral):
             val = pat.value
+            if isinstance(val, LitBool):
+                return "true" if val.value else "false"
             if isinstance(val, Unary) and val.op == "-":
                 return f"-{self._pattern_bound_to_rust(val.operand)}"
-            if hasattr(val, "value"):
-                return repr(val.value)
+            raw = getattr(val, "raw", None)
+            if raw is not None:
+                return raw
+            value = getattr(val, "value", None)
+            if value is not None:
+                return repr(value)
             return str(val)
         if isinstance(pat, PatTuple):
             elems = ", ".join(self.pattern_to_rust(p) for p in pat.elems)
@@ -736,8 +992,9 @@ class RustCodegen:
     def _pattern_bound_to_rust(self, bound: Expr) -> str:
         if isinstance(bound, Unary) and bound.op == "-":
             return f"-{self._pattern_bound_to_rust(bound.operand)}"
-        if hasattr(bound, "raw"):
-            return bound.raw
+        raw = getattr(bound, "raw", None)
+        if raw is not None:
+            return raw
         if isinstance(bound, LitChar):
             return f"'{bound.value}'"
         if isinstance(bound, LitBool):

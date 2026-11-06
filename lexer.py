@@ -142,6 +142,7 @@ class Token:
     line: int
     col: int
     pos: int  # char offset, used for cache / debug
+    source_line_text: str | None = None
 
     def __repr__(self) -> str:
         return f"Token({self.type.name}, {self.value!r}, {self.line}:{self.col})"
@@ -275,6 +276,7 @@ SIMPLE_ESCAPES: dict[str, str] = {
 class Lexer:
     def __init__(self, source: str):
         self.src = source
+        self.source_lines = source.splitlines()
         self.i = 0
         self.line = 1
         self.col = 1
@@ -304,7 +306,14 @@ class Lexer:
             self.advance()
 
     def emit(self, ttype: TokenType, value: str, line: int, col: int, pos: int) -> None:
-        self.tokens.append(Token(ttype, value, line, col, pos))
+        source_line = (
+            self.source_lines[line - 1]
+            if 0 < line <= len(self.source_lines)
+            else None
+        )
+        self.tokens.append(
+            Token(ttype, value, line, col, pos, source_line)
+        )
 
     def error(self, msg: str, line: int | None = None, col: int | None = None):
         raise LexError(msg, line or self.line, col or self.col)

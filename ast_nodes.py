@@ -123,6 +123,7 @@ class Node:
 @dataclass
 class Program(Node):
     items: list[Item]
+    source_lines: dict[int, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +378,7 @@ class MethodCall(Node):
     receiver: Expr
     method: str
     args: list[Expr]
+    generic_args: list[Type] = field(default_factory=list)
 
 
 @dataclass

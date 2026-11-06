@@ -11,7 +11,7 @@ fn test_vec_len() -> i64 {
 """,
     "test_vec_push": """
 fn test_vec_push() -> i64 {
-    let v: Vec<i64> = vec![];
+    let mut v: Vec<i64> = vec![];
     v.push(1);
     v.push(2);
     v.push(3);
@@ -20,7 +20,7 @@ fn test_vec_push() -> i64 {
 """,
     "test_vec_push_and_sum": """
 fn test_vec_push_and_sum() -> i64 {
-    let v: Vec<i64> = vec![];
+    let mut v: Vec<i64> = vec![];
     v.push(10);
     v.push(20);
     let mut total: i64 = 0;
@@ -30,7 +30,7 @@ fn test_vec_push_and_sum() -> i64 {
 """,
     "test_vec_pop_returns_value": """
 fn test_vec_pop_returns_value() -> i64 {
-    let v: Vec<i64> = vec![10, 20, 30];
+    let mut v: Vec<i64> = vec![10, 20, 30];
     match v.pop() {
         Some(x) => x,
         None => 0,
@@ -39,7 +39,7 @@ fn test_vec_pop_returns_value() -> i64 {
 """,
     "test_vec_pop_empty_returns_none": """
 fn test_vec_pop_empty_returns_none() -> i64 {
-    let v: Vec<i64> = vec![];
+    let mut v: Vec<i64> = vec![];
     match v.pop() {
         Some(x) => x,
         None => -1,
@@ -54,7 +54,7 @@ fn test_vec_index_zero(v: Vec<i64>) -> i64 { v[0] }
 """,
     "test_vec_mixed": """
 fn test_vec_mixed() -> i64 {
-    let v: Vec<i64> = vec![1, 2, 3];
+    let mut v: Vec<i64> = vec![1, 2, 3];
     v.push(4);
     v.push(5);
     let x = v.pop();
