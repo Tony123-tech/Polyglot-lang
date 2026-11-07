@@ -321,6 +321,14 @@ The full existing suite was rerun against the structured error type. `RustCompil
 - Covered by `tests/test_rust_compile_error.py::test_rust_compile_error_preserves_runtime_error_compatibility`.
 - `pytest -q`: 163 passed, 9 skipped.
 
+### Status after N2d
+
+- Native test sources are merged and compiled once per pytest session, with the same build flow available for CI pre-builds.
+- Content-addressed caching retains Cargo's `target/` artifacts for incremental builds.
+- Structured Rust compiler errors and readable formatting are available.
+- Dynamic-library loading, dataclass module registration, trust checking, and associated-method translation corrected.
+- **30 tests passed; cache-hit build time was approximately 0.15 seconds, down from approximately 214 seconds.**
+
 ## N3 batch 21
 
 Iteration over `Vec<String>` and `Vec<(i64, i64)>` is verified in both backends. Python `for` translation now supports tuple destructuring patterns in addition to identifier targets, matching Rust's loop binding behavior for pair elements.
@@ -464,22 +472,6 @@ String equality and ordering use Rust's native `String` comparison and Python's 
 - Covered by `tests/test_native_n4.py::test_native_string_comparison_and_ordering` and `test_python_string_comparison_and_ordering_parity`.
 - Validation is recorded after the batch test run.
 
-### Status after N2d
-
-- Native test sources are merged and compiled once per pytest session, with the same build flow available for CI pre-builds.
-- Content-addressed caching retains Cargo's `target/` artifacts for incremental builds.
-- Structured Rust compiler errors and readable formatting are available.
-- Dynamic-library loading, dataclass module registration, trust checking, and associated-method translation corrected.
-- **30 tests passed; cache-hit build time was approximately 0.15 seconds, down from approximately 214 seconds.**
-
-## N2c backlog
-
-- Support multiple structs and enums exposed as `#[pyclass]` classes.
-
-## N2d backlog (remaining)
-
-- Map generated Rust source line numbers back to original Polyglot source lines.
-
 ## Security
 
 `trusted=False` is not a sandbox; it is a speed bump. Operating-system-level isolation, such as a container, seccomp, and disabled network access, is required for untrusted input. The native cache directory is created with mode `0o700`. `pyo3 = "0.26"` is pinned in `Cargo.toml`.
@@ -491,14 +483,6 @@ Three isolation levels are provided through `api/`:
 - **C:** Docker with `--network=none --read-only`.
 
 HTTP requests are handled with isolation level B by default. An `X-Trusted-Token` must be provided when `trusted=true` is set.
-
-## Roadmap
-
-| Milestone | Status | Scope |
-|---|---|---|
-| N3 | Planned | Native `HashMap`, `Option`, and `Result` support |
-| N4 | Planned | Native `async` / `await` support |
-| N5 | Planned | Map generated `.rs` line numbers back to source lines |
 
 ## N2a pattern expansion — batch 1
 
@@ -753,3 +737,7 @@ Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style
 Tests: `tests/test_native_n5.py` covers native and Python Option/Result, async, sandbox, `?`, `if let`, and match diagnostics.
 
 `pytest -q`: 252 passed, 9 skipped, 4 deselected.
+
+## Milestone status
+
+See the README Status table for the authoritative milestone status.

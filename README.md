@@ -58,9 +58,27 @@ from backends.python.translator import PythonBackend
 namespace = PythonBackend(sandbox=True).compile(program)
 ```
 
+For isolation levels A/B/C and the `X-Trusted-Token` requirement, see the
+Security section in [NOTES.md](NOTES.md#security).
+
 ## Performance
 
-Native builds use `sccache` through `RUSTC_WRAPPER` when it is available. Cargo's `target` directory stays within each build directory. After clearing the cache, the first build takes about two minutes; a warm second run takes about three seconds. Four slow tests, including source-line mapping, are deselected by default.
+Native builds use `sccache` through `RUSTC_WRAPPER` when it is available.
+Cargo's `target` directory stays within each build directory. After clearing
+the cache, the first build takes about two minutes; a warm second run takes
+about three seconds. Four slow tests, including source-line mapping, are
+deselected by default.
+
+See [NOTES.md](NOTES.md#build-performance) for detailed build-performance notes.
+
+## Relationship to PyO3 and maturin
+
+**Quick decision:** If you want full Rust control, wheel packaging, and
+cross-platform builds, use maturin. If you want to write one Rust-like file
+and get either a Python module or a native extension without writing
+`Cargo.toml` or PyO3 scaffolding by hand, use `polyglot-lang`. Native builds
+still run Cargo internally, and the current single-file model does not yet
+expose arbitrary crate dependencies.
 
 ## Known limitations
 
@@ -90,6 +108,10 @@ The Python backend does not require the Rust toolchain. Native compilation requi
 ## Quick start
 
 The entry points are `lex`, `parse`, and `get_backend`. The compiler returns a dictionary containing the compiled program's names.
+
+The Python backend needs no trust opt-in. The native backend requires
+`trusted=True` or `POLYGLOT_TRUSTED=1`; see [Sandbox](#sandbox) for the
+distinction between the trust gate and the sandbox.
 
 ### Add function
 
@@ -131,7 +153,7 @@ impl Point {
 
 program = parse(lex(source))
 # Native compilation requires explicit trust opt-in.
-# Either set POLYGLOT_TRUSTED=1 in the environment, or pass trusted=True.
+# See the Sandbox section for why this is separate from sandboxing.
 namespace = get_backend("native", trusted=True).compile(program)
 point = namespace["Point"](3, 4)
 
@@ -220,12 +242,16 @@ rm -rf ~/.cache/polyglot-native
 
 ## Roadmap
 
-N0 through N5 are complete. Remaining known limitations are listed under "Known limitations". Out-of-scope items: `while let Some(x) = iter.next()`, async impl methods, and cross-thread `PyFuture` use.
+N0 through N5 are complete. Remaining known limitations are listed under
+[Known limitations](#known-limitations), including the out-of-scope items
+`while let Some(x) = iter.next()`, async impl methods, and cross-thread
+`PyFuture` use.
 
 ## Notes
 
-See [NOTES.md](NOTES.md) for additional project notes.
+See [NOTES.md](NOTES.md) for design decisions, per-batch history, and the
+lessons recorded for each fixed bug.
 
 ## License
 
-MIT License — placeholder. Add the project license text before distributing.
+MIT License — see [LICENSE](LICENSE) for the full text.
