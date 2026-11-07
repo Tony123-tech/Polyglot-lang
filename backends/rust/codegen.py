@@ -15,6 +15,7 @@ from __future__ import annotations
 from ast_nodes import (
     ArrayExpr,
     Assign,
+    Await,
     Binary,
     Block,
     Break,
@@ -110,6 +111,7 @@ def _is_unit_type(ty: Type) -> bool:
 
 _RUNTIME_PREFIX = r"""
 use std::future::Future;
+use pyo3::IntoPyObjectExt;
 use std::pin::Pin;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
@@ -409,25 +411,43 @@ class RustCodegen:
         elif is_ctor:
             ret = " -> Self"
 
-        async_prefix = "async " if fn.is_async else ""
         unsafe_prefix = "unsafe " if fn.is_unsafe else ""
 
-        self.emit(f"{unsafe_prefix}{async_prefix}fn {fn.name}({param_str}){ret} {{")
-        self.indent()
-        if fn.body is not None:
-            self.generate_block_body(fn.body, as_fn_body=True)
-            if (
-                fn.ret is not None
-                and not _is_unit_type(fn.ret)
-                and not fn.body.stmts
-                and fn.body.tail is None
-            ):
-                self.emit("unreachable!()")
+        if fn.is_async and not as_method:
+            self.emit(f"fn {fn.name}({param_str}) -> PyResult<PyFuture> {{")
+            self.indent()
+            self.emit("Ok(py_future(async move {")
+            self.indent()
+            if fn.body is not None:
+                self.generate_block_body(
+                    fn.body, as_fn_body=True, async_wrap=True,
+                )
+            else:
+                self.emit("Err(pyo3::exceptions::PyRuntimeError::new_err(")
+                self.emit('    "async function has no body",')
+                self.emit("))")
+            self.dedent()
+            self.emit("}))")
+            self.dedent()
+            self.emit("}")
+            self.emit()
         else:
-            self.emit("unreachable!()")
-        self.dedent()
-        self.emit("}")
-        self.emit()
+            self.emit(f"{unsafe_prefix}fn {fn.name}({param_str}){ret} {{")
+            self.indent()
+            if fn.body is not None:
+                self.generate_block_body(fn.body, as_fn_body=True)
+                if (
+                    fn.ret is not None
+                    and not _is_unit_type(fn.ret)
+                    and not fn.body.stmts
+                    and fn.body.tail is None
+                ):
+                    self.emit("unreachable!()")
+            else:
+                self.emit("unreachable!()")
+            self.dedent()
+            self.emit("}")
+            self.emit()
         self.string_bindings = previous_string_bindings
         self.vec_bindings = previous_vec_bindings
         self.binding_types = previous_binding_types
@@ -499,14 +519,33 @@ class RustCodegen:
 
     # ---- statements / blocks ----------------------------------------------
 
-    def generate_block_body(self, block: Block, *, as_fn_body: bool = False) -> None:
+    def generate_block_body(
+        self,
+        block: Block,
+        *,
+        as_fn_body: bool = False,
+        async_wrap: bool = False,
+    ) -> None:
         for stmt in block.stmts:
             self.generate_stmt(stmt)
         if block.tail is not None:
             self.set_origin(block.tail)
-            self.emit(self.expr_to_rust(block.tail))
+            tail = self.expr_to_rust(block.tail)
+            if async_wrap:
+                self.emit(
+                    f"pyo3::Python::with_gil(|py| "
+                    f"{tail}.into_py_any(py))"
+                )
+            else:
+                self.emit(tail)
         elif as_fn_body and not block.stmts:
-            self.emit("()")
+            if async_wrap:
+                self.emit(
+                    "pyo3::Python::with_gil(|py| "
+                    "().into_py_any(py))"
+                )
+            else:
+                self.emit("()")
 
     def generate_stmt(self, stmt: Stmt) -> None:
         self.set_origin(stmt)
@@ -999,6 +1038,8 @@ class RustCodegen:
                 f"({self.expr_to_rust(e.expr)} as "
                 f"{self.type_to_rust(e.ty)})"
             )
+        if isinstance(e, Await):
+            return f"({self.expr_to_rust(e.expr)}).await"
         if isinstance(e, Try):
             if isinstance(e.expr, MethodCall) and e.expr.method == "parse":
                 recv = self.expr_to_rust(e.expr.receiver)

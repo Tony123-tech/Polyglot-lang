@@ -9,11 +9,14 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 | N0 | Done | Empty program → Cargo → load module |
 | N1 | Done | Free functions, `i64`/`f64`/`bool`/`String`, `Vec`, structs with `impl` exposed as PyO3 classes, and `if` |
 | N2a | Done | Native `while`, `loop`, and `match` |
-| N2b | Next | `Vec` methods: `push`, `pop`, `len`, and indexing |
-| N2c | Planned | Multiple structs/enums as `pyclass` |
-| N2d | Planned | Improved caching and Rust-error mapping to source lines |
+| N2b | Done | `Vec` methods: `push`, `pop`, `len`, and indexing |
+| N2c | Done | Multiple structs/enums as `pyclass` |
+| N2d | Done | Improved caching and Rust-error mapping to source lines |
+| N3 | Done | `Vec` iteration, `contains`, `sort`/`sort_by`, `map`/`filter`/`fold`, slicing, and mutation methods |
+| N4 | Done | String length/iteration, split/join, replace/trim, case conversion, `parse`, `format!`, `write!`, slicing, and comparison |
+| N5 | Done | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing |
 
-**Current test status:** 22 tests passing.
+**Current test status:** 252 passed, 9 skipped, 4 deselected (`pytest -q`).
 
 ## Features
 
@@ -21,6 +24,52 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 - **Python backend:** Translates the Rust-like AST to a Python AST, then compiles and executes it.
 - **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting `.so` or `.dylib` as a Python extension.
 - **Common backend interface:** Select a backend with `get_backend("python")` or `get_backend("native")`. Calling `backend.compile(program)` returns a namespace dictionary.
+- **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
+
+## Async
+
+Native async functions can be awaited from Python with `asyncio.run`:
+
+```python
+import asyncio
+
+from backends import get_backend
+from lexer import lex
+from parser import parse
+
+source = """
+async fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+"""
+namespace = get_backend("native").compile(parse(lex(source)))
+assert asyncio.run(namespace["add"](2, 3)) == 5
+```
+
+The native backend uses a hand-written `PyFuture` runtime, not `pyo3-asyncio`. Async support is currently limited to free functions, not impl methods, and futures must not require `Send`.
+
+## Sandbox
+
+`PythonBackend(sandbox=True)` restricts `__builtins__` to a safe subset, independently of the `trusted` flag. It blocks `__import__`, `eval`, `open`, `compile`, and `globals`. The safe subset includes `abs`, `all`, `any`, `bool`, `dict`, `enumerate`, `filter`, `float`, `format`, `frozenset`, `int`, `isinstance`, `issubclass`, `iter`, `len`, `list`, `map`, `max`, `min`, `next`, `object`, `print`, `range`, `repr`, `reversed`, `round`, `set`, `slice`, `sorted`, `str`, `sum`, `tuple`, `type`, `zip`, the `True`/`False`/`None` constants, standard exceptions, and `__build_class__`.
+
+```python
+from backends.python.translator import PythonBackend
+
+namespace = PythonBackend(sandbox=True).compile(program)
+```
+
+## Performance
+
+Native builds use `sccache` through `RUSTC_WRAPPER` when it is available. Cargo's `target` directory stays within each build directory. After clearing the cache, the first build takes about two minutes; a warm second run takes about three seconds. Four slow tests, including source-line mapping, are deselected by default.
+
+## Known limitations
+
+- Result `is_ok`, `is_err`, `map_err`, and `ok_or` are Python-only inside let-bindings.
+- `while let Some(x) = iter.next()` is out of scope because Python has no Rust-style Option-returning `next()`.
+- Box patterns, enum payload slices, and nested Vec slice patterns are Python-only.
+- Async is not supported on impl methods.
+- `PyFuture` is unsendable and can only be used on the thread that created it.
+- Option `map` is intentionally unsupported because it collides with Vec `map` in codegen.
 
 ## Requirements
 
@@ -81,7 +130,9 @@ impl Point {
 """
 
 program = parse(lex(source))
-namespace = get_backend("native").compile(program)
+# Native compilation requires explicit trust opt-in.
+# Either set POLYGLOT_TRUSTED=1 in the environment, or pass trusted=True.
+namespace = get_backend("native", trusted=True).compile(program)
 point = namespace["Point"](3, 4)
 
 assert point.sum() == 7
@@ -121,6 +172,18 @@ polyglot-lang/
 ├── ast_nodes.py
 ├── lexer.py
 ├── parser.py
+├── conftest.py
+├── main.py
+├── match_diagnostics.py
+├── struct_order.py
+├── _native_sources.py
+├── api/
+│   ├── cli.py
+│   ├── config.py
+│   ├── executor.py
+│   ├── models.py
+│   ├── server.py
+│   └── worker.py
 ├── backends/
 │   ├── base.py
 │   ├── python/
@@ -129,7 +192,10 @@ polyglot-lang/
 │   └── rust/
 │       ├── codegen.py
 │       └── compiler.py
+├── tools/
+│   └── compile_native.py
 ├── tests/
+│   └── test_native_*.py
 ├── NOTES.md
 └── README.md
 ```
@@ -154,9 +220,7 @@ rm -rf ~/.cache/polyglot-native
 
 ## Roadmap
 
-- **N2b:** Add native `Vec` methods `push`, `pop`, and `len`, plus indexing.
-- **N2c:** Support multiple structs and enums exposed as PyO3 classes.
-- **N2d:** Improve the native build cache and map Rust compiler errors back to source lines.
+N0 through N5 are complete. Remaining known limitations are listed under "Known limitations". Out-of-scope items: `while let Some(x) = iter.next()`, async impl methods, and cross-thread `PyFuture` use.
 
 ## Notes
 

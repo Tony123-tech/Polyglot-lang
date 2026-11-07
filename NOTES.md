@@ -727,3 +727,29 @@ Extended shared match diagnostics to warn on known Option/Result scrutinees with
 - `pytest -q tests/test_native_n5.py`: 24 passed, 2 skipped.
 
 Batch 5 validation: `pytest -v` completed with 133 passed and 8 skipped in 13.35 seconds; `ruff check --fix .` passed.
+
+## Async runtime
+
+The native backend uses hand-written `PyFuture` and `PyFutureIterator` classes in `_RUNTIME_PREFIX` in `backends/rust/codegen.py`; it does not use `pyo3-asyncio` or PyO3 experimental async support. Both classes are `#[pyclass(unsendable)]` and poll the Rust future with a noop waker; the future output is `PyResult<PyObject>`. Async free functions are emitted as `#[pyfunction] fn name(params) -> PyResult<PyFuture> { Ok(py_future(async move { ... })) }`, and await expressions emit `.await`. The tail value is converted to Python with `into_py_any(py)` inside `Python::with_gil`, fixing conversion for PyO3 0.26.
+
+Tests: `tests/test_native_n5.py::test_native_async_add`, `tests/test_native_n5.py::test_native_async_identity`.
+
+## Sandbox
+
+Sandboxing is independent of the trust gate. `trusted=False` raises `UntrustedCompileError` before compilation; `sandbox=True` on `PythonBackend` replaces `__builtins__` with the restricted dictionary returned by `_sandbox_builtins()`. Compilation alone does not execute function bodies, so sandbox tests must call the compiled function to trigger blocked-name errors.
+
+Tests: `tests/test_native_n5.py::test_sandbox_blocks_import`, `tests/test_native_n5.py::test_sandbox_blocks_eval`, `tests/test_native_n5.py::test_sandbox_blocks_open`, `tests/test_native_n5.py::test_sandbox_blocks_compile`, `tests/test_native_n5.py::test_sandbox_blocks_globals`, `tests/test_native_n5.py::test_sandbox_allows_safe_builtins`, `tests/test_native_n5.py::test_sandbox_allows_isinstance`, `tests/test_native_n5.py::test_sandbox_allows_len`, `tests/test_native_n5.py::test_sandbox_allows_exceptions`.
+
+## Build performance
+
+When available, `sccache` is configured through `RUSTC_WRAPPER` in `_build_env`. Cargo's `target` directory remains per-build under each build directory rather than being shared. After clearing the cache, a cold build takes about two minutes; a warm second run takes about three seconds. `test_native_errors_map_back_to_polyglot_source` is marked `slow`; `pyproject.toml` sets `addopts = "-m 'not slow'"`, deselecting four slow tests by default.
+
+## N5 complete
+
+N5 delivers Option and Result construction and combinators, the `?` operator, `if let`, nested Option support, async functions through the custom PyFuture runtime, match exhaustiveness warnings, and Python built-ins sandboxing. The features that remain Python-only are Result `is_ok`, `is_err`, `map_err`, and `ok_or` in let-bindings (native `Err` emits `PyErr`, which does not match the declared error type), Box patterns, enum payload slices, and nested Vec slice patterns. Option `map` remains intentionally unsupported because it collides with Vec `map`.
+
+Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style Option-returning `next()`; async functions as impl methods; and using a `PyFuture` from a thread other than the one that created it, because `PyFuture` is unsendable.
+
+Tests: `tests/test_native_n5.py` covers native and Python Option/Result, async, sandbox, `?`, `if let`, and match diagnostics.
+
+`pytest -q`: 252 passed, 9 skipped, 4 deselected.

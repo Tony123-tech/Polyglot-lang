@@ -1820,6 +1820,11 @@ class Translator:
                     args=[ast.Constant(value="utf-8")],
                     keywords=[],
                 )
+            if e.method == "to_string" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="str", ctx=ast.Load()),
+                    args=[recv], keywords=[],
+                )
             if e.method == "parse" and not e.args:
                 return ast.Call(
                     func=ast.Name(id="int", ctx=ast.Load()),
