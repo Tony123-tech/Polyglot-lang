@@ -852,6 +852,32 @@ class RustCodegen:
                 return f"{recv}.join(&{separator})"
             if e.method == "trim" and not e.args:
                 return f"{recv}.trim().to_string()"
+            if e.method in ("trim_start", "trim_end") and not e.args:
+                return f"{recv}.{e.method}().to_string()"
+            if e.method == "is_ascii" and not e.args:
+                return f"{recv}.is_ascii()"
+            if e.method == "lines" and not e.args:
+                return (
+                    f"{recv}.lines().map(|line| line.to_string())"
+                    ".collect::<Vec<_>>()"
+                )
+            if e.method == "split_whitespace" and not e.args:
+                return (
+                    f"{recv}.split_whitespace()"
+                    ".map(|part| part.to_string())"
+                    ".collect::<Vec<_>>()"
+                )
+            if e.method == "sort_unstable" and not e.args:
+                return f"{recv}.sort_unstable()"
+            if e.method == "as_bytes" and not e.args:
+                return f"{recv}.as_bytes().to_vec()"
+            if e.method == "is_char_boundary" and len(e.args) == 1:
+                return (
+                    f"{recv}.is_char_boundary(("
+                    f"{self.expr_to_rust(e.args[0])}) as usize)"
+                )
+            if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
+                return f"{recv}.{e.method}()"
             if e.method == "replace" and len(e.args) == 2:
                 old = self.expr_to_rust(e.args[0])
                 new = self.expr_to_rust(e.args[1])
@@ -886,8 +912,78 @@ class RustCodegen:
                     f"{self.expr_to_rust(e.args[0])}, "
                     f"{self.expr_to_rust(e.args[1])})"
                 )
+            if e.method == "partition" and len(e.args) == 1:
+                return (
+                    f"{recv}.partition("
+                    f"{self.expr_to_rust(e.args[0])})"
+                )
             if e.method == "len" and not e.args:
                 return f"({recv}.len() as i64)"
+            if e.method == "is_sorted" and not e.args:
+                return f"{recv}.is_sorted()"
+            if e.method in ("first", "last") and not e.args:
+                return f"{recv}.{e.method}().cloned()"
+            if e.method == "get" and len(e.args) == 1:
+                return (
+                    f"{recv}.get(("
+                    f"{self.expr_to_rust(e.args[0])}) as usize).cloned()"
+                )
+            if e.method == "truncate" and len(e.args) == 1:
+                return (
+                    f"{recv}.truncate(("
+                    f"{self.expr_to_rust(e.args[0])}) as usize)"
+                )
+            if e.method in ("rotate_left", "rotate_right") and len(e.args) == 1:
+                return (
+                    f"{recv}.{e.method}(("
+                    f"{self.expr_to_rust(e.args[0])}) as usize)"
+                )
+            if e.method == "fill" and len(e.args) == 1:
+                return f"{recv}.fill({self.expr_to_rust(e.args[0])})"
+            if e.method == "swap" and len(e.args) == 2:
+                return (
+                    f"{recv}.swap(("
+                    f"{self.expr_to_rust(e.args[0])}) as usize, ("
+                    f"{self.expr_to_rust(e.args[1])}) as usize)"
+                )
+            if e.method == "extend_from_slice" and len(e.args) == 1:
+                return (
+                    f"{recv}.extend_from_slice(&"
+                    f"{self.expr_to_rust(e.args[0])})"
+                )
+            if e.method == "resize" and len(e.args) == 2:
+                return (
+                    f"{recv}.resize(("
+                    f"{self.expr_to_rust(e.args[0])}) as usize, "
+                    f"{self.expr_to_rust(e.args[1])})"
+                )
+            if e.method == "split_off" and len(e.args) == 1:
+                return (
+                    f"{recv}.split_off(("
+                    f"{self.expr_to_rust(e.args[0])}) as usize)"
+                )
+            if e.method == "find" and len(e.args) == 1:
+                return f"{recv}.find(&{self.expr_to_rust(e.args[0])})"
+            if e.method == "rfind" and len(e.args) == 1:
+                return f"{recv}.rfind(&{self.expr_to_rust(e.args[0])})"
+            if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
+                return (
+                    f"{recv}.{e.method}(&{self.expr_to_rust(e.args[0])})"
+                    ".map(|part| part.to_string())"
+                )
+            if e.method in ("split_once", "rsplit_once") and len(e.args) == 1:
+                return (
+                    f"{recv}.{e.method}(&{self.expr_to_rust(e.args[0])})"
+                    ".map(|(left, right)| "
+                    "(left.to_string(), right.to_string()))"
+                )
+            if e.method == "is_empty" and not e.args:
+                return f"{recv}.is_empty()"
+            if e.method == "repeat" and len(e.args) == 1:
+                return (
+                    f"{recv}.repeat(("
+                    f"{self.expr_to_rust(e.args[0])}) as usize)"
+                )
             if e.method == "contains" and len(e.args) == 1:
                 arg = self.expr_to_rust(e.args[0])
                 return f"{recv}.contains(&{arg})"
@@ -929,6 +1025,15 @@ class RustCodegen:
                         f"{right_pat.name}| {left_pat.name}.cmp("
                         f"{right_pat.name}))"
                     )
+            if (
+                e.method == "sort_by_key"
+                and len(e.args) == 1
+                and isinstance(e.args[0], Closure)
+            ):
+                return (
+                    f"{recv}.sort_by_key("
+                    f"{self.expr_to_rust(e.args[0])})"
+                )
             args = ", ".join(self.expr_to_rust(a) for a in e.args)
             return f"{self.expr_to_rust(e.receiver)}.{e.method}({args})"
         if isinstance(e, Field):

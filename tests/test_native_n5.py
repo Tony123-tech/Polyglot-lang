@@ -84,6 +84,164 @@ async fn n5_async_add(a: i64, b: i64) -> i64 { a + b }
     "async_identity": """
 async fn n5_async_identity(x: i64) -> i64 { x }
 """,
+    "vec_is_empty": """
+fn n5_vec_is_empty(values: Vec<i64>) -> bool {
+    values.is_empty()
+}
+""",
+    "vec_clear": """
+fn n5_vec_clear(mut values: Vec<i64>) -> Vec<i64> {
+    values.clear();
+    values
+}
+""",
+    "vec_reverse": """
+fn n5_vec_reverse(mut values: Vec<i64>) -> Vec<i64> {
+    values.reverse();
+    values
+}
+""",
+    "string_repeat": """
+fn n5_string_repeat(value: String, count: i64) -> String {
+    value.repeat(count)
+}
+""",
+    "vec_first": """
+fn n5_vec_first(values: Vec<i64>) -> i64 {
+    values.first().unwrap_or(-1)
+}
+""",
+    "vec_last": """
+fn n5_vec_last(values: Vec<i64>) -> i64 {
+    values.last().unwrap_or(-1)
+}
+""",
+    "vec_get": """
+fn n5_vec_get(values: Vec<i64>, index: i64) -> i64 {
+    values.get(index).unwrap_or(-1)
+}
+""",
+    "string_contains_find": """
+fn n5_string_contains(value: String, needle: String) -> bool {
+    value.contains(needle)
+}
+fn n5_string_find(value: String, needle: String) -> i64 {
+    value.find(needle).unwrap_or(0) as i64
+}
+""",
+    "vec_truncate_string_predicates": """
+fn n5_vec_truncate(values: Vec<i64>, length: i64) -> i64 {
+    values.truncate(length);
+    values.len()
+}
+fn n5_string_is_empty(value: String) -> bool {
+    value.is_empty()
+}
+fn n5_string_starts_with(value: String, prefix: String) -> bool {
+    value.starts_with(prefix)
+}
+fn n5_string_ends_with(value: String, suffix: String) -> bool {
+    value.ends_with(suffix)
+}
+""",
+    "string_trim_ascii": """
+fn n5_string_trim_start(value: String) -> String {
+    value.trim_start()
+}
+fn n5_string_trim_end(value: String) -> String {
+    value.trim_end()
+}
+fn n5_string_is_ascii(value: String) -> bool {
+    value.is_ascii()
+}
+""",
+    "string_lines_whitespace_and_vec_sort_unstable": """
+fn n5_string_lines(value: String) -> Vec<String> {
+    value.lines()
+}
+fn n5_string_split_whitespace(value: String) -> Vec<String> {
+    value.split_whitespace()
+}
+fn n5_vec_sort_unstable(values: Vec<i64>) -> Vec<i64> {
+    values.sort_unstable();
+    values
+}
+""",
+    "string_bytes_boundaries_ascii_case": """
+fn n5_string_as_bytes(value: String) -> Vec<u8> {
+    value.as_bytes()
+}
+fn n5_string_is_char_boundary(value: String, index: i64) -> bool {
+    value.is_char_boundary(index)
+}
+fn n5_string_to_ascii_lowercase(value: String) -> String {
+    value.to_ascii_lowercase()
+}
+fn n5_string_to_ascii_uppercase(value: String) -> String {
+    value.to_ascii_uppercase()
+}
+""",
+    "vec_rotate_fill_swap": """
+fn n5_vec_rotate_left(mut values: Vec<i64>, amount: i64) -> Vec<i64> {
+    values.rotate_left(amount);
+    values
+}
+fn n5_vec_rotate_right(mut values: Vec<i64>, amount: i64) -> Vec<i64> {
+    values.rotate_right(amount);
+    values
+}
+fn n5_vec_fill(mut values: Vec<i64>, value: i64) -> Vec<i64> {
+    values.fill(value);
+    values
+}
+fn n5_vec_swap(mut values: Vec<i64>, left: i64, right: i64) -> Vec<i64> {
+    values.swap(left, right);
+    values
+}
+""",
+    "vec_extend_from_slice_resize_split_off": """
+fn n5_vec_extend_from_slice(mut values: Vec<i64>, other: Vec<i64>) -> Vec<i64> {
+    values.extend_from_slice(other);
+    values
+}
+fn n5_vec_resize(mut values: Vec<i64>, length: i64, value: i64) -> Vec<i64> {
+    values.resize(length, value);
+    values
+}
+fn n5_vec_split_off(mut values: Vec<i64>, index: i64) -> i64 {
+    let tail = values.split_off(index);
+    values.len() * 10 + tail.len()
+}
+""",
+    "string_rfind_strip_split_once": """
+fn n5_string_rfind(value: String, needle: String) -> i64 {
+    value.rfind(needle).unwrap_or(0) as i64
+}
+fn n5_string_strip_prefix(value: String, prefix: String) -> String {
+    value.strip_prefix(prefix).unwrap_or("missing".to_string())
+}
+fn n5_string_strip_suffix(value: String, suffix: String) -> String {
+    value.strip_suffix(suffix).unwrap_or("missing".to_string())
+}
+fn n5_string_split_once(value: String, separator: String) -> Option<(String, String)> {
+    value.split_once(separator)
+}
+fn n5_string_rsplit_once(value: String, separator: String) -> Option<(String, String)> {
+    value.rsplit_once(separator)
+}
+""",
+    "vec_partition_sort_by_key_is_sorted": """
+fn n5_vec_partition(values: Vec<i64>) -> (Vec<i64>, Vec<i64>) {
+    values.into_iter().partition(|value| value % 2 == 0)
+}
+fn n5_vec_sort_by_key(mut values: Vec<i64>) -> Vec<i64> {
+    values.sort_by_key(|value| -value);
+    values
+}
+fn n5_vec_is_sorted(values: Vec<i64>) -> bool {
+    values.is_sorted()
+}
+""",
 }
 
 
@@ -146,6 +304,111 @@ def test_native_option_none_construction(native_ns):
 
 
 @pytest.mark.native
+def test_native_vec_clear_empty_reverse_and_string_repeat(native_ns):
+    assert native_ns["n5_vec_is_empty"]([]) is True
+    assert native_ns["n5_vec_is_empty"]([1]) is False
+    assert native_ns["n5_vec_clear"]([1, 2, 3]) == []
+    assert native_ns["n5_vec_reverse"]([1, 2, 3]) == [3, 2, 1]
+    assert native_ns["n5_string_repeat"]("ab", 3) == "ababab"
+
+
+@pytest.mark.native
+def test_native_vec_first_last_get_and_string_search(native_ns):
+    assert native_ns["n5_vec_first"]([8, 9]) == 8
+    assert native_ns["n5_vec_first"]([]) == -1
+    assert native_ns["n5_vec_last"]([8, 9]) == 9
+    assert native_ns["n5_vec_last"]([]) == -1
+    assert native_ns["n5_vec_get"]([8, 9], 1) == 9
+    assert native_ns["n5_vec_get"]([8, 9], -1) == -1
+    assert native_ns["n5_string_contains"]("café", "fé") is True
+    assert native_ns["n5_string_contains"]("café", "tea") is False
+    assert native_ns["n5_string_find"]("café", "é") == 3
+    assert native_ns["n5_string_find"]("café", "tea") == 0
+
+
+@pytest.mark.native
+def test_native_vec_truncate_and_string_predicates(native_ns):
+    assert native_ns["n5_vec_truncate"]([1, 2, 3], 2) == 2
+    assert native_ns["n5_vec_truncate"]([1, 2], -1) == 2
+    assert native_ns["n5_string_is_empty"]("") is True
+    assert native_ns["n5_string_is_empty"]("polyglot") is False
+    assert native_ns["n5_string_starts_with"]("polyglot", "poly") is True
+    assert native_ns["n5_string_starts_with"]("polyglot", "glot") is False
+    assert native_ns["n5_string_ends_with"]("polyglot", "glot") is True
+    assert native_ns["n5_string_ends_with"]("polyglot", "poly") is False
+
+
+@pytest.mark.native
+def test_native_string_trim_start_end_and_is_ascii(native_ns):
+    assert native_ns["n5_string_trim_start"]("  polyglot \t") == "polyglot \t"
+    assert native_ns["n5_string_trim_end"]("  polyglot \t") == "  polyglot"
+    assert native_ns["n5_string_is_ascii"]("polyglot") is True
+    assert native_ns["n5_string_is_ascii"]("café") is False
+
+
+@pytest.mark.native
+def test_native_string_lines_whitespace_and_vec_sort_unstable(native_ns):
+    assert native_ns["n5_string_lines"]("one\r\ntwo\n") == ["one", "two"]
+    assert native_ns["n5_string_lines"]("") == []
+    assert native_ns["n5_string_split_whitespace"](" one\t two\nthree ") == [
+        "one", "two", "three",
+    ]
+    assert native_ns["n5_vec_sort_unstable"]([3, 1, 2, 1]) == [1, 1, 2, 3]
+
+
+@pytest.mark.native
+def test_native_string_bytes_boundaries_and_ascii_case(native_ns):
+    assert native_ns["n5_string_as_bytes"]("café") == b"caf\xc3\xa9"
+    assert native_ns["n5_string_is_char_boundary"]("café", 3) is True
+    assert native_ns["n5_string_is_char_boundary"]("café", 4) is False
+    assert native_ns["n5_string_is_char_boundary"]("café", -1) is False
+    assert native_ns["n5_string_to_ascii_lowercase"]("CAFÉ") == "cafÉ"
+    assert native_ns["n5_string_to_ascii_uppercase"]("café") == "CAFé"
+
+
+@pytest.mark.native
+def test_native_vec_rotate_fill_and_swap(native_ns):
+    assert native_ns["n5_vec_rotate_left"]([1, 2, 3, 4], 1) == [2, 3, 4, 1]
+    assert native_ns["n5_vec_rotate_left"]([1, 2, 3], 3) == [1, 2, 3]
+    assert native_ns["n5_vec_rotate_right"]([1, 2, 3, 4], 2) == [3, 4, 1, 2]
+    assert native_ns["n5_vec_fill"]([1, 2, 3], 7) == [7, 7, 7]
+    assert native_ns["n5_vec_swap"]([1, 2, 3], 0, 2) == [3, 2, 1]
+
+
+@pytest.mark.native
+def test_native_vec_extend_from_slice_resize_and_split_off(native_ns):
+    assert native_ns["n5_vec_extend_from_slice"]([1, 2], [3, 4]) == [1, 2, 3, 4]
+    assert native_ns["n5_vec_resize"]([1, 2, 3], 2, 9) == [1, 2]
+    assert native_ns["n5_vec_resize"]([1], 3, 9) == [1, 9, 9]
+    assert native_ns["n5_vec_split_off"]([1, 2, 3, 4], 2) == 22
+    assert native_ns["n5_vec_split_off"]([1, 2], 0) == 2
+    assert native_ns["n5_vec_split_off"]([1, 2], 2) == 20
+
+
+@pytest.mark.native
+def test_native_string_rfind_strip_and_split_once(native_ns):
+    assert native_ns["n5_string_rfind"]("caféé", "é") == 5
+    assert native_ns["n5_string_rfind"]("café", "tea") == 0
+    assert native_ns["n5_string_strip_prefix"]("café", "ca") == "fé"
+    assert native_ns["n5_string_strip_prefix"]("café", "tea") == "missing"
+    assert native_ns["n5_string_strip_suffix"]("café", "fé") == "ca"
+    assert native_ns["n5_string_strip_suffix"]("café", "tea") == "missing"
+    assert native_ns["n5_string_split_once"]("a:b:c", ":") == ("a", "b:c")
+    assert native_ns["n5_string_rsplit_once"]("a:b:c", ":") == ("a:b", "c")
+    assert native_ns["n5_string_split_once"]("abc", ":") is None
+    assert native_ns["n5_string_split_once"]("abc", "") == ("", "abc")
+    assert native_ns["n5_string_rsplit_once"]("abc", "") == ("abc", "")
+
+
+@pytest.mark.native
+def test_native_vec_partition_sort_by_key_and_is_sorted(native_ns):
+    assert native_ns["n5_vec_partition"]([1, 2, 3, 4]) == ([2, 4], [1, 3])
+    assert native_ns["n5_vec_sort_by_key"]([1, 3, 2, 4]) == [4, 3, 2, 1]
+    assert native_ns["n5_vec_is_sorted"]([1, 1, 2, 3]) is True
+    assert native_ns["n5_vec_is_sorted"]([1, 3, 2]) is False
+
+
+@pytest.mark.native
 def test_native_result_ok_construction(native_ns):
     assert native_ns["n5_result_ok_construction"]() == 7
 
@@ -172,6 +435,246 @@ def test_python_option_result_construction():
     assert ns["ok"]() == ns["_Result"].from_ok(2)
     assert ns["err"]() == ns["_Result"].from_err("x")
 
+
+def test_python_vec_clear_empty_reverse_and_string_repeat():
+    ns = _run_python("""
+    fn n5_vec_is_empty(values: Vec<i64>) -> bool {
+        values.is_empty()
+    }
+    fn n5_vec_clear(mut values: Vec<i64>) -> Vec<i64> {
+        values.clear();
+        values
+    }
+    fn n5_vec_reverse(mut values: Vec<i64>) -> Vec<i64> {
+        values.reverse();
+        values
+    }
+    fn n5_string_repeat(value: String, count: i64) -> String {
+        value.repeat(count)
+    }
+    """)
+    assert ns["n5_vec_is_empty"]([]) is True
+    assert ns["n5_vec_is_empty"]([1]) is False
+    assert ns["n5_vec_clear"]([1, 2, 3]) == []
+    assert ns["n5_vec_reverse"]([1, 2, 3]) == [3, 2, 1]
+    assert ns["n5_string_repeat"]("ab", 3) == "ababab"
+
+
+def test_python_vec_first_last_get_and_string_search():
+    ns = _run_python("""
+    fn n5_vec_first(values: Vec<i64>) -> i64 {
+        values.first().unwrap_or(-1)
+    }
+    fn n5_vec_last(values: Vec<i64>) -> i64 {
+        values.last().unwrap_or(-1)
+    }
+    fn n5_vec_get(values: Vec<i64>, index: i64) -> i64 {
+        values.get(index).unwrap_or(-1)
+    }
+    fn n5_string_contains(value: String, needle: String) -> bool {
+        value.contains(needle)
+    }
+    fn n5_string_find(value: String, needle: String) -> i64 {
+        value.find(needle).unwrap_or(0) as i64
+    }
+    """)
+    assert ns["n5_vec_first"]([8, 9]) == 8
+    assert ns["n5_vec_first"]([]) == -1
+    assert ns["n5_vec_last"]([8, 9]) == 9
+    assert ns["n5_vec_last"]([]) == -1
+    assert ns["n5_vec_get"]([8, 9], 1) == 9
+    assert ns["n5_vec_get"]([8, 9], -1) == -1
+    assert ns["n5_string_contains"]("café", "fé") is True
+    assert ns["n5_string_contains"]("café", "tea") is False
+    assert ns["n5_string_find"]("café", "é") == 3
+    assert ns["n5_string_find"]("café", "tea") == 0
+
+
+def test_python_vec_truncate_and_string_predicates():
+    ns = _run_python("""
+    fn n5_vec_truncate(values: Vec<i64>, length: i64) -> i64 {
+        values.truncate(length);
+        values.len()
+    }
+    fn n5_string_is_empty(value: String) -> bool {
+        value.is_empty()
+    }
+    fn n5_string_starts_with(value: String, prefix: String) -> bool {
+        value.starts_with(prefix)
+    }
+    fn n5_string_ends_with(value: String, suffix: String) -> bool {
+        value.ends_with(suffix)
+    }
+    """)
+    assert ns["n5_vec_truncate"]([1, 2, 3], 2) == 2
+    assert ns["n5_vec_truncate"]([1, 2], -1) == 2
+    assert ns["n5_string_is_empty"]("") is True
+    assert ns["n5_string_is_empty"]("polyglot") is False
+    assert ns["n5_string_starts_with"]("polyglot", "poly") is True
+    assert ns["n5_string_starts_with"]("polyglot", "glot") is False
+    assert ns["n5_string_ends_with"]("polyglot", "glot") is True
+    assert ns["n5_string_ends_with"]("polyglot", "poly") is False
+
+
+def test_python_string_trim_start_end_and_is_ascii():
+    ns = _run_python("""
+    fn n5_string_trim_start(value: String) -> String {
+        value.trim_start()
+    }
+    fn n5_string_trim_end(value: String) -> String {
+        value.trim_end()
+    }
+    fn n5_string_is_ascii(value: String) -> bool {
+        value.is_ascii()
+    }
+    """)
+    assert ns["n5_string_trim_start"]("  polyglot \t") == "polyglot \t"
+    assert ns["n5_string_trim_end"]("  polyglot \t") == "  polyglot"
+    assert ns["n5_string_is_ascii"]("polyglot") is True
+    assert ns["n5_string_is_ascii"]("café") is False
+
+
+def test_python_string_lines_whitespace_and_vec_sort_unstable():
+    ns = _run_python("""
+    fn n5_string_lines(value: String) -> Vec<String> {
+        value.lines()
+    }
+    fn n5_string_split_whitespace(value: String) -> Vec<String> {
+        value.split_whitespace()
+    }
+    fn n5_vec_sort_unstable(values: Vec<i64>) -> Vec<i64> {
+        values.sort_unstable();
+        values
+    }
+    """)
+    assert ns["n5_string_lines"]("one\r\ntwo\n") == ["one", "two"]
+    assert ns["n5_string_lines"]("") == []
+    assert ns["n5_string_split_whitespace"](" one\t two\nthree ") == [
+        "one", "two", "three",
+    ]
+    assert ns["n5_vec_sort_unstable"]([3, 1, 2, 1]) == [1, 1, 2, 3]
+
+
+def test_python_string_bytes_boundaries_and_ascii_case():
+    ns = _run_python("""
+    fn n5_string_as_bytes(value: String) -> Vec<u8> {
+        value.as_bytes()
+    }
+    fn n5_string_is_char_boundary(value: String, index: i64) -> bool {
+        value.is_char_boundary(index)
+    }
+    fn n5_string_to_ascii_lowercase(value: String) -> String {
+        value.to_ascii_lowercase()
+    }
+    fn n5_string_to_ascii_uppercase(value: String) -> String {
+        value.to_ascii_uppercase()
+    }
+    """)
+    assert ns["n5_string_as_bytes"]("café") == b"caf\xc3\xa9"
+    assert ns["n5_string_is_char_boundary"]("café", 3) is True
+    assert ns["n5_string_is_char_boundary"]("café", 4) is False
+    assert ns["n5_string_is_char_boundary"]("café", -1) is False
+    assert ns["n5_string_to_ascii_lowercase"]("CAFÉ") == "cafÉ"
+    assert ns["n5_string_to_ascii_uppercase"]("café") == "CAFé"
+
+
+def test_python_vec_rotate_fill_and_swap():
+    ns = _run_python("""
+    fn n5_vec_rotate_left(mut values: Vec<i64>, amount: i64) -> Vec<i64> {
+        values.rotate_left(amount);
+        values
+    }
+    fn n5_vec_rotate_right(mut values: Vec<i64>, amount: i64) -> Vec<i64> {
+        values.rotate_right(amount);
+        values
+    }
+    fn n5_vec_fill(mut values: Vec<i64>, value: i64) -> Vec<i64> {
+        values.fill(value);
+        values
+    }
+    fn n5_vec_swap(mut values: Vec<i64>, left: i64, right: i64) -> Vec<i64> {
+        values.swap(left, right);
+        values
+    }
+    """)
+    assert ns["n5_vec_rotate_left"]([1, 2, 3, 4], 1) == [2, 3, 4, 1]
+    assert ns["n5_vec_rotate_left"]([1, 2, 3], 3) == [1, 2, 3]
+    assert ns["n5_vec_rotate_right"]([1, 2, 3, 4], 2) == [3, 4, 1, 2]
+    assert ns["n5_vec_fill"]([1, 2, 3], 7) == [7, 7, 7]
+    assert ns["n5_vec_swap"]([1, 2, 3], 0, 2) == [3, 2, 1]
+
+
+def test_python_vec_extend_from_slice_resize_and_split_off():
+    ns = _run_python("""
+    fn n5_vec_extend_from_slice(mut values: Vec<i64>, other: Vec<i64>) -> Vec<i64> {
+        values.extend_from_slice(other);
+        values
+    }
+    fn n5_vec_resize(mut values: Vec<i64>, length: i64, value: i64) -> Vec<i64> {
+        values.resize(length, value);
+        values
+    }
+    fn n5_vec_split_off(mut values: Vec<i64>, index: i64) -> i64 {
+        let tail = values.split_off(index);
+        values.len() * 10 + tail.len()
+    }
+    """)
+    assert ns["n5_vec_extend_from_slice"]([1, 2], [3, 4]) == [1, 2, 3, 4]
+    assert ns["n5_vec_resize"]([1, 2, 3], 2, 9) == [1, 2]
+    assert ns["n5_vec_resize"]([1], 3, 9) == [1, 9, 9]
+    assert ns["n5_vec_split_off"]([1, 2, 3, 4], 2) == 22
+    assert ns["n5_vec_split_off"]([1, 2], 0) == 2
+    assert ns["n5_vec_split_off"]([1, 2], 2) == 20
+
+
+def test_python_string_rfind_strip_and_split_once():
+    ns = _run_python("""
+    fn n5_string_rfind(value: String, needle: String) -> i64 {
+        value.rfind(needle).unwrap_or(0) as i64
+    }
+    fn n5_string_strip_prefix(value: String, prefix: String) -> String {
+        value.strip_prefix(prefix).unwrap_or("missing".to_string())
+    }
+    fn n5_string_strip_suffix(value: String, suffix: String) -> String {
+        value.strip_suffix(suffix).unwrap_or("missing".to_string())
+    }
+    fn n5_string_split_once(value: String, separator: String) -> Option<(String, String)> {
+        value.split_once(separator)
+    }
+    fn n5_string_rsplit_once(value: String, separator: String) -> Option<(String, String)> {
+        value.rsplit_once(separator)
+    }
+    """)
+    assert ns["n5_string_rfind"]("caféé", "é") == 5
+    assert ns["n5_string_rfind"]("café", "tea") == 0
+    assert ns["n5_string_strip_prefix"]("café", "ca") == "fé"
+    assert ns["n5_string_strip_prefix"]("café", "tea") == "missing"
+    assert ns["n5_string_strip_suffix"]("café", "fé") == "ca"
+    assert ns["n5_string_strip_suffix"]("café", "tea") == "missing"
+    assert ns["n5_string_split_once"]("a:b:c", ":").unwrap() == ("a", "b:c")
+    assert ns["n5_string_rsplit_once"]("a:b:c", ":").unwrap() == ("a:b", "c")
+    assert ns["n5_string_split_once"]("abc", ":").is_none()
+    assert ns["n5_string_split_once"]("abc", "").unwrap() == ("", "abc")
+    assert ns["n5_string_rsplit_once"]("abc", "").unwrap() == ("abc", "")
+
+
+def test_python_vec_partition_sort_by_key_and_is_sorted():
+    ns = _run_python("""
+    fn n5_vec_partition(values: Vec<i64>) -> (Vec<i64>, Vec<i64>) {
+        values.into_iter().partition(|value| value % 2 == 0)
+    }
+    fn n5_vec_sort_by_key(mut values: Vec<i64>) -> Vec<i64> {
+        values.sort_by_key(|value| -value);
+        values
+    }
+    fn n5_vec_is_sorted(values: Vec<i64>) -> bool {
+        values.is_sorted()
+    }
+    """)
+    assert ns["n5_vec_partition"]([1, 2, 3, 4]) == ([2, 4], [1, 3])
+    assert ns["n5_vec_sort_by_key"]([1, 3, 2, 4]) == [4, 3, 2, 1]
+    assert ns["n5_vec_is_sorted"]([1, 1, 2, 3]) is True
+    assert ns["n5_vec_is_sorted"]([1, 3, 2]) is False
 
 # ---------------------------------------------------------------------------
 # Option unwrap (native)

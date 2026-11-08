@@ -738,6 +738,76 @@ Tests: `tests/test_native_n5.py` covers native and Python Option/Result, async, 
 
 `pytest -q`: 252 passed, 9 skipped, 4 deselected.
 
+## N6 batch 1
+
+Added Vec `is_empty`, `clear`, and `reverse`, plus String `repeat`, with equivalent Python and native lowerings. Native repeat counts are cast to `usize`; the Python backend uses string multiplication.
+
+- Covered by `tests/test_native_n5.py::test_native_vec_clear_empty_reverse_and_string_repeat` and `tests/test_native_n5.py::test_python_vec_clear_empty_reverse_and_string_repeat`.
+- `pytest -q`: 258 passed, 9 skipped, 4 failed, 7 deselected. The four failures were in unrelated inline annotation resolution and native extension loading (`_Py_IsFinalizing`); the affected Vec/String/N5 tests passed (95 passed).
+
+## N6 batch 2
+
+Added Vec `first`, `last`, and bounds-checked `get`, plus String `find`, with matching native and Python behavior. String search returns an Option containing the UTF-8 byte offset, and an absent match returns None.
+
+- Covered by `tests/test_native_n5.py::test_native_vec_first_last_get_and_string_search` and `tests/test_native_n5.py::test_python_vec_first_last_get_and_string_search`.
+- `pytest -q`: 260 passed, 9 skipped, 4 failed, 7 deselected. The same three inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error remained.
+
+## N6 batch 3
+
+Added Vec `truncate` and String `is_empty`, `starts_with`, and `ends_with` to both backends. Native truncation casts the signed source index to `usize`, matching Rust's behavior for negative values (no truncation).
+
+- Covered by `tests/test_native_n5.py::test_native_vec_truncate_and_string_predicates` and `tests/test_native_n5.py::test_python_vec_truncate_and_string_predicates`.
+- `pytest -q`: 262 passed, 9 skipped, 4 failed, 7 deselected. The same three inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error remained.
+
+## N6 batch 4
+
+Added String `trim_start`, `trim_end`, and `is_ascii` on both backends.
+
+- Covered by `tests/test_native_n5.py::test_native_string_trim_start_end_and_is_ascii` and `tests/test_native_n5.py::test_python_string_trim_start_end_and_is_ascii`.
+- `pytest -q`: 264 passed, 9 skipped, 4 failed, 7 deselected. The same three inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error remained.
+
+## N6 batch 5
+
+Added String `lines` and `split_whitespace`, plus Vec `sort_unstable`, on both backends. Python `lines` follows Rust's newline and CRLF terminator behavior.
+
+- Covered by `tests/test_native_n5.py::test_native_string_lines_whitespace_and_vec_sort_unstable` and `tests/test_native_n5.py::test_python_string_lines_whitespace_and_vec_sort_unstable`.
+- `pytest -q`: 266 passed, 9 skipped, 4 failed, 7 deselected. The same three inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error remained.
+
+## N6 batch 6
+
+Added String `as_bytes`, `is_char_boundary`, `to_ascii_lowercase`, and `to_ascii_uppercase` to both backends. `as_bytes` returns Python `bytes` from either backend, and the ASCII case methods leave non-ASCII characters unchanged.
+
+- Covered by `tests/test_native_n5.py::test_native_string_bytes_boundaries_and_ascii_case` and `tests/test_native_n5.py::test_python_string_bytes_boundaries_and_ascii_case`.
+- `pytest -q`: 268 passed, 9 skipped, 4 failed, 7 deselected. The same three inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error remained.
+
+## N6 batch 7
+
+Added Vec `rotate_left`, `rotate_right`, `fill`, and `swap` to both backends. Python lowering checks rotation and swap bounds rather than silently accepting indices or counts that Rust would reject.
+
+- Covered by `tests/test_native_n5.py::test_native_vec_rotate_fill_and_swap` and `tests/test_native_n5.py::test_python_vec_rotate_fill_and_swap`.
+- `pytest -q`: 270 passed, 9 skipped, 4 failed, 7 deselected in the available Python 3.12 environment. The failures were the recurring inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error; the targeted N5 tests passed (51 passed).
+
+## N6 batch 8
+
+Added Vec `extend_from_slice`, `resize`, and `split_off` on both backends. The Python lowering preserves the receiver's retained prefix for `split_off` and does not mutate the source slice supplied to `extend_from_slice`.
+
+- Covered by `tests/test_native_n5.py::test_native_vec_extend_from_slice_resize_and_split_off` and `tests/test_native_n5.py::test_python_vec_extend_from_slice_resize_and_split_off`.
+- `pytest -q`: 272 passed, 9 skipped, 4 failed, 7 deselected in the available Python 3.12 environment. The failures were the recurring inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error; the targeted N5 tests passed (53 passed).
+
+## N6 batch 9
+
+Added String `rfind`, `strip_prefix`, `strip_suffix`, `split_once`, and `rsplit_once` on both backends. Search positions are UTF-8 byte offsets, and split methods return an Option containing the two owned strings.
+
+- Covered by `tests/test_native_n5.py::test_native_string_rfind_strip_and_split_once` and `tests/test_native_n5.py::test_python_string_rfind_strip_and_split_once`.
+- `pytest -q`: 274 passed, 9 skipped, 4 failed, 7 deselected in the available Python 3.12 environment. The failures were the recurring inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error; the targeted N5 tests passed (55 passed).
+
+## N6 batch 10
+
+Added Vec `partition`, `sort_by_key`, and `is_sorted` on both backends. Python lowering accepts the Rust-style `into_iter()` before `partition` and returns a pair of stable-order lists.
+
+- Covered by `tests/test_native_n5.py::test_native_vec_partition_sort_by_key_and_is_sorted` and `tests/test_native_n5.py::test_python_vec_partition_sort_by_key_and_is_sorted`.
+- `pytest -q`: 276 passed, 9 skipped, 4 failed, 7 deselected in the available Python 3.12 environment. The failures were the recurring inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error; the targeted N5 tests passed (57 passed).
+
 ## Milestone status
 
 See the README Status table for the authoritative milestone status.

@@ -275,6 +275,136 @@ def _runtime_filter(values, predicate):
     return [value for value in values if predicate(value)]
 
 
+def _runtime_vec_get(values, index):
+    if 0 <= index < len(values):
+        return _Option.some(values[index])
+    return _Option.none()
+
+
+def _runtime_vec_truncate(values, length):
+    if length >= 0:
+        del values[length:]
+
+
+def _runtime_vec_rotate(values, amount, right=False):
+    if not 0 <= amount <= len(values):
+        raise ValueError("rotation amount exceeds vector length")
+    if amount:
+        split = len(values) - amount if right else amount
+        values[:] = values[split:] + values[:split]
+
+
+def _runtime_vec_fill(values, value):
+    for index in range(len(values)):
+        values[index] = value
+
+
+def _runtime_vec_swap(values, left, right):
+    if not 0 <= left < len(values) or not 0 <= right < len(values):
+        raise IndexError("vector swap index out of range")
+    values[left], values[right] = values[right], values[left]
+
+
+def _runtime_vec_extend_from_slice(values, other):
+    values.extend(other)
+
+
+def _runtime_vec_resize(values, length, value):
+    if length < 0:
+        raise ValueError("resize length must be non-negative")
+    if length < len(values):
+        del values[length:]
+    else:
+        values.extend([value] * (length - len(values)))
+
+
+def _runtime_vec_split_off(values, index):
+    if not 0 <= index <= len(values):
+        raise IndexError("split index out of range")
+    tail = values[index:]
+    del values[index:]
+    return tail
+
+
+def _runtime_vec_partition(values, predicate):
+    matching = []
+    remaining = []
+    for value in values:
+        (matching if predicate(value) else remaining).append(value)
+    return matching, remaining
+
+ 
+def _runtime_string_find(value, needle):
+    position = value.find(needle)
+    if position < 0:
+        return _Option.none()
+    return _Option.some(len(value[:position].encode("utf-8")))
+
+
+def _runtime_string_rfind(value, needle):
+    position = value.rfind(needle)
+    if position < 0:
+        return _Option.none()
+    return _Option.some(len(value[:position].encode("utf-8")))
+
+
+def _runtime_string_strip(value, part, *, prefix):
+    if prefix:
+        if not value.startswith(part):
+            return _Option.none()
+        return _Option.some(value[len(part):])
+    if not value.endswith(part):
+        return _Option.none()
+    return _Option.some(value[:len(value) - len(part)] if part else "")
+
+
+def _runtime_string_split_once(value, separator, *, reverse):
+    position = (
+        value.rfind(separator) if reverse else value.find(separator)
+    )
+    if position < 0:
+        return _Option.none()
+    return _Option.some((
+        value[:position],
+        value[position + len(separator):],
+    ))
+
+
+def _runtime_string_lines(value):
+    if not value:
+        return []
+    lines = value.split("\n")
+    if lines[-1] == "":
+        lines.pop()
+    for index in range(len(lines) - 1):
+        if lines[index].endswith("\r"):
+            lines[index] = lines[index][:-1]
+    return lines
+
+
+def _runtime_string_is_char_boundary(value, index):
+    encoded = value.encode("utf-8")
+    return (
+        0 <= index <= len(encoded)
+        and (
+            index == len(encoded)
+            or encoded[index] & 0xC0 != 0x80
+        )
+    )
+
+
+def _runtime_string_to_ascii_lowercase(value):
+    return value.translate(
+        str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+    )
+
+
+def _runtime_string_to_ascii_uppercase(value):
+    return value.translate(
+        str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    )
+
+
 def _runtime_parse(value):
     try:
         return _Result.from_ok(int(value))
@@ -565,6 +695,23 @@ class Translator:
         ns["_vec_windows"] = _runtime_vec_windows
         ns["_vec_chunks"] = _runtime_vec_chunks
         ns["_filter"] = _runtime_filter
+        ns["_vec_get"] = _runtime_vec_get
+        ns["_vec_truncate"] = _runtime_vec_truncate
+        ns["_vec_rotate"] = _runtime_vec_rotate
+        ns["_vec_fill"] = _runtime_vec_fill
+        ns["_vec_swap"] = _runtime_vec_swap
+        ns["_vec_extend_from_slice"] = _runtime_vec_extend_from_slice
+        ns["_vec_resize"] = _runtime_vec_resize
+        ns["_vec_split_off"] = _runtime_vec_split_off
+        ns["_vec_partition"] = _runtime_vec_partition
+        ns["_string_find"] = _runtime_string_find
+        ns["_string_rfind"] = _runtime_string_rfind
+        ns["_string_strip"] = _runtime_string_strip
+        ns["_string_split_once"] = _runtime_string_split_once
+        ns["_string_lines"] = _runtime_string_lines
+        ns["_string_is_char_boundary"] = _runtime_string_is_char_boundary
+        ns["_string_to_ascii_lowercase"] = _runtime_string_to_ascii_lowercase
+        ns["_string_to_ascii_uppercase"] = _runtime_string_to_ascii_uppercase
         ns["_result_parse"] = _runtime_parse
 
         # Register the namespace as a module so @dataclass can look it up
@@ -1651,6 +1798,8 @@ class Translator:
             return ast.Call(func=func, args=args, keywords=[])
         if isinstance(e, MethodCall):
             recv = self.translate_expr(e.receiver)
+            if e.method == "into_iter" and not e.args:
+                return recv
             if e.method == "map_err" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
@@ -1767,6 +1916,55 @@ class Translator:
                     args=[recv, self._translate_closure(closure)],
                     keywords=[],
                 )
+            if e.method == "partition" and len(e.args) == 1:
+                closure = e.args[0]
+                if (
+                    not isinstance(closure, Closure)
+                    or len(closure.params) != 1
+                    or not isinstance(closure.params[0][0], PatIdent)
+                ):
+                    raise TranslateError(
+                        "partition expects a single identifier parameter",
+                        e.line, e.col,
+                    )
+                return ast.Call(
+                    func=ast.Name(id="_vec_partition", ctx=ast.Load()),
+                    args=[recv, self._translate_closure(closure)],
+                    keywords=[],
+                )
+            if e.method == "sort_by_key" and len(e.args) == 1:
+                closure = e.args[0]
+                if (
+                    not isinstance(closure, Closure)
+                    or len(closure.params) != 1
+                    or not isinstance(closure.params[0][0], PatIdent)
+                ):
+                    raise TranslateError(
+                        "sort_by_key expects a single identifier parameter",
+                        e.line, e.col,
+                    )
+                return ast.Call(
+                    func=ast.Attribute(value=recv, attr="sort", ctx=ast.Load()),
+                    args=[],
+                    keywords=[
+                        ast.keyword(
+                            arg="key",
+                            value=self._translate_closure(closure),
+                        ),
+                    ],
+                )
+            if e.method == "is_sorted" and not e.args:
+                return ast.Compare(
+                    left=recv,
+                    ops=[ast.Eq()],
+                    comparators=[
+                        ast.Call(
+                            func=ast.Name(id="sorted", ctx=ast.Load()),
+                            args=[recv],
+                            keywords=[],
+                        ),
+                    ],
+                )
             if e.method == "sort_by" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
@@ -1791,6 +1989,233 @@ class Translator:
                     left=self.translate_expr(e.args[0]),
                     ops=[ast.In()],
                     comparators=[recv],
+                )
+            if e.method in ("first", "last") and not e.args:
+                index = ast.Constant(value=0 if e.method == "first" else -1)
+                return ast.IfExp(
+                    test=ast.Compare(
+                        left=ast.Call(
+                            func=ast.Name(id="len", ctx=ast.Load()),
+                            args=[recv],
+                            keywords=[],
+                        ),
+                        ops=[ast.Gt()],
+                        comparators=[ast.Constant(value=0)],
+                    ),
+                    body=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id="_Option", ctx=ast.Load()),
+                            attr="some",
+                            ctx=ast.Load(),
+                        ),
+                        args=[ast.Subscript(
+                            value=recv,
+                            slice=index,
+                            ctx=ast.Load(),
+                        )],
+                        keywords=[],
+                    ),
+                    orelse=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id="_Option", ctx=ast.Load()),
+                            attr="none",
+                            ctx=ast.Load(),
+                        ),
+                        args=[],
+                        keywords=[],
+                    ),
+                )
+            if e.method == "get" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_get", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "find" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_string_find", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "rfind" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_string_rfind", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_string_strip", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                    ],
+                    keywords=[
+                        ast.keyword(
+                            arg="prefix",
+                            value=ast.Constant(
+                                value=e.method == "strip_prefix",
+                            ),
+                        ),
+                    ],
+                )
+            if e.method in ("split_once", "rsplit_once") and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_string_split_once", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                    ],
+                    keywords=[
+                        ast.keyword(
+                            arg="reverse",
+                            value=ast.Constant(value=e.method == "rsplit_once"),
+                        ),
+                    ],
+                )
+            if e.method == "truncate" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_truncate", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method in ("rotate_left", "rotate_right") and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_rotate", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                        ast.Constant(value=e.method == "rotate_right"),
+                    ],
+                    keywords=[],
+                )
+            if e.method == "fill" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_fill", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "swap" and len(e.args) == 2:
+                return ast.Call(
+                    func=ast.Name(id="_vec_swap", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                        self.translate_expr(e.args[1]),
+                    ],
+                    keywords=[],
+                )
+            if e.method == "extend_from_slice" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(
+                        id="_vec_extend_from_slice", ctx=ast.Load(),
+                    ),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "resize" and len(e.args) == 2:
+                return ast.Call(
+                    func=ast.Name(id="_vec_resize", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                        self.translate_expr(e.args[1]),
+                    ],
+                    keywords=[],
+                )
+            if e.method == "split_off" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_split_off", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method in ("starts_with", "ends_with") and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv,
+                        attr="startswith" if e.method == "starts_with" else "endswith",
+                        ctx=ast.Load(),
+                    ),
+                    args=[self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method in ("trim_start", "trim_end") and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv,
+                        attr="lstrip" if e.method == "trim_start" else "rstrip",
+                        ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[],
+                )
+            if e.method == "is_ascii" and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv, attr="isascii", ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[],
+                )
+            if e.method == "lines" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_string_lines", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "split_whitespace" and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv, attr="split", ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[],
+                )
+            if e.method == "sort_unstable" and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(value=recv, attr="sort", ctx=ast.Load()),
+                    args=[],
+                    keywords=[],
+                )
+            if e.method == "as_bytes" and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv, attr="encode", ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[],
+                )
+            if e.method == "is_char_boundary" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(
+                        id="_string_is_char_boundary", ctx=ast.Load(),
+                    ),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
+                return ast.Call(
+                    func=ast.Name(
+                        id=f"_string_{e.method}", ctx=ast.Load(),
+                    ),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "is_empty" and not e.args:
+                return ast.Compare(
+                    left=ast.Call(
+                        func=ast.Name(id="len", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    ),
+                    ops=[ast.Eq()],
+                    comparators=[ast.Constant(value=0)],
+                )
+            if e.method == "repeat" and len(e.args) == 1:
+                return ast.BinOp(
+                    left=recv,
+                    op=ast.Mult(),
+                    right=self.translate_expr(e.args[0]),
                 )
             if e.method == "clone" and not e.args:
                 return ast.Call(
