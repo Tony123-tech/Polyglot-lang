@@ -61,6 +61,12 @@ namespace = PythonBackend(sandbox=True).compile(program)
 For isolation levels A/B/C and the `X-Trusted-Token` requirement, see the
 Security section in [NOTES.md](NOTES.md#security).
 
+`trusted=False` is not a sandbox; it is a speed bump. The sandbox restricts
+`__builtins__` but does not provide process isolation. Treat untrusted input
+as requiring OS-level isolation, such as the subprocess or Docker levels
+described in `NOTES.md` (isolation B or C), with network access disabled and
+a read-only filesystem where appropriate.
+
 ## Performance
 
 Native builds use `sccache` through `RUSTC_WRAPPER` when it is available.
@@ -82,12 +88,12 @@ expose arbitrary crate dependencies.
 
 ## Known limitations
 
-- Result `is_ok`, `is_err`, `map_err`, and `ok_or` are Python-only inside let-bindings.
+- `is_ok`, `is_err`, `map_err`, `ok_or`, `and_then`, and `or_else` are Python-only inside let-bindings.
 - `while let Some(x) = iter.next()` is out of scope because Python has no Rust-style Option-returning `next()`.
 - Box patterns, enum payload slices, and nested Vec slice patterns are Python-only.
 - Async is not supported on impl methods.
 - `PyFuture` is unsendable and can only be used on the thread that created it.
-- Option `map` is intentionally unsupported because it collides with Vec `map` in codegen.
+- Option `map` is intentionally unsupported because it collides with Vec `map` in codegen; use `match` or `if let` instead.
 
 ## Requirements
 
