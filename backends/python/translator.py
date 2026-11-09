@@ -355,7 +355,7 @@ def _runtime_string_strip(value, part, *, prefix):
         return _Option.some(value[len(part):])
     if not value.endswith(part):
         return _Option.none()
-    return _Option.some(value[:len(value) - len(part)] if part else "")
+    return _Option.some(value[:len(value) - len(part)])
 
 
 def _runtime_string_split_once(value, separator, *, reverse):

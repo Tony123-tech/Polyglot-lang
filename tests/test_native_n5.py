@@ -324,6 +324,8 @@ def test_native_vec_first_last_get_and_string_search(native_ns):
     assert native_ns["n5_string_contains"]("café", "tea") is False
     assert native_ns["n5_string_find"]("café", "é") == 3
     assert native_ns["n5_string_find"]("café", "tea") == 0
+    assert native_ns["n5_string_find"]("café x", "x") == 6
+    assert native_ns["n5_string_find"]("café", "") == 0
 
 
 @pytest.mark.native
@@ -389,10 +391,13 @@ def test_native_vec_extend_from_slice_resize_and_split_off(native_ns):
 def test_native_string_rfind_strip_and_split_once(native_ns):
     assert native_ns["n5_string_rfind"]("caféé", "é") == 5
     assert native_ns["n5_string_rfind"]("café", "tea") == 0
+    assert native_ns["n5_string_rfind"]("café x", "x") == 6
     assert native_ns["n5_string_strip_prefix"]("café", "ca") == "fé"
     assert native_ns["n5_string_strip_prefix"]("café", "tea") == "missing"
+    assert native_ns["n5_string_strip_prefix"]("abc", "") == "abc"
     assert native_ns["n5_string_strip_suffix"]("café", "fé") == "ca"
     assert native_ns["n5_string_strip_suffix"]("café", "tea") == "missing"
+    assert native_ns["n5_string_strip_suffix"]("abc", "") == "abc"
     assert native_ns["n5_string_split_once"]("a:b:c", ":") == ("a", "b:c")
     assert native_ns["n5_string_rsplit_once"]("a:b:c", ":") == ("a:b", "c")
     assert native_ns["n5_string_split_once"]("abc", ":") is None
@@ -488,6 +493,8 @@ def test_python_vec_first_last_get_and_string_search():
     assert ns["n5_string_contains"]("café", "tea") is False
     assert ns["n5_string_find"]("café", "é") == 3
     assert ns["n5_string_find"]("café", "tea") == 0
+    assert ns["n5_string_find"]("café x", "x") == 6
+    assert ns["n5_string_find"]("café", "") == 0
 
 
 def test_python_vec_truncate_and_string_predicates():
@@ -647,10 +654,13 @@ def test_python_string_rfind_strip_and_split_once():
     """)
     assert ns["n5_string_rfind"]("caféé", "é") == 5
     assert ns["n5_string_rfind"]("café", "tea") == 0
+    assert ns["n5_string_rfind"]("café x", "x") == 6
     assert ns["n5_string_strip_prefix"]("café", "ca") == "fé"
     assert ns["n5_string_strip_prefix"]("café", "tea") == "missing"
+    assert ns["n5_string_strip_prefix"]("abc", "") == "abc"
     assert ns["n5_string_strip_suffix"]("café", "fé") == "ca"
     assert ns["n5_string_strip_suffix"]("café", "tea") == "missing"
+    assert ns["n5_string_strip_suffix"]("abc", "") == "abc"
     assert ns["n5_string_split_once"]("a:b:c", ":").unwrap() == ("a", "b:c")
     assert ns["n5_string_rsplit_once"]("a:b:c", ":").unwrap() == ("a:b", "c")
     assert ns["n5_string_split_once"]("abc", ":").is_none()

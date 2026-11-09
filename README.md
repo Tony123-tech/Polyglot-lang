@@ -15,8 +15,9 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 | N3 | Done | `Vec` iteration, `contains`, `sort`/`sort_by`, `map`/`filter`/`fold`, slicing, and mutation methods |
 | N4 | Done | String length/iteration, split/join, replace/trim, case conversion, `parse`, `format!`, `write!`, slicing, and comparison |
 | N5 | Done | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing |
+| N6 | Done | Additional `Vec` and `String` methods, including search, slicing, rotation, and sort helpers |
 
-**Current test status:** 252 passed, 9 skipped, 4 deselected (`pytest -q`).
+**Current test status:** 280 passed, 9 skipped, 7 deselected (`pytest -q`); 7 passed (`pytest -q -m slow`).
 
 ## Features
 
@@ -25,6 +26,7 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 - **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting `.so` or `.dylib` as a Python extension.
 - **Common backend interface:** Select a backend with `get_backend("python")` or `get_backend("native")`. Calling `backend.compile(program)` returns a namespace dictionary.
 - **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
+- **N6:** Additional `Vec` methods (`first`, `last`, `get`, `truncate`, `rotate_*`, `fill`, `swap`, `resize`, `split_off`, `partition`, `sort_*`, `is_sorted`, and others) and `String` methods (`find`, `rfind`, `strip_*`, `split_once`, `lines`, `as_bytes`, `is_char_boundary`, and others).
 
 ## Async
 
@@ -97,7 +99,7 @@ expose arbitrary crate dependencies.
 
 ## Requirements
 
-- Python 3.12 or later (tested on Python 3.14)
+- Python 3.14 or later (tested on Python 3.14)
 - Rust toolchain, including `cargo`, for the native backend
 - `pytest` to run the test suite
 

@@ -808,6 +808,39 @@ Added Vec `partition`, `sort_by_key`, and `is_sorted` on both backends. Python l
 - Covered by `tests/test_native_n5.py::test_native_vec_partition_sort_by_key_and_is_sorted` and `tests/test_native_n5.py::test_python_vec_partition_sort_by_key_and_is_sorted`.
 - `pytest -q`: 276 passed, 9 skipped, 4 failed, 7 deselected in the available Python 3.12 environment. The failures were the recurring inline annotation `NameError`s and native `_Py_IsFinalizing` extension-loading error; the targeted N5 tests passed (57 passed).
 
+## N6 complete
+
+N6 added the remaining `Vec` and `String` standard-library methods in batches 1–10. `Vec` gained `is_empty`, `clear`, `reverse`, `first`, `last`, `get`, `truncate`, `sort_unstable`, `rotate_left`, `rotate_right`, `fill`, `swap`, `extend_from_slice`, `resize`, `split_off`, `partition`, `sort_by_key`, and `is_sorted`. `String` gained `repeat`, `contains`, `find`, `rfind`, `is_empty`, `starts_with`, `ends_with`, `trim_start`, `trim_end`, `is_ascii`, `lines`, `split_whitespace`, `as_bytes`, `is_char_boundary`, `to_ascii_lowercase`, `to_ascii_uppercase`, `strip_prefix`, `strip_suffix`, `split_once`, and `rsplit_once`.
+
+### Bug 1
+
+**Symptom:** The Python backend returned `""` for `value.strip_suffix("")`, while native Rust returned the original string.
+
+**Cause:** The suffix path contained a special case, `value[:len(value) - len(part)] if part else ""`, that assumed an empty suffix should strip the whole string. Rust treats both empty prefixes and empty suffixes as successful matches that remove nothing.
+
+**Fix:** The suffix path now slices with `len(part)` unconditionally, so an empty suffix returns the original string.
+
+**Lesson:** Empty-string edge cases in search and strip operations should follow the target operation's identity behavior rather than being special-cased.
+
+### Review: UTF-8 byte offsets
+
+Rust `find` and `rfind` return UTF-8 byte offsets. The Python backend obtains a character index from `str.find`/`str.rfind` and converts it through the UTF-8 length of the preceding prefix, which is correct both when the match itself is multibyte and when earlier characters are multibyte. The parity tests now cover a multibyte match (`"café"` finding `"é"` at byte 3), a later ASCII match (`"café x"` finding `"x"` at byte 6), an empty needle, and the corresponding `rfind` cases.
+
+### Bug 2 (environment)
+
+**Symptom:** Three inline-language tests failed with `NameError: name 'i64' is not defined`, and native extension loading failed with `_Py_IsFinalizing`.
+
+**Cause:** The suite was run under Python 3.12 while the project declares `requires-python >= 3.14`. Before PEP 649, annotations are evaluated eagerly at definition time, so `def add(a: i64, ...)` fails before the `@inline_lang` decorator can run. The native extension-load failure was specific to that interpreter and toolchain combination.
+
+**Fix:** The environment now matches the declared requirement (Python 3.14.8).
+
+**Lesson:** Test on the interpreter range the project declares; annotation-evaluation changes can determine whether decorator-based tooling is reachable at all.
+
+### Status after N6
+
+- All four previously failing tests pass: the three inline annotation cases and the native extension-load case.
+- `pytest -q`: 280 passed, 9 skipped, 7 deselected (`pytest -q -m slow`: 7 passed, 289 deselected).
+
 ## Milestone status
 
 See the README Status table for the authoritative milestone status.
