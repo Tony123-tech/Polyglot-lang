@@ -81,6 +81,52 @@ impl N6Counter {
     }
 }
 """,
+    "map_receivers": """
+struct N7Inner { values: HashMap<String, i64> }
+struct N7Outer { inner: N7Inner, direct: HashMap<String, i64> }
+
+impl N7Inner {
+    fn new() -> N7Inner {
+        N7Inner { values: HashMap::new() }
+    }
+    fn seed(&mut self) {
+        self.values.insert("a".to_string(), 1);
+    }
+}
+
+impl N7Outer {
+    fn new() -> N7Outer {
+        N7Outer { inner: N7Inner::new(), direct: HashMap::new() }
+    }
+    fn seed(&mut self) {
+        self.inner.seed();
+        self.direct.insert("b".to_string(), 2);
+    }
+    fn nested_get(&self, key: String) -> i64 {
+        self.inner.values.get(&key).unwrap_or(-1)
+    }
+    fn direct_get(&self, key: String) -> i64 {
+        self.direct.get(&key).unwrap_or(-1)
+    }
+}
+
+fn n7_param_map_get(target: &N7Outer, key: String) -> i64 {
+    target.direct.get(&key).unwrap_or(-1)
+}
+fn n7_param_nested_get(target: &N7Outer, key: String) -> i64 {
+    target.inner.values.get(&key).unwrap_or(-1)
+}
+""",
+    "map_entry_key": """
+fn n7_entry_key(mut values: HashMap<String, i64>, key: String) -> String {
+    values.entry(key).key().clone()
+}
+fn n7_entry_or_insert_with_key(
+    mut values: HashMap<String, i64>, key: String,
+) -> i64 {
+    *values.entry(key.clone()).or_insert_with_key(|k| k.len() as i64)
+}
+""",
     "map_entry": """
 fn n6_map_entry_or_insert(
     mut values: HashMap<String, i64>, key: String, value: i64,
@@ -229,6 +275,44 @@ def test_python_map_entry():
     assert ns["n6_map_entry_or_insert_with"]({"a": 2}, "a") == 2
     assert ns["n6_map_and_modify"]({"a": 1}, "a") == 2
     assert ns["n6_map_and_modify"]({}, "a") == 0
+
+
+@pytest.mark.native
+def test_native_map_nested_and_param_receivers(native_ns):
+    ns = native_ns
+    outer = ns["N7Outer"]()
+    outer.seed()
+    assert outer.nested_get("a") == 1
+    assert outer.direct_get("b") == 2
+    assert outer.direct_get("missing") == -1
+    assert ns["n7_param_map_get"](outer, "b") == 2
+    assert ns["n7_param_nested_get"](outer, "a") == 1
+
+
+def test_python_map_nested_and_param_receivers():
+    ns = _run_python(SOURCES["map_receivers"])
+    outer = ns["N7Outer"].new()
+    outer.seed()
+    assert outer.nested_get("a") == 1
+    assert outer.direct_get("b") == 2
+    assert outer.direct_get("missing") == -1
+    assert ns["n7_param_map_get"](outer, "b") == 2
+    assert ns["n7_param_nested_get"](outer, "a") == 1
+
+
+@pytest.mark.native
+def test_native_map_entry_key(native_ns):
+    ns = native_ns
+    assert ns["n7_entry_key"]({}, "missing") == "missing"
+    assert ns["n7_entry_or_insert_with_key"]({}, "abcd") == 4
+    assert ns["n7_entry_or_insert_with_key"]({"abcd": 9}, "abcd") == 9
+
+
+def test_python_map_entry_key():
+    ns = _run_python(SOURCES["map_entry_key"])
+    assert ns["n7_entry_key"]({}, "missing") == "missing"
+    assert ns["n7_entry_or_insert_with_key"]({}, "abcd") == 4
+    assert ns["n7_entry_or_insert_with_key"]({"abcd": 9}, "abcd") == 9
 
 
 def test_python_invalid_dereference_assignment_rejected():

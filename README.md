@@ -17,8 +17,9 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 | N5 | Done | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing |
 | N6 | Done | Additional `Vec` and `String` methods, including search, slicing, rotation, and sort helpers |
 | N7 | Done | `HashMap` construction, core operations, entry API, views, and mutable slots |
+| N8 | Done | Primitive numeric semantics: Rust-style `as` casts, integer division/remainder, and overflow wrapping at typed boundaries |
 
-**Current test status:** 296 passed, 9 skipped, 7 deselected (`pytest -q`); 7 passed (`pytest -q -m slow`).
+**Current test status:** 326 passed, 9 skipped, 7 deselected (`pytest -q`); 7 passed (`pytest -q -m slow`).
 
 ## Features
 
@@ -28,7 +29,19 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 - **Common backend interface:** Select a backend with `get_backend("python")` or `get_backend("native")`. Calling `backend.compile(program)` returns a namespace dictionary.
 - **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
 - **N6:** Additional `Vec` methods (`first`, `last`, `get`, `truncate`, `rotate_*`, `fill`, `swap`, `resize`, `split_off`, `partition`, `sort_*`, `is_sorted`, and others) and `String` methods (`find`, `rfind`, `strip_*`, `split_once`, `lines`, `as_bytes`, `is_char_boundary`, and others).
-- **N7:** `HashMap` construction and core operations (`insert`, `get`, `get_mut`, `remove`, `contains_key`, `len`, `is_empty`), the `or_insert`/`or_insert_with`/`and_modify` entry subset, owned `keys`/`values`/`iter` views, mutable slot assignment, and `HashMap` fields inside `impl` methods.
+- **N7:** `HashMap` construction and core operations (`insert`, `get`, `get_mut`, `remove`, `contains_key`, `len`, `is_empty`), the `or_insert`/`or_insert_with`/`or_insert_with_key`/`and_modify` entry subset, `key`, owned `keys`/`values`/`iter` views, mutable slot assignment, and `HashMap` fields reached through `impl` methods, parameters, or nested struct fields.
+- **N8:** Rust-style primitive semantics: `as` casts, integer division and remainder, and overflow wrapping at explicitly typed numeric boundaries.
+- **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
+
+## Primitive semantics
+
+Explicit numeric types follow Rust where Python's defaults differ:
+
+- `as` casts truncate and reinterpret integer values at the target width; `isize`/`usize` are 64-bit, `f32` rounds through single precision, and `char` uses Unicode code points.
+- `/` truncates toward zero for integers; `%` keeps the dividend's sign. Float `%` uses `fmod`.
+- Annotated numeric bindings, assignments, compound assignments, and returns wrap at the declared width, matching native release builds.
+
+Overflow parity is limited to explicitly typed bindings; unannotated inference still uses Python's unbounded integers. These semantics are covered by `tests/test_native_n8_types.py`.
 
 ## Async
 
@@ -97,11 +110,13 @@ expose arbitrary crate dependencies.
 - Box patterns, enum payload slices, and nested Vec slice patterns are Python-only.
 - Async is not supported on impl methods.
 - `PyFuture` is unsendable and can only be used on the thread that created it.
-- Option `map` is intentionally unsupported because it collides with Vec `map` in codegen; use `match` or `if let` instead.
-- `HashMap` supports only the implemented entry subset (`or_insert`, `or_insert_with`, `and_modify`); other entry combinators are not yet lowered.
+- Option `map` is intentionally unsupported because it collides with Vec `map` in codegen; both backends reject it with a clear error. Use `match` or `if let` instead.
+- `HashMap` supports only the implemented entry subset (`or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`); other entry combinators are not yet lowered.
 - `HashMap` view methods return owned `Vec`s, so they allocate; iteration order is unspecified in both backends because both use hash maps.
-- `HashMap` dispatch requires a known binding type. Unannotated maps are recognized through `HashMap::new()` inference, but maps reached through another receiver or a nested struct field fall back to generic method dispatch.
+- `HashMap` dispatch requires a statically known map type. Annotated bindings, `HashMap::new()` inference, `self.field`, fields reached through parameters, and nested struct fields are recognized; other expressions fall back to generic method dispatch.
 - Mutating through `get_mut` or the entry API requires an explicit dereference (`*slot = ...`); a dereference target that is not a map slot is rejected at translation time.
+
+Limitation behavior is pinned by `tests/test_known_limitations.py`, and the mapping from each item above to its test or rationale is recorded in [NOTES.md](NOTES.md#limitations-audit).
 
 ## Requirements
 
@@ -256,7 +271,7 @@ rm -rf ~/.cache/polyglot-native
 
 ## Roadmap
 
-N0 through N7 are complete. Remaining known limitations are listed under
+N0 through N8 are complete. Remaining known limitations are listed under
 [Known limitations](#known-limitations), including the out-of-scope items
 `while let Some(x) = iter.next()`, async impl methods, and cross-thread
 `PyFuture` use.

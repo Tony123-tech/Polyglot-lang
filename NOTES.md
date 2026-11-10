@@ -667,7 +667,7 @@ Replaced the malformed `tests/test_native_n5.py` implementation copy with a `SOU
 
 ## N5 batch 5
 
-Added Option `and_then`, `or_else`, and `filter` in the Python runtime; native Option combinator calls use Rust's standard Option methods. Native `filter` codegen now applies the Vec iterator/collect lowering only when the receiver is known to be a Vec, avoiding the Option collision. Python filter dispatch preserves existing Vec behavior while handling Option values. Option `map` remains intentionally unsupported because the code generator's `map` lowering is reserved for Vec.
+Added Option `and_then`, `or_else`, and `filter` in the Python runtime; native Option combinator calls use Rust's standard Option methods. Native `filter` codegen now applies the Vec iterator/collect lowering only when the receiver is known to be a Vec, avoiding the Option collision. Python filter dispatch preserves existing Vec behavior while handling Option values. Option `map` remains intentionally unsupported because the code generator's `map` lowering is reserved for Vec; both backends now raise a clear error suggesting `match` or `if let` instead of failing with a confusing runtime `TypeError`.
 
 - Covered by `tests/test_native_n5.py::test_native_option_methods` and `test_python_option_methods_parity`.
 - Existing Vec filter behavior remains covered by `tests/test_native_n3.py::test_native_vec_filter` and `test_python_vec_filter_parity`.
@@ -730,7 +730,7 @@ When available, `sccache` is configured through `RUSTC_WRAPPER` in `_build_env`.
 
 ## N5 complete
 
-N5 delivers Option and Result construction and combinators, the `?` operator, `if let`, nested Option support, async functions through the custom PyFuture runtime, match exhaustiveness warnings, and Python built-ins sandboxing. The features that remain Python-only are Result `is_ok`, `is_err`, `map_err`, and `ok_or` in let-bindings (native `Err` emits `PyErr`, which does not match the declared error type), Box patterns, enum payload slices, and nested Vec slice patterns. Option `map` remains intentionally unsupported because it collides with Vec `map`.
+N5 delivers Option and Result construction and combinators, the `?` operator, `if let`, nested Option support, async functions through the custom PyFuture runtime, match exhaustiveness warnings, and Python built-ins sandboxing. The features that remain Python-only are Result `is_ok`, `is_err`, `map_err`, and `ok_or` in let-bindings (native `Err` emits `PyErr`, which does not match the declared error type), Box patterns, enum payload slices, and nested Vec slice patterns. Option `map` remains intentionally unsupported because it collides with Vec `map`; both backends reject it with a clear error.
 
 Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style Option-returning `next()`; async functions as impl methods; and using a `PyFuture` from a thread other than the one that created it, because `PyFuture` is unsendable.
 
@@ -870,12 +870,52 @@ The Python backend represents a Rust `&mut V` with `_MapSlot`, which records the
 - Python `get`/views return the stored Python object rather than a deep copy, matching the existing `Vec::get` behavior. Mutating a value obtained from `get` therefore aliases on the Python side instead of being rejected by the borrow checker.
 - `insert` and `entry` strip an explicit `&`/`&mut` from the key argument on the native side; `get`, `get_mut`, `remove`, and `contains_key` add one. This keeps Rust's `Borrow`-based signatures working for both `&key` and bare literals.
 - Iteration order is unspecified in both backends because both use hash maps. Tests sort view results whenever order would otherwise be observable.
-- Map-field detection is intentionally narrow: only `self.field` inside the matching `impl` is recognized. Maps reached through another receiver or a nested field fall through to generic method dispatch.
+- Map-field detection resolves the receiver through parameter types and nested struct fields, so `self.field`, `param.field`, and `param.inner.field` all dispatch as maps when their declared types are known. Unknown or unannotated receivers still fall through to generic method dispatch.
+
+### Follow-ups
+
+- Added `HashMap` receiver resolution for parameters and nested struct fields on both backends, sharing the same `_expr_struct_type` helper used for map detection.
+- Added entry `key()` and `or_insert_with_key()`.
+- Added `%=` for map-slot mutation and switched `/=`/`%=` to the Rust-compatible integer helpers.
+- New coverage lives in `tests/test_native_n7_map.py` (`map_receivers`, `map_entry_key`).
 
 ### Status after N7
 
-- `pytest -q`: 296 passed, 9 skipped, 7 deselected (`pytest -q -m slow`: 7 passed, 305 deselected).
+- `pytest -q`: 326 passed, 9 skipped, 7 deselected (`pytest -q -m slow`: 7 passed, 335 deselected).
 - New parity coverage lives in `tests/test_native_n7_map.py` and includes two rejection tests for invalid dereference assignments.
+
+## N8: Primitive type semantics
+
+N8 closes the gap between Rust numeric semantics and Python's unbounded integers:
+
+- `as` casts lower to `_runtime_cast`, which reproduces Rust truncation and sign reinterpretation for integer widths, `isize`/`usize` (64-bit), `f32` rounding, `char` code points, and `bool`.
+- `/` and `%` lower to `_runtime_int_div`/`_runtime_int_rem`: integer division truncates toward zero and the remainder keeps the dividend's sign; float `%` uses `fmod`.
+- Explicitly annotated numeric bindings, assignments, compound assignments, and returns coerce through their declared type, so overflow wraps at the same boundary as native release builds.
+- Overflow parity is scoped to typed numeric bindings. Unannotated inference can still differ because Python has no fixed-width integer type.
+- Tests: `tests/test_native_n8_types.py`.
+
+## M2: Python module isolation
+
+Each Python compilation now uses a unique generated module name (`_polyglot_generated_<n>`) and registers itself under that name in `sys.modules`. Previously every program replaced `sys.modules["polyglot"]`, so a second compilation could detach dataclasses created by the first. `RustCodegen` also records `line_map_nodes` alongside the existing line/column map so diagnostics can retain the originating AST node.
+
+Tests: `tests/test_python_module_isolation.py` and the `line_map_nodes` case in `tests/test_rust_compile_error.py`.
+
+## Limitations audit
+
+Each README limitation is pinned by a test or has an explicit out-of-scope rationale:
+
+| Limitation | Coverage |
+|---|---|
+| Result `is_ok`/`is_err`/`map_err`/`ok_or`/`and_then`/`or_else` are Python-only in let-bindings | `tests/test_native_n5.py` predicate/conversion tests; `tests/test_known_limitations.py::test_result_combinators_and_conversions_are_python_only` |
+| `while let Some(x) = iter.next()` | `tests/test_known_limitations.py::test_while_let_next_is_a_parse_error` |
+| Box patterns, enum payload slices, nested Vec slice patterns | Python behavior in `tests/test_known_limitations.py`; native lowering remains out of scope because Rust slice patterns do not apply directly to `Vec`/enum payloads |
+| Async impl methods | `tests/test_known_limitations.py::test_async_impl_method_runs_in_python` and `::test_async_impl_method_native_codegen_is_sync_only` |
+| `PyFuture` is unsendable | `tests/test_known_limitations.py::test_pyfuture_runtime_is_marked_unsendable` |
+| Option `map` collides with Vec `map` | `tests/test_known_limitations.py` rejection tests for both backends plus `test_vec_map_still_lowers` |
+| HashMap entry subset | `tests/test_native_n7_map.py` entry tests |
+| HashMap views allocate and have unspecified order | `tests/test_native_n7_map.py` sorts view results where order is observable |
+| HashMap dispatch requires a known type | `tests/test_native_n7_map.py` receiver tests; unknown receivers remain generic by design |
+| `get_mut`/entry mutation requires an explicit dereference | `tests/test_native_n7_map.py` rejection tests |
 
 ## Milestone status
 

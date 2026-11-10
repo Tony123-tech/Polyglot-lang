@@ -35,6 +35,9 @@ In expression position they raise TranslateError (Rust semantics).
 from __future__ import annotations
 
 import ast
+import itertools
+import math
+import struct
 import sys
 from copy import copy
 from functools import cmp_to_key, reduce
@@ -183,6 +186,30 @@ TYPE_MAP: dict[str, str] = {
     "Option": "object",
     "Result": "object",
 }
+
+# Bit width and signedness for Rust integer primitives. `isize`/`usize` are
+# 64-bit on every platform this project targets.
+_INT_TYPE_BITS: dict[str, tuple[int, bool]] = {
+    "i8": (8, True),
+    "i16": (16, True),
+    "i32": (32, True),
+    "i64": (64, True),
+    "i128": (128, True),
+    "isize": (64, True),
+    "u8": (8, False),
+    "u16": (16, False),
+    "u32": (32, False),
+    "u64": (64, False),
+    "u128": (128, False),
+    "usize": (64, False),
+}
+
+_FLOAT_TYPE_NAMES = frozenset({"f32", "f64"})
+_PRIMITIVE_NUMERIC_TYPES = frozenset(_INT_TYPE_BITS) | _FLOAT_TYPE_NAMES
+
+# Each compiled program gets a unique module name so consecutive compilations
+# do not clobber one another in ``sys.modules``.
+_MODULE_COUNTER = itertools.count(1)
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +512,14 @@ class _MapEntry:
             self._mapping[self._key] = factory()
         return self._slot()
 
+    def or_insert_with_key(self, factory):
+        if self._key not in self._mapping:
+            self._mapping[self._key] = factory(self._key)
+        return self._slot()
+
+    def key(self):
+        return self._key
+
     def and_modify(self, update):
         if self._key in self._mapping:
             update(self._slot())
@@ -548,10 +583,96 @@ def _runtime_map_slot_aug(slot, value, op):
     elif op == "*":
         slot.set(current * value)
     elif op == "/":
-        slot.set(current / value)
+        slot.set(_runtime_int_div(current, value))
+    elif op == "%":
+        slot.set(_runtime_int_rem(current, value))
     else:
         raise ValueError(f"unsupported map slot operation {op!r}")
     return slot
+
+
+def _runtime_cast(value, ty):
+    """Emulate Rust's `as` cast semantics.
+
+    Integer casts truncate to the target width and reinterpret the sign bit;
+    float-to-integer casts truncate toward zero and saturate like Rust's
+    saturating casts; `f32` casts round through single precision. Casts to
+    unknown types are identity operations.
+    """
+    if ty == "bool":
+        return bool(value)
+    if ty == "char":
+        if isinstance(value, str):
+            return value
+        code = int(value)
+        if not 0 <= code <= 0x10FFFF or 0xD800 <= code <= 0xDFFF:
+            raise ValueError("char cast out of range")
+        return chr(code)
+    if ty in _FLOAT_TYPE_NAMES:
+        number = float(value)
+        if ty == "f32":
+            try:
+                return struct.unpack("<f", struct.pack("<f", number))[0]
+            except OverflowError:
+                return math.copysign(math.inf, number)
+        return number
+    spec = _INT_TYPE_BITS.get(ty)
+    if spec is None:
+        return value
+    width, signed = spec
+    if isinstance(value, str):
+        number = ord(value)
+    elif isinstance(value, float):
+        if math.isnan(value):
+            number = 0
+        elif math.isinf(value):
+            if signed:
+                number = (
+                    (1 << (width - 1)) - 1
+                    if value > 0
+                    else -(1 << (width - 1))
+                )
+            else:
+                number = (1 << width) - 1 if value > 0 else 0
+        else:
+            number = int(value)
+    else:
+        number = int(value)
+    modulus = 1 << width
+    number %= modulus
+    if signed and number >= (modulus >> 1):
+        number -= modulus
+    return number
+
+
+def _runtime_int_div(left, right):
+    """Rust integer division truncates toward zero; floats divide normally."""
+    if (
+        isinstance(left, int)
+        and isinstance(right, int)
+        and not isinstance(left, bool)
+        and not isinstance(right, bool)
+    ):
+        quotient = abs(left) // abs(right)
+        return quotient if (left < 0) == (right < 0) else -quotient
+    return left / right
+
+
+def _runtime_int_rem(left, right):
+    """Rust `%` keeps the dividend's sign; floats use C `fmod`."""
+    if (
+        isinstance(left, int)
+        and isinstance(right, int)
+        and not isinstance(left, bool)
+        and not isinstance(right, bool)
+    ):
+        quotient = abs(left) // abs(right)
+        quotient = quotient if (left < 0) == (right < 0) else -quotient
+        return left - quotient * right
+    try:
+        return math.fmod(left, right)
+    except ValueError:
+        return math.nan
 
 
 def _runtime_string_find(value, needle):
@@ -815,6 +936,8 @@ class Translator:
         self._temp_counter = 0
         self._binding_types: dict[str, str] = {}
         self._slot_bindings: set[str] = set()
+        self._numeric_types: dict[str, str] = {}
+        self._return_numeric_type: str | None = None
 
     # ---- entry -------------------------------------------------------------
 
@@ -831,6 +954,8 @@ class Translator:
         self._temp_counter = 0
         self._binding_types.clear()
         self._slot_bindings.clear()
+        self._numeric_types.clear()
+        self._return_numeric_type = None
         # Pass 1: collect struct / enum / impl names.
         for item in program.items:
             if isinstance(item, StructDecl):
@@ -903,8 +1028,9 @@ class Translator:
 
         module = self.translate_program(program)
         code = compile(module, "<polyglot>", "exec")
+        module_name = f"_polyglot_generated_{next(_MODULE_COUNTER)}"
         ns: dict = {
-            "__name__": "polyglot",
+            "__name__": module_name,
             "dataclass": _import_dataclass(),
             "Enum": _import_enum(),
             "auto": _import_auto(),
@@ -954,12 +1080,17 @@ class Translator:
         ns["_map_entry"] = _runtime_map_entry
         ns["_map_slot_set"] = _runtime_map_slot_set
         ns["_map_slot_aug"] = _runtime_map_slot_aug
+        ns["_cast"] = _runtime_cast
+        ns["_div"] = _runtime_int_div
+        ns["_mod"] = _runtime_int_rem
 
         # Register the namespace as a module so @dataclass can look it up
-        # via sys.modules[cls.__module__].
-        mod = types.ModuleType("polyglot")
+        # via sys.modules[cls.__module__]. A unique name avoids clobbering
+        # previously compiled programs.
+        mod = types.ModuleType(module_name)
         mod.__dict__.update(ns)
-        sys.modules["polyglot"] = mod
+        mod.__dict__["__name__"] = module_name
+        sys.modules[module_name] = mod
         if sandbox:
             mod.__dict__["__builtins__"] = _sandbox_builtins()
         exec(code, mod.__dict__)  # noqa: S102
@@ -1020,21 +1151,32 @@ class Translator:
         body: list[ast.stmt] = []
         previous_binding_types = self._binding_types
         self._binding_types = {
-            param.pattern.name: param.ty.name
+            param.pattern.name: name
             for param in fn.params
-            if (
-                isinstance(param.pattern, PatIdent)
-                and isinstance(param.ty, TypeName)
-            )
+            if isinstance(param.pattern, PatIdent)
+            for name in [self._binding_type_name(param.ty)]
+            if name is not None
         }
         previous_slot_bindings = self._slot_bindings
         self._slot_bindings = set(previous_slot_bindings)
+        previous_numeric_types = self._numeric_types
+        self._numeric_types = {
+            param.pattern.name: numeric
+            for param in fn.params
+            if isinstance(param.pattern, PatIdent)
+            for numeric in [self._numeric_type_name(param.ty)]
+            if numeric is not None
+        }
+        previous_return_numeric = self._return_numeric_type
+        self._return_numeric_type = self._numeric_type_name(fn.ret)
         try:
             if fn.body is not None:
                 body = self.translate_block_as_fn_body(fn.body)
         finally:
             self._binding_types = previous_binding_types
             self._slot_bindings = previous_slot_bindings
+            self._numeric_types = previous_numeric_types
+            self._return_numeric_type = previous_return_numeric
         if not body:
             body = [ast.Pass()]
         if (
@@ -1104,7 +1246,11 @@ class Translator:
         for stmt in block.stmts:
             body.extend(self.translate_stmt(stmt))
         if block.tail is not None:
-            body.append(ast.Return(value=self.translate_expr(block.tail)))
+            body.append(ast.Return(
+                value=self._coerce_return_value(
+                    self.translate_expr(block.tail),
+                ),
+            ))
         return body
 
     # ---- struct ------------------------------------------------------------
@@ -1216,6 +1362,48 @@ class Translator:
             getattr(ty, "line", 0), getattr(ty, "col", 0),
         )
 
+    def _numeric_type_name(self, ty: Type | None) -> str | None:
+        """Return the primitive numeric type name for ``ty``, if any."""
+        if isinstance(ty, TypeRef):
+            return self._numeric_type_name(ty.inner)
+        if isinstance(ty, TypeName) and ty.name in _PRIMITIVE_NUMERIC_TYPES:
+            return ty.name
+        return None
+
+    def _binding_type_name(self, ty: Type | None) -> str | None:
+        """Return the named type behind a parameter type, if any."""
+        if isinstance(ty, TypeRef):
+            return self._binding_type_name(ty.inner)
+        if isinstance(ty, TypeName):
+            return ty.name
+        return None
+
+    def _coerce_numeric(self, value: ast.expr, ty: str) -> ast.expr:
+        return ast.Call(
+            func=ast.Name(id="_cast", ctx=ast.Load()),
+            args=[value, ast.Constant(value=ty)],
+            keywords=[],
+        )
+
+    def _binary_with_op(
+        self, op: str, left: ast.expr, right: ast.expr,
+    ) -> ast.expr:
+        builtin: dict[str, type[ast.operator]] = {
+            "+": ast.Add,
+            "-": ast.Sub,
+            "*": ast.Mult,
+        }
+        if op in builtin:
+            return ast.BinOp(left=left, op=builtin[op](), right=right)
+        helper = {"/": "_div", "%": "_mod"}.get(op)
+        if helper is not None:
+            return ast.Call(
+                func=ast.Name(id=helper, ctx=ast.Load()),
+                args=[left, right],
+                keywords=[],
+            )
+        raise TranslateError(f"unknown binary op {op}")
+
     # ---- trait -------------------------------------------------------------
 
     def translate_trait(self, t: TraitDecl) -> ast.ClassDef:
@@ -1273,7 +1461,11 @@ class Translator:
             if isinstance(expr, MatchExpr):
                 return [self.translate_match_stmt(expr)]
             if isinstance(expr, Return):
-                return [ast.Return(value=self.translate_opt_expr(expr.value))]
+                return [ast.Return(
+                    value=self._coerce_return_value(
+                        self.translate_opt_expr(expr.value),
+                    ),
+                )]
             if isinstance(expr, Break):
                 return [ast.Break()]
             if isinstance(expr, Continue):
@@ -1333,6 +1525,13 @@ class Translator:
                     keywords=[],
                 ),
             )
+        if (
+            isinstance(e.target, Ident)
+            and e.target.name in self._numeric_types
+        ):
+            value = self._coerce_numeric(
+                value, self._numeric_types[e.target.name],
+            )
         target = self._translate_lvalue(e.target)
         return ast.Assign(targets=[target], value=value)
 
@@ -1342,7 +1541,7 @@ class Translator:
         value = self.translate_expr(e.value)
         op_map: dict[str, type[ast.operator]] = {
             "+=": ast.Add, "-=": ast.Sub,
-            "*=": ast.Mult, "/=": ast.Div,
+            "*=": ast.Mult, "/=": ast.Div, "%=": ast.Mod,
         }
         if e.op not in op_map:
             raise TranslateError(
@@ -1366,6 +1565,21 @@ class Translator:
                     keywords=[],
                 ),
             )
+        if (
+            isinstance(e.target, Ident)
+            and e.target.name in self._numeric_types
+        ):
+            combined = self._binary_with_op(
+                e.op[0],
+                ast.Name(id=e.target.name, ctx=ast.Load()),
+                value,
+            )
+            return ast.Assign(
+                targets=[ast.Name(id=e.target.name, ctx=ast.Store())],
+                value=self._coerce_numeric(
+                    combined, self._numeric_types[e.target.name],
+                ),
+            )
         target = self._translate_lvalue(e.target)
         return ast.AugAssign(target=target, op=op_map[e.op](), value=value)
 
@@ -1386,6 +1600,11 @@ class Translator:
                 s.line, s.col,
             )
         target = ast.Name(id=s.pattern.name, ctx=ast.Store())
+        numeric_type = self._numeric_type_name(s.ty)
+        if numeric_type is not None:
+            self._numeric_types[s.pattern.name] = numeric_type
+        else:
+            self._numeric_types.pop(s.pattern.name, None)
         if s.value is None:
             return ast.AnnAssign(
                 target=target,
@@ -1393,6 +1612,8 @@ class Translator:
                 value=None, simple=1,
             )
         value = self.translate_expr(s.value)
+        if numeric_type is not None:
+            value = self._coerce_numeric(value, numeric_type)
         binding_type = (
             s.ty.name
             if isinstance(s.ty, TypeName)
@@ -1997,6 +2218,13 @@ class Translator:
             return None
         return self.translate_expr(e)
 
+    def _coerce_return_value(
+        self, value: ast.expr | None,
+    ) -> ast.expr | None:
+        if value is None or self._return_numeric_type is None:
+            return value
+        return self._coerce_numeric(value, self._return_numeric_type)
+
     def translate_expr(self, e: Expr) -> ast.expr:
         if isinstance(e, LitInt):
             return ast.Constant(value=e.value)
@@ -2222,6 +2450,13 @@ class Translator:
                     keywords=[],
                 )
             if e.method == "map" and len(e.args) == 1:
+                option_kind = self._option_result_type(e.receiver)
+                if option_kind is not None:
+                    raise TranslateError(
+                        f"{option_kind}.map is unsupported; use match or "
+                        "if let instead",
+                        e.line, e.col,
+                    )
                 closure = e.args[0]
                 if (
                     not isinstance(closure, Closure)
@@ -2720,7 +2955,10 @@ class Translator:
                 args=args, keywords=[],
             )
         if isinstance(e, Cast):
-            return self.translate_expr(e.expr)
+            inner = self.translate_expr(e.expr)
+            if isinstance(e.ty, TypeName):
+                return self._coerce_numeric(inner, e.ty.name)
+            return inner
         if isinstance(e, Return):
             raise TranslateError("Return is a statement here", e.line, e.col)
         if isinstance(e, MacroCall):
@@ -2775,9 +3013,15 @@ class Translator:
         if e.op == "*":
             return ast.BinOp(left=left, op=ast.Mult(), right=right)
         if e.op == "/":
-            return ast.BinOp(left=left, op=ast.Div(), right=right)
+            return ast.Call(
+                func=ast.Name(id="_div", ctx=ast.Load()),
+                args=[left, right], keywords=[],
+            )
         if e.op == "%":
-            return ast.BinOp(left=left, op=ast.Mod(), right=right)
+            return ast.Call(
+                func=ast.Name(id="_mod", ctx=ast.Load()),
+                args=[left, right], keywords=[],
+            )
         if e.op == "==":
             return ast.Compare(left=left, ops=[ast.Eq()], comparators=[right])
         if e.op == "!=":
@@ -2897,6 +3141,16 @@ class Translator:
             return self._binding_types.get(match.scrutinee.name)
         return self._expr_variant_type(match.scrutinee)
 
+    def _option_result_type(self, expr: Expr) -> str | None:
+        """Return ``"Option"``/``"Result"`` when the receiver kind is known."""
+        if isinstance(expr, Ident):
+            kind = self._binding_types.get(expr.name)
+            return kind if kind in {"Option", "Result"} else None
+        if isinstance(expr, Paren):
+            return self._option_result_type(expr.inner)
+        kind = self._expr_variant_type(expr)
+        return kind if kind in {"Option", "Result"} else None
+
     def _expr_variant_type(self, expr: Expr) -> str | None:
         if isinstance(expr, (OptionSome, OptionNone)):
             return "Option"
@@ -2914,15 +3168,29 @@ class Translator:
             return "HashMap"
         return None
 
+    def _expr_struct_type(self, expr: Expr) -> str | None:
+        """Resolve the struct type of an expression when it is known."""
+        if isinstance(expr, Ident):
+            if expr.name == "self" and self._current_impl_type is not None:
+                return self._current_impl_type
+            return self._binding_types.get(expr.name)
+        if isinstance(expr, Paren):
+            return self._expr_struct_type(expr.inner)
+        if isinstance(expr, Field):
+            owner = self._expr_struct_type(expr.receiver)
+            if owner is None:
+                return None
+            return self.struct_field_types.get(owner, {}).get(expr.name)
+        return None
+
     def _is_hashmap_expr(self, expr: Expr) -> bool:
         if isinstance(expr, Ident):
             return self._binding_types.get(expr.name) == "HashMap"
-        if isinstance(expr, Field) and isinstance(expr.receiver, Ident):
-            if expr.receiver.name != "self" or self._current_impl_type is None:
+        if isinstance(expr, Field):
+            owner = self._expr_struct_type(expr.receiver)
+            if owner is None:
                 return False
-            fields = self.struct_field_types.get(
-                self._current_impl_type, {},
-            )
+            fields = self.struct_field_types.get(owner, {})
             return fields.get(expr.name) == "HashMap"
         if (
             isinstance(expr, Call)

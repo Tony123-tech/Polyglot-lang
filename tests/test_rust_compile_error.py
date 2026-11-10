@@ -136,6 +136,22 @@ def test_rust_codegen_records_source_origin_for_emitted_lines():
     assert codegen.line_map[rust_line] == (2, 1)
 
 
+def test_rust_codegen_records_originating_node_for_emitted_lines():
+    from ast_nodes import FnDecl
+
+    program = parse(lex("\nfn origin_node() -> i64 { 1 }"))
+    codegen = RustCodegen()
+    generated = codegen.generate(program)
+    rust_line = next(
+        index for index, line in enumerate(generated.splitlines(), start=1)
+        if "fn origin_node()" in line
+    )
+
+    node = codegen.line_map_nodes[rust_line]
+    assert isinstance(node, FnDecl)
+    assert node.name == "origin_node"
+
+
 def test_cargo_error_maps_rust_line_to_source_origin():
     error = _parse_cargo_error(
         "",

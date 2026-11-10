@@ -207,9 +207,11 @@ class RustCodegen:
         self.struct_field_types: dict[str, dict[str, str]] = {}
         self._current_impl_type: str | None = None
         self.line_map: dict[int, tuple[int, int]] = {}
+        self.line_map_nodes: dict[int, Node] = {}
         self.source_line_text_map: dict[int, str] = {}
         self.source_lines: dict[int, str] = {}
         self._origin: tuple[int, int] | None = None
+        self._origin_node: Node | None = None
         self._in_pymethods = False
         self._result_types: tuple[str, str] | None = None
 
@@ -219,12 +221,15 @@ class RustCodegen:
         self.lines.append("    " * self.indent_level + line)
         if self._origin is not None:
             self.line_map[len(self.lines)] = self._origin
+            if self._origin_node is not None:
+                self.line_map_nodes[len(self.lines)] = self._origin_node
             source_text = self.source_lines.get(self._origin[0])
             if source_text is not None:
                 self.source_line_text_map[len(self.lines)] = source_text
 
     def set_origin(self, node: Node) -> None:
         self._origin = (node.line, node.col)
+        self._origin_node = node
 
     def indent(self) -> None:
         self.indent_level += 1
@@ -246,9 +251,11 @@ class RustCodegen:
         self.struct_field_types = {}
         self._current_impl_type = None
         self.line_map = {}
+        self.line_map_nodes = {}
         self.source_line_text_map = {}
         self.source_lines = program.source_lines
         self._origin = None
+        self._origin_node = None
         self.indent_level = 0
         self._in_pymethods = False
         self._result_types = None
@@ -358,12 +365,11 @@ class RustCodegen:
         self.string_bindings = set(previous_string_bindings)
         previous_binding_types = self.binding_types
         self.binding_types = {
-            param.pattern.name: param.ty.name
+            param.pattern.name: name
             for param in fn.params
-            if (
-                isinstance(param.pattern, PatIdent)
-                and isinstance(param.ty, TypeName)
-            )
+            if isinstance(param.pattern, PatIdent)
+            for name in [self._binding_type_name(param.ty)]
+            if name is not None
         }
         previous_vec_bindings = self.vec_bindings
         self.vec_bindings = set(previous_vec_bindings)
@@ -888,6 +894,29 @@ class RustCodegen:
                         "(key.clone(), value.clone()))"
                         ".collect::<Vec<_>>()"
                     )
+            if self._is_map_entry_expr(e.receiver):
+                if e.method == "key" and not e.args:
+                    return f"{recv}.key().clone()"
+                if e.method == "or_insert_with_key" and len(e.args) == 1:
+                    return (
+                        f"{recv}.or_insert_with_key("
+                        f"{self.expr_to_rust(e.args[0])})"
+                    )
+                if e.method == "or_insert" and len(e.args) == 1:
+                    return (
+                        f"{recv}.or_insert("
+                        f"{self.expr_to_rust(e.args[0])})"
+                    )
+                if e.method == "or_insert_with" and len(e.args) == 1:
+                    return (
+                        f"{recv}.or_insert_with("
+                        f"{self.expr_to_rust(e.args[0])})"
+                    )
+                if e.method == "and_modify" and len(e.args) == 1:
+                    return (
+                        f"{recv}.and_modify("
+                        f"{self.expr_to_rust(e.args[0])})"
+                    )
             if e.method == "map_err" and len(e.args) == 1:
                 return f"{recv}.map_err({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap" and not e.args:
@@ -956,6 +985,12 @@ class RustCodegen:
                 and len(e.args) == 1
                 and isinstance(e.args[0], Closure)
             ):
+                option_kind = self._option_result_type(e.receiver)
+                if option_kind is not None:
+                    raise NotImplementedError(
+                        f"{option_kind}.map is unsupported; use match or "
+                        "if let instead"
+                    )
                 return (
                     f"{recv}.into_iter().map("
                     f"{self.expr_to_rust(e.args[0])})"
@@ -1295,6 +1330,15 @@ class RustCodegen:
             return self.binding_types.get(match.scrutinee.name)
         return self._expr_variant_type(match.scrutinee)
 
+    def _option_result_type(self, expr: Expr) -> str | None:
+        if isinstance(expr, Ident):
+            kind = self.binding_types.get(expr.name)
+            return kind if kind in {"Option", "Result"} else None
+        if isinstance(expr, Paren):
+            return self._option_result_type(expr.inner)
+        kind = self._expr_variant_type(expr)
+        return kind if kind in {"Option", "Result"} else None
+
     def _expr_variant_type(self, expr: Expr) -> str | None:
         if isinstance(expr, (OptionSome, OptionNone)):
             return "Option"
@@ -1312,15 +1356,35 @@ class RustCodegen:
             return "HashMap"
         return None
 
+    def _binding_type_name(self, ty: Type | None) -> str | None:
+        if isinstance(ty, TypeRef):
+            return self._binding_type_name(ty.inner)
+        if isinstance(ty, TypeName):
+            return ty.name
+        return None
+
+    def _expr_struct_type(self, expr: Expr) -> str | None:
+        if isinstance(expr, Ident):
+            if expr.name == "self" and self._current_impl_type is not None:
+                return self._current_impl_type
+            return self.binding_types.get(expr.name)
+        if isinstance(expr, Paren):
+            return self._expr_struct_type(expr.inner)
+        if isinstance(expr, Field):
+            owner = self._expr_struct_type(expr.receiver)
+            if owner is None:
+                return None
+            return self.struct_field_types.get(owner, {}).get(expr.name)
+        return None
+
     def _is_hashmap_expr(self, expr: Expr) -> bool:
         if isinstance(expr, Ident):
             return self.binding_types.get(expr.name) == "HashMap"
-        if isinstance(expr, Field) and isinstance(expr.receiver, Ident):
-            if expr.receiver.name != "self" or self._current_impl_type is None:
+        if isinstance(expr, Field):
+            owner = self._expr_struct_type(expr.receiver)
+            if owner is None:
                 return False
-            fields = self.struct_field_types.get(
-                self._current_impl_type, {},
-            )
+            fields = self.struct_field_types.get(owner, {})
             return fields.get(expr.name) == "HashMap"
         if (
             isinstance(expr, Call)
@@ -1330,6 +1394,16 @@ class RustCodegen:
             return True
         if isinstance(expr, Paren):
             return self._is_hashmap_expr(expr.inner)
+        return False
+
+    def _is_map_entry_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, Paren):
+            return self._is_map_entry_expr(expr.inner)
+        if isinstance(expr, MethodCall):
+            if expr.method == "entry":
+                return self._is_hashmap_expr(expr.receiver)
+            if expr.method == "and_modify":
+                return self._is_map_entry_expr(expr.receiver)
         return False
 
     def _ref_arg_to_rust(self, expr: Expr) -> str:
