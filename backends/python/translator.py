@@ -333,7 +333,227 @@ def _runtime_vec_partition(values, predicate):
         (matching if predicate(value) else remaining).append(value)
     return matching, remaining
 
- 
+
+class _MapSlot:
+    """A mutable view of one HashMap entry.
+
+    Rust's ``get_mut`` and entry API hand out ``&mut V``. Python values are
+    not reference-like, so the slot records the map and key and writes back on
+    mutation.
+    """
+
+    __slots__ = ("_key", "_mapping")
+
+    def __init__(self, mapping, key):
+        self._mapping = mapping
+        self._key = key
+
+    def get(self):
+        return self._mapping[self._key]
+
+    def set(self, value):
+        self._mapping[self._key] = value
+        return value
+
+    def _apply(self, other, op):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        self.set(op(self.get(), other))
+        return self
+
+    def __iadd__(self, other):
+        return self._apply(other, lambda left, right: left + right)
+
+    def __isub__(self, other):
+        return self._apply(other, lambda left, right: left - right)
+
+    def __imul__(self, other):
+        return self._apply(other, lambda left, right: left * right)
+
+    def __itruediv__(self, other):
+        return self._apply(other, lambda left, right: left / right)
+
+    def __imod__(self, other):
+        return self._apply(other, lambda left, right: left % right)
+
+    def __eq__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() == other
+
+    def __ne__(self, other):
+        return not self == other
+
+    def __lt__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() < other
+
+    def __le__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() <= other
+
+    def __gt__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() > other
+
+    def __ge__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() >= other
+
+    def __add__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() + other
+
+    def __radd__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return other + self.get()
+
+    def __sub__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() - other
+
+    def __rsub__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return other - self.get()
+
+    def __mul__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() * other
+
+    def __rmul__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return other * self.get()
+
+    def __truediv__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() / other
+
+    def __mod__(self, other):
+        if isinstance(other, _MapSlot):
+            other = other.get()
+        return self.get() % other
+
+    def __int__(self):
+        return int(self.get())
+
+    def __index__(self):
+        return int(self.get())
+
+    def __bool__(self):
+        return bool(self.get())
+
+    def __hash__(self):
+        return hash(self.get())
+
+    def __str__(self):
+        return str(self.get())
+
+    def __repr__(self):
+        return repr(self.get())
+
+
+class _MapEntry:
+    """The subset of Rust's Entry API used by or_insert/and_modify chains."""
+
+    __slots__ = ("_key", "_mapping")
+
+    def __init__(self, mapping, key):
+        self._mapping = mapping
+        self._key = key
+
+    def _slot(self):
+        return _MapSlot(self._mapping, self._key)
+
+    def or_insert(self, value):
+        if self._key not in self._mapping:
+            self._mapping[self._key] = value
+        return self._slot()
+
+    def or_insert_with(self, factory):
+        if self._key not in self._mapping:
+            self._mapping[self._key] = factory()
+        return self._slot()
+
+    def and_modify(self, update):
+        if self._key in self._mapping:
+            update(self._slot())
+        return self
+
+
+def _runtime_map_insert(mapping, key, value):
+    if key in mapping:
+        previous = mapping[key]
+        mapping[key] = value
+        return _Option.some(previous)
+    mapping[key] = value
+    return _Option.none()
+
+
+def _runtime_map_get(mapping, key):
+    if key in mapping:
+        return _Option.some(mapping[key])
+    return _Option.none()
+
+
+def _runtime_map_get_mut(mapping, key):
+    if key in mapping:
+        return _Option.some(_MapSlot(mapping, key))
+    return _Option.none()
+
+
+def _runtime_map_remove(mapping, key):
+    if key in mapping:
+        return _Option.some(mapping.pop(key))
+    return _Option.none()
+
+
+def _runtime_map_keys(mapping):
+    return list(mapping.keys())
+
+
+def _runtime_map_values(mapping):
+    return list(mapping.values())
+
+
+def _runtime_map_iter(mapping):
+    return list(mapping.items())
+
+
+def _runtime_map_entry(mapping, key):
+    return _MapEntry(mapping, key)
+
+
+def _runtime_map_slot_set(slot, value):
+    slot.set(value)
+    return value
+
+
+def _runtime_map_slot_aug(slot, value, op):
+    current = slot.get()
+    if op == "+":
+        slot.set(current + value)
+    elif op == "-":
+        slot.set(current - value)
+    elif op == "*":
+        slot.set(current * value)
+    elif op == "/":
+        slot.set(current / value)
+    else:
+        raise ValueError(f"unsupported map slot operation {op!r}")
+    return slot
+
+
 def _runtime_string_find(value, needle):
     position = value.find(needle)
     if position < 0:
@@ -584,6 +804,8 @@ class Translator:
         self.namespace: dict = {}
         self.struct_names: set[str] = set()
         self.struct_fields: dict[str, set[str]] = {}
+        self.struct_field_types: dict[str, dict[str, str]] = {}
+        self._current_impl_type: str | None = None
         self.enum_names: set[str] = set()
         self.enum_variants: dict[str, set[str]] = {}
         self.constant_names: set[str] = set()
@@ -592,12 +814,15 @@ class Translator:
         self.generic_type_names: set[str] = set()
         self._temp_counter = 0
         self._binding_types: dict[str, str] = {}
+        self._slot_bindings: set[str] = set()
 
     # ---- entry -------------------------------------------------------------
 
     def translate_program(self, program: Program) -> ast.Module:
         self.struct_names.clear()
         self.struct_fields.clear()
+        self.struct_field_types.clear()
+        self._current_impl_type = None
         self.enum_names.clear()
         self.enum_variants.clear()
         self.constant_names.clear()
@@ -605,12 +830,18 @@ class Translator:
         self.generic_type_names.clear()
         self._temp_counter = 0
         self._binding_types.clear()
+        self._slot_bindings.clear()
         # Pass 1: collect struct / enum / impl names.
         for item in program.items:
             if isinstance(item, StructDecl):
                 self.struct_names.add(item.name)
                 self.struct_fields[item.name] = {
                     name for name, _ty, _is_pub in item.fields
+                }
+                self.struct_field_types[item.name] = {
+                    name: ty.name
+                    for name, ty, _is_pub in item.fields
+                    if isinstance(ty, TypeName)
                 }
                 if item.generics:
                     self.generic_struct_names.add(item.name)
@@ -713,6 +944,16 @@ class Translator:
         ns["_string_to_ascii_lowercase"] = _runtime_string_to_ascii_lowercase
         ns["_string_to_ascii_uppercase"] = _runtime_string_to_ascii_uppercase
         ns["_result_parse"] = _runtime_parse
+        ns["_map_insert"] = _runtime_map_insert
+        ns["_map_get"] = _runtime_map_get
+        ns["_map_get_mut"] = _runtime_map_get_mut
+        ns["_map_remove"] = _runtime_map_remove
+        ns["_map_keys"] = _runtime_map_keys
+        ns["_map_values"] = _runtime_map_values
+        ns["_map_iter"] = _runtime_map_iter
+        ns["_map_entry"] = _runtime_map_entry
+        ns["_map_slot_set"] = _runtime_map_slot_set
+        ns["_map_slot_aug"] = _runtime_map_slot_aug
 
         # Register the namespace as a module so @dataclass can look it up
         # via sys.modules[cls.__module__].
@@ -786,11 +1027,14 @@ class Translator:
                 and isinstance(param.ty, TypeName)
             )
         }
+        previous_slot_bindings = self._slot_bindings
+        self._slot_bindings = set(previous_slot_bindings)
         try:
             if fn.body is not None:
                 body = self.translate_block_as_fn_body(fn.body)
         finally:
             self._binding_types = previous_binding_types
+            self._slot_bindings = previous_slot_bindings
         if not body:
             body = [ast.Pass()]
         if (
@@ -885,13 +1129,20 @@ class Translator:
         )
 
     def _impl_methods(self, impl: ImplBlock) -> list[ast.stmt]:
-        methods: list[ast.stmt] = []
-        for sub in impl.items:
-            if isinstance(sub, FnDecl):
-                methods.append(
-                    self.translate_fn(sub, is_method=self._fn_is_method(sub))
-                )
-        return methods
+        previous_impl_type = self._current_impl_type
+        self._current_impl_type = self._type_name_of(impl.ty)
+        try:
+            methods: list[ast.stmt] = []
+            for sub in impl.items:
+                if isinstance(sub, FnDecl):
+                    methods.append(
+                        self.translate_fn(
+                            sub, is_method=self._fn_is_method(sub),
+                        )
+                    )
+            return methods
+        finally:
+            self._current_impl_type = previous_impl_type
 
     def _fn_is_method(self, fn: FnDecl) -> bool:
         if not fn.params:
@@ -1067,13 +1318,27 @@ class Translator:
             value=format_value,
         )
 
-    def _translate_assign_stmt(self, e: Assign) -> ast.Assign:
-        target = self._translate_lvalue(e.target)
+    def _translate_assign_stmt(self, e: Assign) -> ast.stmt:
         value = self.translate_expr(e.value)
+        if isinstance(e.target, Unary) and e.target.op == "*":
+            if not self._is_map_slot_expr(e.target.operand):
+                raise TranslateError(
+                    "dereference assignment target is not a mutable map slot",
+                    e.line, e.col,
+                )
+            return ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(id="_map_slot_set", ctx=ast.Load()),
+                    args=[self.translate_expr(e.target.operand), value],
+                    keywords=[],
+                ),
+            )
+        target = self._translate_lvalue(e.target)
         return ast.Assign(targets=[target], value=value)
 
-    def _translate_compound_assign_stmt(self, e: CompoundAssign) -> ast.AugAssign:
-        target = self._translate_lvalue(e.target)
+    def _translate_compound_assign_stmt(
+        self, e: CompoundAssign,
+    ) -> ast.stmt:
         value = self.translate_expr(e.value)
         op_map: dict[str, type[ast.operator]] = {
             "+=": ast.Add, "-=": ast.Sub,
@@ -1084,6 +1349,24 @@ class Translator:
                 f"unsupported compound assign op {e.op!r}",
                 e.line, e.col,
             )
+        if isinstance(e.target, Unary) and e.target.op == "*":
+            if not self._is_map_slot_expr(e.target.operand):
+                raise TranslateError(
+                    "dereference assignment target is not a mutable map slot",
+                    e.line, e.col,
+                )
+            return ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(id="_map_slot_aug", ctx=ast.Load()),
+                    args=[
+                        self.translate_expr(e.target.operand),
+                        value,
+                        ast.Constant(value=e.op[0]),
+                    ],
+                    keywords=[],
+                ),
+            )
+        target = self._translate_lvalue(e.target)
         return ast.AugAssign(target=target, op=op_map[e.op](), value=value)
 
     def translate_block_as_body(self, block: Block) -> list[ast.stmt]:
@@ -1115,8 +1398,12 @@ class Translator:
             if isinstance(s.ty, TypeName)
             else self._expr_variant_type(s.value)
         )
-        if binding_type in {"Option", "Result"}:
+        if binding_type in {"Option", "Result", "HashMap"}:
             self._binding_types[s.pattern.name] = binding_type
+        if self._is_map_slot_expr(s.value):
+            self._slot_bindings.add(s.pattern.name)
+        else:
+            self._slot_bindings.discard(s.pattern.name)
         return ast.Assign(targets=[target], value=value)
 
     def translate_while(self, w: While) -> ast.While:
@@ -1793,6 +2080,12 @@ class Translator:
                 e.line, e.col,
             )
         if isinstance(e, Call):
+            if (
+                isinstance(e.func, Path)
+                and e.func.segments == ["HashMap", "new"]
+                and not e.args
+            ):
+                return ast.Dict(keys=[], values=[])
             func = self.translate_expr(e.func)
             args = [self.translate_expr(a) for a in e.args]
             return ast.Call(func=func, args=args, keywords=[])
@@ -1800,6 +2093,65 @@ class Translator:
             recv = self.translate_expr(e.receiver)
             if e.method == "into_iter" and not e.args:
                 return recv
+            if self._is_hashmap_expr(e.receiver):
+                if e.method == "insert" and len(e.args) == 2:
+                    return ast.Call(
+                        func=ast.Name(id="_map_insert", ctx=ast.Load()),
+                        args=[
+                            recv,
+                            self.translate_expr(e.args[0]),
+                            self.translate_expr(e.args[1]),
+                        ],
+                        keywords=[],
+                    )
+                if e.method == "get" and len(e.args) == 1:
+                    return ast.Call(
+                        func=ast.Name(id="_map_get", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
+                if e.method == "get_mut" and len(e.args) == 1:
+                    return ast.Call(
+                        func=ast.Name(id="_map_get_mut", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
+                if e.method == "remove" and len(e.args) == 1:
+                    return ast.Call(
+                        func=ast.Name(id="_map_remove", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
+                if e.method == "contains_key" and len(e.args) == 1:
+                    return ast.Compare(
+                        left=self.translate_expr(e.args[0]),
+                        ops=[ast.In()],
+                        comparators=[recv],
+                    )
+                if e.method == "entry" and len(e.args) == 1:
+                    return ast.Call(
+                        func=ast.Name(id="_map_entry", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
+                if e.method == "keys" and not e.args:
+                    return ast.Call(
+                        func=ast.Name(id="_map_keys", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
+                if e.method == "values" and not e.args:
+                    return ast.Call(
+                        func=ast.Name(id="_map_values", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
+                if e.method == "iter" and not e.args:
+                    return ast.Call(
+                        func=ast.Name(id="_map_iter", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
             if e.method == "map_err" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
@@ -2552,10 +2904,103 @@ class Translator:
             return "Result"
         if isinstance(expr, MethodCall) and expr.method in {"pop", "next"}:
             return "Option"
+        if isinstance(expr, Path) and expr.segments[:1] == ["HashMap"]:
+            return "HashMap"
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and expr.func.segments == ["HashMap", "new"]
+        ):
+            return "HashMap"
         return None
+
+    def _is_hashmap_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, Ident):
+            return self._binding_types.get(expr.name) == "HashMap"
+        if isinstance(expr, Field) and isinstance(expr.receiver, Ident):
+            if expr.receiver.name != "self" or self._current_impl_type is None:
+                return False
+            fields = self.struct_field_types.get(
+                self._current_impl_type, {},
+            )
+            return fields.get(expr.name) == "HashMap"
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and expr.func.segments == ["HashMap", "new"]
+        ):
+            return True
+        if isinstance(expr, Paren):
+            return self._is_hashmap_expr(expr.inner)
+        return False
+
+    def _is_map_entry_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, Paren):
+            return self._is_map_entry_expr(expr.inner)
+        if isinstance(expr, MethodCall):
+            if expr.method == "entry":
+                return self._is_hashmap_expr(expr.receiver)
+            if expr.method == "and_modify":
+                return self._is_map_entry_expr(expr.receiver)
+        return False
+
+    def _is_map_get_mut_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, Paren):
+            return self._is_map_get_mut_expr(expr.inner)
+        return (
+            isinstance(expr, MethodCall)
+            and expr.method == "get_mut"
+            and self._is_hashmap_expr(expr.receiver)
+        )
+
+    def _is_map_slot_expr(self, expr: Expr) -> bool:
+        """Return whether ``expr`` evaluates to a mutable map slot.
+
+        Python has no ``&mut V``; slots are represented by ``_MapSlot``.
+        Only expressions in this set may legally appear under a ``*``
+        dereference that mutates in place.
+        """
+        if isinstance(expr, Ident):
+            return expr.name in self._slot_bindings
+        if isinstance(expr, Paren):
+            return self._is_map_slot_expr(expr.inner)
+        if isinstance(expr, MethodCall):
+            if expr.method in {"unwrap", "expect"}:
+                return self._is_map_get_mut_expr(expr.receiver)
+            if expr.method in {"or_insert", "or_insert_with"}:
+                return self._is_map_entry_expr(expr.receiver)
+        return False
+
+    def _slot_mutation_expr(self, expr: Expr) -> ast.expr | None:
+        if not isinstance(expr, (Assign, CompoundAssign)):
+            return None
+        if not (isinstance(expr.target, Unary) and expr.target.op == "*"):
+            return None
+        if not self._is_map_slot_expr(expr.target.operand):
+            raise TranslateError(
+                "dereference assignment target is not a mutable map slot",
+                expr.line, expr.col,
+            )
+        if isinstance(expr, CompoundAssign) and expr.op[0] not in "+-*/":
+            raise TranslateError(
+                f"unsupported compound assign op {expr.op!r}",
+                expr.line, expr.col,
+            )
+        operand = self.translate_expr(expr.target.operand)
+        value = self.translate_expr(expr.value)
+        name = "_map_slot_set" if isinstance(expr, Assign) else "_map_slot_aug"
+        values = [operand, value]
+        if isinstance(expr, CompoundAssign):
+            values.append(ast.Constant(value=expr.op[0]))
+        return ast.Call(
+            func=ast.Name(id=name, ctx=ast.Load()),
+            args=values,
+            keywords=[],
+        )
 
     def _translate_closure(self, c: Closure) -> ast.Lambda:
         args: list[ast.arg] = []
+        param_names: list[str] = []
         for pat, _ty in c.params:
             if not isinstance(pat, PatIdent):
                 raise TranslateError(
@@ -2563,14 +3008,40 @@ class Translator:
                     c.line, c.col,
                 )
             args.append(ast.arg(arg=pat.name, annotation=None))
-        body_expr: ast.expr
-        if isinstance(c.body, Block):
-            if c.body.tail is not None:
-                body_expr = self.translate_expr(c.body.tail)
+            param_names.append(pat.name)
+        previous_slot_bindings = self._slot_bindings
+        # Closure parameters passed to the entry API (`and_modify`) are
+        # mutable map slots, so `*value += 1` must resolve against them.
+        self._slot_bindings = set(previous_slot_bindings)
+        self._slot_bindings.update(param_names)
+        try:
+            body_expr: ast.expr
+            if isinstance(c.body, Block):
+                if c.body.tail is not None:
+                    body_expr = self.translate_expr(c.body.tail)
+                elif len(c.body.stmts) == 1:
+                    stmt = c.body.stmts[0]
+                    mutation = (
+                        self._slot_mutation_expr(stmt.expr)
+                        if isinstance(stmt, ExprStmt)
+                        else None
+                    )
+                    body_expr = (
+                        mutation
+                        if mutation is not None
+                        else ast.Constant(value=None)
+                    )
+                else:
+                    body_expr = ast.Constant(value=None)
             else:
-                body_expr = ast.Constant(value=None)
-        else:
-            body_expr = self.translate_expr(c.body)
+                mutation = self._slot_mutation_expr(c.body)
+                body_expr = (
+                    mutation
+                    if mutation is not None
+                    else self.translate_expr(c.body)
+                )
+        finally:
+            self._slot_bindings = previous_slot_bindings
         return ast.Lambda(
             args=ast.arguments(
                 posonlyargs=[], args=args, vararg=None,

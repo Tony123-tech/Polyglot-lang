@@ -841,6 +841,42 @@ Rust `find` and `rfind` return UTF-8 byte offsets. The Python backend obtains a 
 - All four previously failing tests pass: the three inline annotation cases and the native extension-load case.
 - `pytest -q`: 280 passed, 9 skipped, 7 deselected (`pytest -q -m slow`: 7 passed, 289 deselected).
 
+## N7: HashMap
+
+N7 adds `HashMap` support on both backends with byte-for-byte parity for the implemented surface:
+
+- Construction: `HashMap::new()` and `HashMap<K, V>`-annotated bindings.
+- Core operations: `insert`, `get`, `get_mut`, `remove`, `contains_key`, `len`, and `is_empty`.
+- Views: `keys`, `values`, and `iter`, each returning an owned `Vec` so iteration can cross the Python boundary.
+- Entry subset: `or_insert`, `or_insert_with`, and `and_modify`.
+- Mutable slots: `*slot = value` and `*slot += value` (plus `-=`, `*=`, `/=`) for values obtained from `get_mut` or the entry API.
+- Struct fields: a `HashMap` field accessed as `self.field` inside an `impl` method is recognized as a map.
+
+The Python backend represents a Rust `&mut V` with `_MapSlot`, which records the mapping and key and writes back on mutation, and the `Entry` API with `_MapEntry`. Dispatch on both backends is driven by the existing binding-type tables (`binding_types` / `_binding_types`) plus a per-impl field-type map, so it does not depend on global inference.
+
+### Bug 1
+
+**Symptom:** `*x += 1` compiled even when `x` was an ordinary integer, silently ignoring the dereference.
+
+**Cause:** The `*` unary operator lowered to its operand in the Python backend, and only map-slot expressions were expected to reach the mutation path. Nothing checked that a dereference-assignment target was actually a mutable map slot, so invalid programs produced valid-looking Python.
+
+**Fix:** Added `_is_map_slot_expr`, which accepts only tracked slot identifiers, `get_mut(...).unwrap()`/`.expect()`, and entry `or_insert`/`or_insert_with` chains. `_translate_assign_stmt`, `_translate_compound_assign_stmt`, and closure mutation lowering now reject any other dereference target with a `TranslateError`. Slot bindings are tracked in `translate_let`, scoped per function, and extended for closure parameters during body lowering.
+
+**Lesson:** When a source operator is erased during lowering, validate the erased operand at the lowering site. Otherwise a type error in the source becomes a silently different operation at runtime.
+
+### Ownership and parity review
+
+- `get` returns an owned `Option<V>` on the native side by appending `.cloned()`; `keys`, `values`, and `iter` likewise return owned vectors. Generated structs and enums already derive `Clone`, so cloned views are available for every supported value type.
+- Python `get`/views return the stored Python object rather than a deep copy, matching the existing `Vec::get` behavior. Mutating a value obtained from `get` therefore aliases on the Python side instead of being rejected by the borrow checker.
+- `insert` and `entry` strip an explicit `&`/`&mut` from the key argument on the native side; `get`, `get_mut`, `remove`, and `contains_key` add one. This keeps Rust's `Borrow`-based signatures working for both `&key` and bare literals.
+- Iteration order is unspecified in both backends because both use hash maps. Tests sort view results whenever order would otherwise be observable.
+- Map-field detection is intentionally narrow: only `self.field` inside the matching `impl` is recognized. Maps reached through another receiver or a nested field fall through to generic method dispatch.
+
+### Status after N7
+
+- `pytest -q`: 296 passed, 9 skipped, 7 deselected (`pytest -q -m slow`: 7 passed, 305 deselected).
+- New parity coverage lives in `tests/test_native_n7_map.py` and includes two rejection tests for invalid dereference assignments.
+
 ## Milestone status
 
 See the README Status table for the authoritative milestone status.

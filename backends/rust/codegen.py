@@ -204,6 +204,8 @@ class RustCodegen:
         self.string_bindings: set[str] = set()
         self.vec_bindings: set[str] = set()
         self.binding_types: dict[str, str] = {}
+        self.struct_field_types: dict[str, dict[str, str]] = {}
+        self._current_impl_type: str | None = None
         self.line_map: dict[int, tuple[int, int]] = {}
         self.source_line_text_map: dict[int, str] = {}
         self.source_lines: dict[int, str] = {}
@@ -241,6 +243,8 @@ class RustCodegen:
         self.string_bindings = set()
         self.vec_bindings = set()
         self.binding_types = {}
+        self.struct_field_types = {}
+        self._current_impl_type = None
         self.line_map = {}
         self.source_line_text_map = {}
         self.source_lines = program.source_lines
@@ -253,6 +257,11 @@ class RustCodegen:
             if isinstance(item, StructDecl):
                 self.struct_names.add(item.name)
                 self.pyclass_names.add(item.name)
+                self.struct_field_types[item.name] = {
+                    name: ty.name
+                    for name, ty, _is_pub in item.fields
+                    if isinstance(ty, TypeName)
+                }
                 if item.generics:
                     self.generic_struct_names.add(item.name)
                     self.generic_type_names.update(
@@ -269,6 +278,7 @@ class RustCodegen:
         )
         self.emit()
         self.emit("use pyo3::prelude::*;")
+        self.emit("use std::collections::HashMap;")
         self.emit("use std::fmt::Write as FmtWrite;")
         self.emit()
         for line in _RUNTIME_PREFIX.strip().splitlines():
@@ -500,6 +510,12 @@ class RustCodegen:
             self.emit("#[pymethods]")
             self._in_pymethods = True
 
+        previous_impl_type = self._current_impl_type
+        self._current_impl_type = (
+            impls[0].ty.name
+            if isinstance(impls[0].ty, TypeName)
+            else None
+        )
         self.emit(f"impl {target} {{")
         self.indent()
         for impl in impls:
@@ -509,6 +525,7 @@ class RustCodegen:
         self.dedent()
         self.emit("}")
         self.emit()
+        self._current_impl_type = previous_impl_type
         self._in_pymethods = False
 
     def generate_const(self, c: ConstDecl) -> None:
@@ -572,7 +589,7 @@ class RustCodegen:
                         if isinstance(stmt.ty, TypeName)
                         else self._expr_variant_type(stmt.value)
                     )
-                    if binding_type in {"Option", "Result"}:
+                    if binding_type in {"Option", "Result", "HashMap"}:
                         self.binding_types[stmt.pattern.name] = binding_type
                 if (
                     isinstance(stmt.pattern, PatIdent)
@@ -822,6 +839,55 @@ class RustCodegen:
             return f"{self.expr_to_rust(e.func)}({args})"
         if isinstance(e, MethodCall):
             recv = self.expr_to_rust(e.receiver)
+            if self._is_hashmap_expr(e.receiver):
+                if e.method == "insert" and len(e.args) == 2:
+                    return (
+                        f"{recv}.insert("
+                        f"{self._owned_arg_to_rust(e.args[0])}, "
+                        f"{self.expr_to_rust(e.args[1])})"
+                    )
+                if e.method == "get" and len(e.args) == 1:
+                    return (
+                        f"{recv}.get("
+                        f"{self._ref_arg_to_rust(e.args[0])}).cloned()"
+                    )
+                if e.method == "get_mut" and len(e.args) == 1:
+                    return (
+                        f"{recv}.get_mut("
+                        f"{self._ref_arg_to_rust(e.args[0])})"
+                    )
+                if e.method == "remove" and len(e.args) == 1:
+                    return (
+                        f"{recv}.remove("
+                        f"{self._ref_arg_to_rust(e.args[0])})"
+                    )
+                if e.method == "contains_key" and len(e.args) == 1:
+                    return (
+                        f"{recv}.contains_key("
+                        f"{self._ref_arg_to_rust(e.args[0])})"
+                    )
+                if e.method == "entry" and len(e.args) == 1:
+                    return (
+                        f"{recv}.entry("
+                        f"{self._owned_arg_to_rust(e.args[0])})"
+                    )
+                if e.method == "keys" and not e.args:
+                    return (
+                        f"{recv}.keys().cloned()"
+                        ".collect::<Vec<_>>()"
+                    )
+                if e.method == "values" and not e.args:
+                    return (
+                        f"{recv}.values().cloned()"
+                        ".collect::<Vec<_>>()"
+                    )
+                if e.method == "iter" and not e.args:
+                    return (
+                        f"{recv}.iter()"
+                        ".map(|(key, value)| "
+                        "(key.clone(), value.clone()))"
+                        ".collect::<Vec<_>>()"
+                    )
             if e.method == "map_err" and len(e.args) == 1:
                 return f"{recv}.map_err({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap" and not e.args:
@@ -1236,7 +1302,45 @@ class RustCodegen:
             return "Result"
         if isinstance(expr, MethodCall) and expr.method in {"pop", "next"}:
             return "Option"
+        if isinstance(expr, Path) and expr.segments[:1] == ["HashMap"]:
+            return "HashMap"
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and expr.func.segments == ["HashMap", "new"]
+        ):
+            return "HashMap"
         return None
+
+    def _is_hashmap_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, Ident):
+            return self.binding_types.get(expr.name) == "HashMap"
+        if isinstance(expr, Field) and isinstance(expr.receiver, Ident):
+            if expr.receiver.name != "self" or self._current_impl_type is None:
+                return False
+            fields = self.struct_field_types.get(
+                self._current_impl_type, {},
+            )
+            return fields.get(expr.name) == "HashMap"
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and expr.func.segments == ["HashMap", "new"]
+        ):
+            return True
+        if isinstance(expr, Paren):
+            return self._is_hashmap_expr(expr.inner)
+        return False
+
+    def _ref_arg_to_rust(self, expr: Expr) -> str:
+        if isinstance(expr, Unary) and expr.op in ("&", "&mut"):
+            return f"&({self.expr_to_rust(expr.operand)})"
+        return f"&({self.expr_to_rust(expr)})"
+
+    def _owned_arg_to_rust(self, expr: Expr) -> str:
+        if isinstance(expr, Unary) and expr.op in ("&", "&mut"):
+            return self.expr_to_rust(expr.operand)
+        return self.expr_to_rust(expr)
 
     def _block_as_expr(self, block: Block) -> str:
         parts: list[str] = []
