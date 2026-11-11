@@ -47,7 +47,18 @@ class BackendBase:
             raise UntrustedCompileError(self.name)
 
 
-def get_backend(name: str = "python", *, trusted: bool = True) -> Backend:
+def _trusted_from_env() -> bool:
+    """Read POLYGLOT_TRUSTED; anything other than "1" is untrusted."""
+    import os
+
+    return os.environ.get("POLYGLOT_TRUSTED", "0") == "1"
+
+
+def get_backend(
+    name: str = "python", *, trusted: bool | None = None
+) -> Backend:
+    if trusted is None:
+        trusted = _trusted_from_env()
     if name == "python":
         from backends.python.translator import PythonBackend
         return PythonBackend(trusted=trusted)

@@ -4,6 +4,7 @@ import warnings
 
 import pytest
 
+from backends.errors import UnsupportedNativePatternError
 from backends.python.translator import TranslateError, compile_rust
 from backends.rust.compiler import RustCompileError
 from lexer import lex
@@ -845,34 +846,19 @@ def test_pattern_slice_only_rest_binding(native_ns):
     assert native_ns["pattern_slice_only_rest_binding"]([1, 2]) == 2
 
 
-@pytest.mark.skip(reason="Rust box patterns are unstable; TODO native lowering")
-def test_pattern_box_native():
-    # TODO: lower box patterns through stable Rust pattern syntax.
-    pass
-
-
-@pytest.mark.skip(reason="Rust box patterns are unstable; TODO native lowering")
-def test_pattern_box_literal_native():
-    # TODO: lower box patterns through stable Rust pattern syntax.
-    pass
-
-
-@pytest.mark.skip(reason="Rust box patterns are unstable; TODO native lowering")
-def test_pattern_box_tuple_native():
-    # TODO: lower box patterns through stable Rust pattern syntax.
-    pass
-
-
-@pytest.mark.skip(reason="Rust box patterns are unstable; TODO native lowering")
-def test_pattern_box_nested_native():
-    # TODO: lower box patterns through stable Rust pattern syntax.
-    pass
-
-
-@pytest.mark.skip(reason="Rust box patterns are unstable; TODO native lowering")
-def test_pattern_box_binding_native():
-    # TODO: lower box patterns through stable Rust pattern syntax.
-    pass
+@pytest.mark.parametrize(
+    "source",
+    [
+        "fn f(x: Box<i64>) -> i64 { match x { box value => *value } }",
+        "fn f(x: Box<i64>) -> i64 { match x { box 1 => 1, _ => 0 } }",
+        "fn f(x: Box<(i64, i64)>) -> i64 { match x { box (a, b) => a + b } }",
+        "fn f(x: Box<Box<i64>>) -> i64 { match x { box box value => *value } }",
+        "fn f(x: Box<i64>) -> i64 { match x { name @ box value => *value } }",
+    ],
+)
+def test_pattern_box_native_rejected(source, native_backend):
+    with pytest.raises(UnsupportedNativePatternError, match="Box patterns"):
+        native_backend.compile(parse(lex(source)))
 
 
 @pytest.mark.native

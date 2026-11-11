@@ -56,20 +56,12 @@ def warn_match_issues(
         if arm.guard is None and _is_catch_all(arm.pattern):
             catch_all_seen = True
 
-    variants = set().union(
-        *(_pattern_variants(arm.pattern) for arm in match.arms),
-    )
-    if scrutinee_type == "Option" and "None" not in variants:
+    missing = missing_match_variants(match, scrutinee_type)
+    if missing:
         warnings.warn(
-            f"non-exhaustive Option match missing None arm "
-            f"at {match.line}:{match.col}",
-            UserWarning,
-            stacklevel=3,
-        )
-    elif scrutinee_type == "Result" and "Err" not in variants:
-        warnings.warn(
-            f"non-exhaustive Result match missing Err arm "
-            f"at {match.line}:{match.col}",
+            f"non-exhaustive {scrutinee_type} match missing "
+            f"{', '.join(missing)} arm"
+            f" at {match.line}:{match.col}",
             UserWarning,
             stacklevel=3,
         )
@@ -90,6 +82,19 @@ def warn_match_issues(
                     stacklevel=3,
                 )
                 break
+
+
+def missing_match_variants(
+    match: MatchExpr, scrutinee_type: str | None,
+) -> tuple[str, ...]:
+    variants = set().union(
+        *(_pattern_variants(arm.pattern) for arm in match.arms),
+    )
+    if scrutinee_type == "Option" and "None" not in variants:
+        return ("None",)
+    if scrutinee_type == "Result" and "Err" not in variants:
+        return ("Err",)
+    return ()
 
 
 def _is_catch_all(pattern: Pattern) -> bool:

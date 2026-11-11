@@ -129,7 +129,8 @@ from ast_nodes import (
     While,
 )
 from backends.base import BackendBase
-from match_diagnostics import warn_match_issues
+from backends.errors import TranslateError
+from match_diagnostics import missing_match_variants, warn_match_issues
 from struct_order import order_struct_declarations
 
 _SAFE_BUILTINS = frozenset({
@@ -157,13 +158,6 @@ def _sandbox_builtins() -> dict:
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
-
-class TranslateError(Exception):
-    def __init__(self, msg: str, line: int = 0, col: int = 0):
-        super().__init__(f"{msg} at {line}:{col}")
-        self.msg = msg
-        self.line = line
-        self.col = col
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +232,12 @@ def _runtime_panic(msg: str = "") -> None:
     raise RuntimeError(msg or "panic")
 
 
+def _runtime_non_exhaustive_match(scrutinee_type: str) -> None:
+    raise RuntimeError(
+        f"non-exhaustive {scrutinee_type} match reached at runtime"
+    )
+
+
 def _runtime_assert_eq(a, b) -> None:
     if a != b:
         raise AssertionError(f"{a!r} != {b!r}")
@@ -258,10 +258,14 @@ def _runtime_rust_slice(value, start, end):
     if isinstance(value, str):
         data = value.encode("utf-8")
         if start > end:
-            raise ValueError("slice index starts at %d but ends at %d" % (start, end))
+            raise ValueError(
+                f"slice index starts at {start} but ends at {end}"
+            )
         return data[start:end].decode("utf-8")
     if start > end:
-        raise ValueError("slice index starts at %d but ends at %d" % (start, end))
+        raise ValueError(
+            f"slice index starts at {start} but ends at {end}"
+        )
     return value[start:end]
 
 
@@ -273,7 +277,7 @@ def _runtime_vec_dedup(values: list) -> None:
     if values:
         values[:] = [
             values[0],
-            *(value for previous, value in zip(values, values[1:])
+            *(value for previous, value in itertools.pairwise(values)
               if value != previous),
         ]
 
@@ -675,6 +679,12 @@ def _runtime_int_rem(left, right):
         return math.nan
 
 
+def _runtime_string_repeat(value, count):
+    if count < 0:
+        raise ValueError("negative repeat count")
+    return value * count
+
+
 def _runtime_string_find(value, needle):
     position = value.find(needle)
     if position < 0:
@@ -718,8 +728,7 @@ def _runtime_string_lines(value):
     if lines[-1] == "":
         lines.pop()
     for index in range(len(lines) - 1):
-        if lines[index].endswith("\r"):
-            lines[index] = lines[index][:-1]
+        lines[index] = lines[index].removesuffix("\r")
     return lines
 
 
@@ -1036,6 +1045,7 @@ class Translator:
             "auto": _import_auto(),
         }
         ns["_panic"] = _runtime_panic
+        ns["_runtime_non_exhaustive_match"] = _runtime_non_exhaustive_match
         ns["_assert_eq"] = _runtime_assert_eq
         ns["_assert_ne"] = _runtime_assert_ne
         ns["_rust_len"] = _runtime_rust_len
@@ -1061,6 +1071,7 @@ class Translator:
         ns["_vec_resize"] = _runtime_vec_resize
         ns["_vec_split_off"] = _runtime_vec_split_off
         ns["_vec_partition"] = _runtime_vec_partition
+        ns["_string_repeat"] = _runtime_string_repeat
         ns["_string_find"] = _runtime_string_find
         ns["_string_rfind"] = _runtime_string_rfind
         ns["_string_strip"] = _runtime_string_strip
@@ -1743,11 +1754,25 @@ class Translator:
         ]
 
     def translate_match_stmt(self, m: MatchExpr) -> ast.If:
+        scrutinee_type = self._match_scrutinee_type(m)
         warn_match_issues(
-            m, scrutinee_type=self._match_scrutinee_type(m),
+            m, scrutinee_type=scrutinee_type,
         )
         subject = self.translate_expr(m.scrutinee)
-        node: ast.stmt | None = None
+        missing = missing_match_variants(m, scrutinee_type)
+        node: ast.stmt | None = (
+            ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(
+                        id="_runtime_non_exhaustive_match",
+                        ctx=ast.Load(),
+                    ),
+                    args=[ast.Constant(value=scrutinee_type)],
+                    keywords=[],
+                ),
+            )
+            if missing else None
+        )
         for arm in reversed(m.arms):
             self._validate_pattern_bindings(arm.pattern)
             test, bindings = self._pattern_test_bindings(arm.pattern, subject)
@@ -2799,10 +2824,10 @@ class Translator:
                     comparators=[ast.Constant(value=0)],
                 )
             if e.method == "repeat" and len(e.args) == 1:
-                return ast.BinOp(
-                    left=recv,
-                    op=ast.Mult(),
-                    right=self.translate_expr(e.args[0]),
+                return ast.Call(
+                    func=ast.Name(id="_string_repeat", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
                 )
             if e.method == "clone" and not e.args:
                 return ast.Call(
@@ -3092,11 +3117,23 @@ class Translator:
         return self.translate_expr(branch)
 
     def _translate_match_expr(self, m: MatchExpr) -> ast.expr:
+        scrutinee_type = self._match_scrutinee_type(m)
         warn_match_issues(
-            m, scrutinee_type=self._match_scrutinee_type(m),
+            m, scrutinee_type=scrutinee_type,
         )
         subject = self.translate_expr(m.scrutinee)
-        node: ast.expr = ast.Constant(value=None)
+        missing = missing_match_variants(m, scrutinee_type)
+        node: ast.expr = (
+            ast.Call(
+                func=ast.Name(
+                    id="_runtime_non_exhaustive_match",
+                    ctx=ast.Load(),
+                ),
+                args=[ast.Constant(value=scrutinee_type)],
+                keywords=[],
+            )
+            if missing else ast.Constant(value=None)
+        )
         for arm in reversed(m.arms):
             self._validate_pattern_bindings(arm.pattern)
             test, bindings = self._pattern_test_bindings(arm.pattern, subject)

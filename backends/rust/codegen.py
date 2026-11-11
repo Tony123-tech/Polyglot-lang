@@ -12,6 +12,8 @@ Supports (v2 native, N2b):
 
 from __future__ import annotations
 
+import re
+
 from ast_nodes import (
     ArrayExpr,
     Assign,
@@ -97,6 +99,10 @@ from ast_nodes import (
     UseDecl,
     While,
 )
+from backends.errors import (
+    InvalidIntegerParseLiteralError,
+    UnsupportedNativePatternError,
+)
 from match_diagnostics import warn_match_issues
 from struct_order import order_struct_declarations
 
@@ -108,6 +114,18 @@ def _is_unit_type(ty: Type) -> bool:
     return isinstance(ty, TypeUnit) or (
         isinstance(ty, TypeTuple) and len(ty.elems) == 0
     )
+
+
+def _is_valid_i64_literal(value: str) -> bool:
+    if re.fullmatch(r"[+-]?[0-9]+", value) is None:
+        return False
+    negative = value.startswith("-")
+    digits = value.lstrip("+-").lstrip("0") or "0"
+    limit = "9223372036854775808" if negative else "9223372036854775807"
+    return len(digits) < len(limit) or (
+        len(digits) == len(limit) and digits <= limit
+    )
+
 
 _RUNTIME_PREFIX = r"""
 use std::future::Future;
@@ -935,6 +953,16 @@ class RustCodegen:
                     if e.generic_args
                     else "i64"
                 )
+                if (
+                    target == "i64"
+                    and isinstance(e.receiver, LitStr)
+                    and not _is_valid_i64_literal(e.receiver.value)
+                ):
+                    raise InvalidIntegerParseLiteralError(
+                        e.receiver.value,
+                        e.receiver.line,
+                        e.receiver.col,
+                    )
                 return f"{recv}.parse::<{target}>().unwrap()"
             if e.method == "split" and len(e.args) == 1:
                 separator = self.expr_to_rust(e.args[0])
@@ -1555,7 +1583,11 @@ class RustCodegen:
                 inner = f"({inner})"
             return f"{pat.name} @ {inner}"
         if isinstance(pat, PatBox):
-            return f"box {self.pattern_to_rust(pat.inner)}"
+            raise UnsupportedNativePatternError(
+                "Box patterns are supported only by the Python backend",
+                pat.line,
+                pat.col,
+            )
         if isinstance(pat, PatConst):
             return pat.path if "::" in pat.path else f"self::{pat.path}"
         if isinstance(pat, PatPath):

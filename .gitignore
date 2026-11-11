@@ -20,3 +20,4 @@ venv/
 
 # Secrets (if any)
 .env
+.aider*
