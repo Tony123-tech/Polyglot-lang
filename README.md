@@ -16,10 +16,13 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 | N4 | Done | String length/iteration, split/join, replace/trim, case conversion, `parse`, `format!`, `write!`, slicing, and comparison |
 | N5 | Done | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing |
 | N6 | Done | Additional `Vec` and `String` methods, including search, slicing, rotation, and sort helpers |
-| N7 | Done | `HashMap` construction, core operations, entry API, views, and mutable slots |
-| N8 | Done | Primitive numeric semantics: Rust-style `as` casts, integer division/remainder, and overflow wrapping at typed boundaries |
+| N7 | Done | Distinct `usize`/`isize` types, explicit casts, and target-width-aware boundary checks |
+| N8 | Done | Collections-layer `HashMap` operations and Python/native dictionary boundaries |
+| N9 | Done | Platform-defined Option/Result combinators and native Result continuations |
+| N10 | Done | SPEC v0.2.7 and final conformance status |
+| M10 | Done | Opt-in termination checking for `#[terminates]` functions |
 
-**Current test status:** 350 passed, 4 skipped, 7 deselected (`pytest -q`); 7 passed (`pytest -q -m slow`).
+**Current test status:** 416 passed, 4 skipped, 7 deselected (`pytest -q`); 7 passed, 420 deselected (`pytest -q -m slow`).
 
 ## Features
 
@@ -29,8 +32,11 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 - **Common backend interface:** Select a backend with `get_backend("python")` or `get_backend("native")`. Calling `backend.compile(program)` returns a namespace dictionary.
 - **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
 - **N6:** Additional `Vec` methods (`first`, `last`, `get`, `truncate`, `rotate_*`, `fill`, `swap`, `resize`, `split_off`, `partition`, `sort_*`, `is_sorted`, and others) and `String` methods (`find`, `rfind`, `strip_*`, `split_once`, `lines`, `as_bytes`, `is_char_boundary`, and others).
-- **N7:** `HashMap` construction and core operations (`insert`, `get`, `get_mut`, `remove`, `contains_key`, `len`, `is_empty`), the `or_insert`/`or_insert_with`/`or_insert_with_key`/`and_modify` entry subset, `key`, owned `keys`/`values`/`iter` views, mutable slot assignment, and `HashMap` fields reached through `impl` methods, parameters, or nested struct fields.
-- **N8:** Rust-style primitive semantics: `as` casts, integer division and remainder, and overflow wrapping at explicitly typed numeric boundaries.
+- **N7:** Distinct `usize`/`isize` types, explicit `as` boundaries, range-loop variable typing, and selectable Python target-width simulation.
+- **N8:** `HashMap<K, V>` construction and supported operations, typed `usize` length, dict conversion, key/value/iteration views, entry insertion, and mutable access.
+- **N9:** Dedicated Python/native coverage for Platform-defined Result/Option combinators and native `Result::and_then`/`or_else`.
+- **N10:** SPEC v0.2.7 records milestone changes, platform boundaries, and conformance status.
+- **M10:** `#[terminates]` enables conservative static termination checks for bounded ranges, decreasing `while` variants, and recursive descent.
 - **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
 
 ## Primitive semantics

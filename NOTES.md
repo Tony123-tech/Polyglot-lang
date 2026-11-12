@@ -920,3 +920,98 @@ Each README limitation is pinned by a test or has an explicit out-of-scope ratio
 ## Milestone status
 
 See the README Status table for the authoritative milestone status.
+
+## N7 batch 1 — usize/isize as distinct types
+
+**Symptom:** `Vec::len()` and index codegen silently crossed the `usize`/`i64` boundary, while Python casts ignored the selected target width.
+**Cause:** Pointer-sized integers were treated as ordinary `i64` values in generated code and did not have explicit-cast runtime checks.
+**Fix:** Added shared type helpers, Python/Rust boundary diagnostics, explicit cast lowering, target-width-aware Python casts, and removed implicit length/index conversions. Updated existing native test sources to use explicit `as` conversions where required.
+**Lesson:** A backend must preserve source type boundaries before lowering; host integer behavior cannot stand in for the compilation target's pointer width.
+
+- Covered by: `tests/test_n7_usize.py::test_python_explicit_len_cast_and_usize_return`, `test_native_explicit_len_cast_and_usize_return`, `test_python_implicit_len_return_reports_boundary_error`, `test_native_implicit_len_return_reports_boundary_error`, `test_python_implicit_len_let_reports_boundary_error`, `test_python_i64_index_requires_explicit_cast`, `test_native_i64_index_requires_explicit_cast`, `test_python_usize_cast_overflow_raises`, `test_python_usize_cast_uses_selectable_target_width`
+- `pytest -q`: 360 passed, 4 skipped, 7 deselected
+
+## N7.1 — Function-argument boundary checks
+
+**Symptom:** A `usize`/`i64` value could be passed to a known function parameter of the other type without an explicit cast.
+**Cause:** Boundary inference checked assignments and returns but did not compare call arguments with declared function parameter types.
+**Fix:** Both backends collect function signatures before lowering calls and reject mismatched known argument types with the uniform SPEC 2.4.7 diagnostic; unknown and external signatures remain unchecked.
+**Lesson:** Validate type boundaries at every statically known transfer point, not just assignments and returns.
+
+- Covered by: `tests/test_n7_usize.py::test_python_call_argument_requires_explicit_cast`, `test_native_call_argument_requires_explicit_cast`, `test_python_explicit_len_cast_and_usize_return`, `test_native_explicit_len_cast_and_usize_return`
+- `pytest -q`: 367 passed, 4 skipped, 7 deselected
+
+## N7.2 — Range loop variable types
+
+**Symptom:** Range loop variables did not retain the range endpoint's integer type, allowing implicit `usize`/`i64` mixing in the loop body.
+**Cause:** Loop bindings were not included in the backend boundary type state.
+**Fix:** Both backends infer the range type from its endpoint and bind the loop variable to that type; `0..Vec::len()` is `usize`, while an `i64` endpoint produces an `i64` loop variable.
+**Lesson:** A loop binding inherits the type of the range, and explicit casts are required when crossing integer boundaries.
+
+- Covered by: `tests/test_n7_usize.py::test_python_range_variable_inherits_usize_type`, `test_native_range_variable_inherits_usize_type`, `test_python_explicit_len_cast_and_usize_return`, `test_native_explicit_len_cast_and_usize_return`
+- `pytest -q`: 367 passed, 4 skipped, 7 deselected
+
+## N7.3 — Receiver-aware `len()` inference
+
+**Symptom:** Every `.len()` call was inferred as `usize`, including user-defined methods returning `i64`.
+**Cause:** Type inference recognized the method name but did not inspect the receiver or known impl signatures.
+**Fix:** Vec and String lengths infer as `usize`; known user methods use their declared return type; other receivers remain unknown. Python lowering also preserves a user-defined `len` method while using the runtime length helper for other receivers.
+**Lesson:** Method return types depend on the receiver; a method name alone is not sufficient type evidence.
+
+- Covered by: `tests/test_n7_usize.py::test_python_explicit_len_cast_and_usize_return`, `test_native_explicit_len_cast_and_usize_return`, `test_python_user_len_method_uses_declared_return_type`, `test_native_user_len_method_uses_declared_return_type`
+- `pytest -q`: 367 passed, 4 skipped, 7 deselected
+
+## N7.4 — Selectable Python target width
+
+**Symptom:** Python `usize`/`isize` cast checks used the host width even when simulating a different compilation target.
+**Cause:** Runtime width configuration was not connected to a backend instance.
+**Fix:** The Python backend defaults to host pointer width and accepts an explicit `target_width` of 32 or 64 through its constructor or `get_backend("python", target_width=...)`; the selected width is scoped to compiled casts and does not mutate global runtime configuration. This option is Python-backend-only and does not alter native compilation behavior.
+**Lesson:** Cross-target simulation must be explicit and isolated per backend instance so it cannot change default or native behavior.
+
+- Covered by: `tests/test_n7_usize.py::test_python_backend_target_width_is_instance_scoped`, `test_python_usize_cast_uses_selectable_target_width`, `test_python_usize_cast_overflow_raises`
+- `pytest -q`: 367 passed, 4 skipped, 7 deselected
+
+## N8 — HashMap (collections layer)
+
+**Symptom:** HashMap behavior existed in backend code but lacked a complete, traceable collections-layer contract; its `len()` result was not checked at the `usize`/`i64` boundary.
+**Cause:** HashMap had not yet been included in the normative collection type set or N7's receiver-aware length inference, and native `get_mut` references cannot outlive the by-value map argument at the PyO3 boundary.
+**Fix:** Specified and tested supported key/value types and operations, added HashMap `len()` inference and boundary checks, verified Python/native dictionary conversion, and made native `get_mut` return an owned copy at the Python boundary while retaining mutable internal use.
+**Lesson:** Collection semantics include both language-level operations and explicit ownership/conversion rules at the host boundary.
+
+- Covered by: `tests/test_n8_hashmap.py::test_python_hashmap_operations_and_option_results`, `test_native_hashmap_operations_and_option_results`, `test_python_hashmap_len_and_boundary_error`, `test_native_hashmap_len_and_boundary_error`, `test_python_hashmap_views_and_iteration`, `test_native_hashmap_views_and_iteration`, `test_python_hashmap_mutable_access_and_entry`, `test_native_hashmap_mutable_access_and_entry`, `test_python_hashmap_supported_key_value_types`, `test_native_hashmap_supported_key_value_types`, `test_hashmap_operations_match_across_backends`
+- `pytest -q`: 396 passed, 4 skipped, 7 deselected
+
+## N9 — Error-handling boundary completion
+
+**Symptom:** The Platform-defined Result and Option combinators lacked dedicated backend-specific acceptance tests, and native Result continuations were still marked Deferred.
+**Cause:** Native errors are represented as `PyErr`, while Option-to-Result conversions needed to adapt their error values to the native exception representation.
+**Fix:** Added separate Python/native tests for `is_ok`, `is_err`, `map_err`, `ok_or`, and `ok_or_else`; lowered native `ok_or*` errors to `PyErr`; verified native `and_then`/`or_else` with `PyErr` continuations and made them normative.
+**Lesson:** Backend-specific error representations can remain explicit while combinators preserve their documented branch behavior.
+
+- Covered by: `tests/test_n9_result.py::test_python_result_is_ok`, `test_native_result_is_ok`, `test_python_result_is_err`, `test_native_result_is_err`, `test_python_result_map_err`, `test_native_result_map_err`, `test_python_option_ok_or`, `test_native_option_ok_or`, `test_python_option_ok_or_else`, `test_native_option_ok_or_else`, `test_python_result_and_then_and_or_else`, `test_native_result_and_then_and_or_else`
+- `pytest -q`: 396 passed, 4 skipped, 7 deselected
+
+## N10 — SPEC v0.2.7 and conformance status
+
+**Symptom:** SPEC v0.2.4 still described the retired N7 transitional casts, Deferred HashMap and native Result continuations, and stale acceptance-test statuses.
+**Cause:** The versioned specification had not recorded the completed N7–N9 behavior or the native HashMap `get_mut` boundary limitation.
+**Fix:** Applied the N7 changes in v0.2.5, un-deferred HashMap and documented its native copy limitation in v0.2.6, and recorded the N9 combinator tests and native continuations in v0.2.7; updated 12.2 to 45 Pass and 6 Partial rows and synchronized the README test baseline.
+**Lesson:** Conformance status must track tested behavior and versioned platform boundaries, including accepted limitations.
+
+- Covered by: `tests/test_n7_usize.py`, `tests/test_n8_hashmap.py`, `tests/test_n9_result.py`, `tests/test_spec_conformance.py`
+- `pytest -q`: 396 passed, 4 skipped, 7 deselected
+- `pytest -q -m slow`: 7 passed, 400 deselected
+- `ruff check --fix . && ruff check .`: passed
+
+## M10 batch 1 — termination checking for `#[terminates]`
+
+**Symptom:** Annotated functions had no static check for obvious unbounded loops or recursive calls that do not decrease.
+**Cause:** The parser discarded attributes and neither backend performed a termination proof before lowering.
+**Fix:** Preserved the `terminates` attribute in `FnDecl`, added a shared conservative checker, and invoke it before either backend lowers the function. The checker accepts explicit finite ranges, direct lower-bounded decreasing `while` variants, and guarded integer or structural slice recursion; unsupported calls, async suspension, parameter mutation/shadowing, and unbounded loops are rejected with one identical five-line `TerminationError`.
+**Lesson:** A termination measure must remain well-founded through every recursive step; conservative rejection is safer than accepting based only on a syntactic subtraction.
+
+- Covered by: `tests/test_m10_termination.py::test_terminates_attribute_is_parsed_on_and_off`, `test_fn_decl_terminates_flag_is_preserved_in_ast`, `test_checker_ignores_unannotated_functions`, `test_python_terminating_patterns_execute`, `test_native_terminating_patterns_execute`, `test_python_unannotated_recursion_compiles_without_running`, `test_native_unannotated_recursion_compiles_without_running`, `test_python_non_terminating_patterns_rejected`, `test_native_non_terminating_patterns_rejected`, `test_termination_error_message_is_backend_identical`
+- `pytest -q`: 416 passed, 4 skipped, 7 deselected
+- Deferred: mutual recursion, loop with break, complex arithmetic, non-recursive calls, async suspension
+
+The checker also conservatively rejects non-recursive calls and async functions because their termination cannot be established by the batch-1 proof subset; both remain within SPEC 10.22.
