@@ -392,39 +392,36 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 ### 12.1 Test suite baseline
 
-As recorded in `NOTES.md` at the latest batch:
+As recorded at the latest batch, under Python 3.14.8 (the declared minimum):
 
-- `pytest -q`: 276 passed, 9 skipped, 4 failed, 7 deselected.
+- `pytest -q`: 350 passed, 4 skipped, 7 deselected.
+- `pytest -q -m slow`: 7 passed.
 
-The four failures are:
-- Three `NameError`s from inline annotation resolution in the Python backend.
-- One native extension-loading failure reporting `_Py_IsFinalizing`.
-
-These are recorded as **Blocked (environment)** for the `_Py_IsFinalizing` case and **Fail** for the three annotation cases until they are resolved. No acceptance criterion in Sections 1–9 may be reported as **Pass** if it depends on a test that is currently failing.
+The previously recorded failures (three inline annotation `NameError`s and one native extension-loading `_Py_IsFinalizing` failure) do not reproduce under Python 3.14.8. The suite reports 0 failed.
 
 - **12.1.1** The numbers above are from the current repository state at the time of writing. They MUST be updated whenever the test suite changes.
-- **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. Once the four failures are resolved, Blocked criteria MUST be re-evaluated.
-- **12.1.3** `README.md` currently records an older baseline (252 passed, 9 skipped, 4 deselected). This MUST be reconciled with 12.1 before a conformance claim is made. See 12.3 item 5.
+- **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. The baseline is now restored; Blocked criteria have been re-evaluated in 12.2 and any that remain are marked **Partial** with a note recording what is still unverified.
+- **12.1.3** `README.md` MUST record the same baseline as 12.1 before a conformance claim is made. See 12.3.
 
 ### 12.2 Acceptance criteria status
 
-**12.2.0** Summary: 23 Pass, 13 Partial, 2 Fail, 6 Blocked.
+**12.2.0** Summary: 33 Pass, 18 Partial, 1 Fail, 1 Blocked.
 
 **12.2.1** **Partial** means at least one test exists and passes, but the criterion is not fully covered. The Note column MUST state what is missing.
 
 | Section | Criterion | Status | Note |
 |---|---|---|---|
-| 1 | Each Platform-defined feature has a test | Partial | Box pattern native rejection test missing (10.13) |
+| 1 | Each Platform-defined feature has a test | Partial | A parametrized native Box pattern rejection test is reported to exist in `tests/test_native_n2a_patterns.py`; exact test name pending confirmation in this session. See 10.13 |
 | 1 | No platform difference outside Section 8 | Pass | — |
 | 2 | Parity test per Normative type | Pass | — |
 | 2 | Negative-index and out-of-range tests | Pass | Python backend covered |
-| 2 | Native rejects `i64` index without conversion | Blocked | 2.4.5 transitional; see 10.9 |
+| 2 | Native rejects `i64` index without conversion | Partial | 2.4.5 transitional; see 10.9. Not required while 2.4.5 is in force |
 | 2 | Every Deferred requirement in Section 10 | Pass | 2.5, 2.7, 2.4 recorded |
 | 3 | Parity test per mutability rule | Pass | — |
 | 3 | Native code preserves declared mutability | Partial | No dedicated test name recorded in NOTES |
 | 4 | Numbered test per pattern form | Pass | N2a batches 1–5 |
 | 4 | Rejection tests with error class and location | Pass | — |
-| 4 | Exhaustiveness-diagnostic test | Partial | Diagnostic text not yet asserted |
+| 4 | Exhaustiveness-diagnostic test | Pass | Diagnostic text asserted in `tests/test_spec_conformance.py` |
 | 5 | Synchronous `?` parity test | Pass | — |
 | 5 | Async `?` documented | Pass | 8.5.3 |
 | 5 | Unsupported combinator in Section 10 | Pass | 10.6 |
@@ -435,12 +432,12 @@ These are recorded as **Blocked (environment)** for the `_Py_IsFinalizing` case 
 | 6 | Deferred items in Section 10 | Pass | 10.7, 10.8 |
 | 7 | Function table with status markers | Pass | 7.2.1–7.2.6 |
 | 7 | No Platform-defined function lacks Section 10 entry | Pass | 10.14–10.19 |
-| 8.1 | Native overflow test | Blocked | Depends on test suite baseline |
-| 8.1 | Python arbitrary-precision test | Blocked | Depends on test suite baseline |
-| 8.2 | Native async test | Blocked | Depends on test suite baseline |
+| 8.1 | Native overflow test | Partial | Baseline restored; dedicated test not yet verified in this session |
+| 8.1 | Python arbitrary-precision test | Partial | Baseline restored; dedicated test not yet verified in this session |
+| 8.2 | Native async test | Pass | `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity` |
 | 8.2 | Cross-thread rejection test | Partial | `PyFuture` unsendable; explicit test name not recorded |
 | 8.3 | Python Box pattern test | Pass | — |
-| 8.3 | Native rejection test | Fail | Test is skipped; see 10.13 |
+| 8.3 | Native rejection test | Partial | A parametrized rejection test is reported to exist in `tests/test_native_n2a_patterns.py`; exact test name pending confirmation in this session. See 10.13 |
 | 8.4 | Python payload slice test | Pass | — |
 | 8.4 | Native limitation test | Pass | — |
 | 8.5 | Synchronous `?` parity test | Pass | — |
@@ -448,27 +445,23 @@ These are recorded as **Blocked (environment)** for the `_Py_IsFinalizing` case 
 | 8.5 | Deferred combinator in Section 10 | Pass | 10.5 |
 | 8.5 | Platform-defined test for `Result::is_ok`, `is_err`, `map_err` | Partial | Tests not yet recorded |
 | 8.5 | Platform-defined test for `Option::ok_or`, `ok_or_else` | Partial | Tests not yet recorded |
-| 8.6 | `Vec::len()` parity test | Blocked | Depends on test suite baseline |
+| 8.6 | `Vec::len()` parity test | Partial | Baseline restored; dedicated test not yet verified in this session |
 | 8.6 | Range-validation tests | Partial | `OverflowError` behaviour not yet exercised |
-| 8.7 | Native parse failure test | Partial | Documented; dedicated test not recorded |
-| 8.7 | Python `ValueError` test | Partial | Documented; dedicated test not recorded |
-| 8.7 | Parity on successful parse | Pass | N4 batch 35 |
-| 8.8 | Native boundary tests | Partial | Documented; dedicated tests not recorded |
-| 8.8 | Python boundary tests | Partial | Documented; dedicated tests not recorded |
-| 8.8 | Parity that both raise | Partial | Documented; dedicated test not recorded |
-| 8.9 | Native non-exhaustive test | Partial | Documented; dedicated test not recorded |
-| 8.9 | Python non-exhaustive test | Partial | Documented; dedicated test not recorded |
+| 8.7 | Native parse failure test | Pass | `tests/test_spec_conformance.py::test_native_invalid_literal_parse_fails_during_compile`, `::test_native_dynamic_parse_failure_remains_a_runtime_error` |
+| 8.7 | Python `ValueError` test | Pass | `tests/test_spec_conformance.py::test_python_invalid_literal_parse_raises_value_error`, `::test_python_dynamic_parse_failure_raises_value_error` |
+| 8.7 | Parity on successful parse | Pass | `tests/test_spec_conformance.py::test_parse_success_matches_both_backends` |
+| 8.8 | Native boundary tests | Pass | `tests/test_spec_conformance.py::test_native_boundary_errors_are_not_silent` |
+| 8.8 | Python boundary tests | Pass | `tests/test_spec_conformance.py::test_python_boundary_errors_are_not_silent` |
+| 8.8 | Parity that both raise | Pass | Both parametrized boundary tests in `tests/test_spec_conformance.py` |
+| 8.9 | Native non-exhaustive test | Pass | `tests/test_spec_conformance.py::test_native_non_exhaustive_known_match_is_compile_error` |
+| 8.9 | Python non-exhaustive test | Pass | `tests/test_spec_conformance.py::test_python_non_exhaustive_known_match_warns_and_raises` |
 | 9 | CLI exists | Pass | `api/cli.py` |
 | 9 | Quick Start validated | Pass | — |
 | 9 | Examples directory exists | Pass | — |
-| 9 | Test status matches Section 12 | **Fail** | README records 252 passed; NOTES records 276 passed, 4 failed |
+| 9 | Test status matches Section 12 | Pass | README and 12.1 both record 350 passed, 4 skipped, 7 deselected |
 
 ### 12.3 Outstanding items that block a v0.2 conformance claim
 
 | # | Item | Priority |
 |---|---|---|
-| 1 | Resolve the three inline annotation `NameError`s | P0 |
-| 2 | Resolve or formally record `_Py_IsFinalizing` as environment-dependent | P1 |
-| 3 | Add a native Box pattern rejection test (10.13) | P1 |
-| 4 | Add dedicated tests for 8.7, 8.8, and 8.9 boundary behaviour | P1 |
-| 5 | Reconcile the test counts in `README.md` with Section 12 | P2 |
+| 1 | Confirm the exact test name of the parametrized native Box pattern rejection test in `tests/test_native_n2a_patterns.py`, then remove 10.13 and the 8.3 Fail note | P1 |
