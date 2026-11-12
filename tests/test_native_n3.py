@@ -11,7 +11,7 @@ SOURCES = {
 fn iter_string_lengths(values: Vec<String>) -> i64 {
     let mut total = 0;
     for value in values {
-        total = total + value.len();
+        total = total + value.len() as i64;
     }
     total
 }
@@ -70,13 +70,13 @@ fn vec_extend(mut left: Vec<i64>, right: Vec<i64>) -> Vec<i64> {
 """,
     "vec_insert": """
 fn vec_insert(mut values: Vec<i64>, index: i64, value: i64) -> i64 {
-    values.insert(index, value);
-    values[index]
+    values.insert(index as usize, value);
+    values[index as usize]
 }
 """,
     "vec_remove": """
 fn vec_remove(mut values: Vec<i64>, index: i64) -> i64 {
-    values.remove(index)
+    values.remove(index as usize)
 }
 """,
     "vec_retain": """

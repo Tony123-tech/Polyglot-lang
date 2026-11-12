@@ -24,8 +24,8 @@ fn test_while_never_enters(n: i64) -> i64 {
 fn test_loop_with_break(xs: Vec<i64>) -> i64 {
     let mut i: i64 = 0;
     loop {
-        if i >= xs.len() { break; }
-        if xs[i] < 0 { return i; }
+        if i >= xs.len() as i64 { break; }
+        if xs[i as usize] < 0 { return i; }
         i = i + 1;
     }
     0 - 1
@@ -36,8 +36,8 @@ fn test_loop_sum(xs: Vec<i64>) -> i64 {
     let mut total: i64 = 0;
     let mut i: i64 = 0;
     loop {
-        if i >= xs.len() { break; }
-        total = total + xs[i];
+        if i >= xs.len() as i64 { break; }
+        total = total + xs[i as usize];
         i = i + 1;
     }
     total
@@ -66,8 +66,8 @@ fn test_match_sign(x: i64) -> i64 {
 fn test_count_evens(xs: Vec<i64>) -> i64 {
     let mut i: i64 = 0;
     let mut count: i64 = 0;
-    while i < xs.len() {
-        if xs[i] % 2 == 0 { count = count + 1; }
+    while i < xs.len() as i64 {
+        if xs[i as usize] % 2 == 0 { count = count + 1; }
         i = i + 1;
     }
     count
@@ -76,8 +76,8 @@ fn test_count_evens(xs: Vec<i64>) -> i64 {
     "test_find": """
 fn test_find(xs: Vec<i64>, target: i64) -> i64 {
     let mut i: i64 = 0;
-    while i < xs.len() {
-        if xs[i] == target { return i; }
+    while i < xs.len() as i64 {
+        if xs[i as usize] == target { return i; }
         i = i + 1;
     }
     0 - 1

@@ -9,7 +9,7 @@ from parser import parse
 SOURCES = {
     "string_len": """
 fn string_len(value: String) -> i64 {
-    value.len()
+    value.len() as i64
 }
 """,
     "string_chars": """

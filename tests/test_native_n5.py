@@ -103,7 +103,7 @@ fn n5_vec_reverse(mut values: Vec<i64>) -> Vec<i64> {
 """,
     "string_repeat": """
 fn n5_string_repeat(value: String, count: i64) -> String {
-    value.repeat(count)
+    value.repeat(count as usize)
 }
 """,
     "vec_first": """
@@ -118,7 +118,7 @@ fn n5_vec_last(values: Vec<i64>) -> i64 {
 """,
     "vec_get": """
 fn n5_vec_get(values: Vec<i64>, index: i64) -> i64 {
-    values.get(index).unwrap_or(-1)
+    values.get(index as usize).unwrap_or(-1)
 }
 """,
     "string_contains_find": """
@@ -131,8 +131,8 @@ fn n5_string_find(value: String, needle: String) -> i64 {
 """,
     "vec_truncate_string_predicates": """
 fn n5_vec_truncate(values: Vec<i64>, length: i64) -> i64 {
-    values.truncate(length);
-    values.len()
+    values.truncate(length as usize);
+    values.len() as i64
 }
 fn n5_string_is_empty(value: String) -> bool {
     value.is_empty()
@@ -172,7 +172,7 @@ fn n5_string_as_bytes(value: String) -> Vec<u8> {
     value.as_bytes()
 }
 fn n5_string_is_char_boundary(value: String, index: i64) -> bool {
-    value.is_char_boundary(index)
+    value.is_char_boundary(index as usize)
 }
 fn n5_string_to_ascii_lowercase(value: String) -> String {
     value.to_ascii_lowercase()
@@ -183,11 +183,11 @@ fn n5_string_to_ascii_uppercase(value: String) -> String {
 """,
     "vec_rotate_fill_swap": """
 fn n5_vec_rotate_left(mut values: Vec<i64>, amount: i64) -> Vec<i64> {
-    values.rotate_left(amount);
+    values.rotate_left(amount as usize);
     values
 }
 fn n5_vec_rotate_right(mut values: Vec<i64>, amount: i64) -> Vec<i64> {
-    values.rotate_right(amount);
+    values.rotate_right(amount as usize);
     values
 }
 fn n5_vec_fill(mut values: Vec<i64>, value: i64) -> Vec<i64> {
@@ -195,7 +195,7 @@ fn n5_vec_fill(mut values: Vec<i64>, value: i64) -> Vec<i64> {
     values
 }
 fn n5_vec_swap(mut values: Vec<i64>, left: i64, right: i64) -> Vec<i64> {
-    values.swap(left, right);
+    values.swap(left as usize, right as usize);
     values
 }
 """,
@@ -205,12 +205,12 @@ fn n5_vec_extend_from_slice(mut values: Vec<i64>, other: Vec<i64>) -> Vec<i64> {
     values
 }
 fn n5_vec_resize(mut values: Vec<i64>, length: i64, value: i64) -> Vec<i64> {
-    values.resize(length, value);
+    values.resize(length as usize, value);
     values
 }
 fn n5_vec_split_off(mut values: Vec<i64>, index: i64) -> i64 {
-    let tail = values.split_off(index);
-    values.len() * 10 + tail.len()
+    let tail = values.split_off(index as usize);
+    values.len() as i64 * 10 + tail.len() as i64
 }
 """,
     "string_rfind_strip_split_once": """
@@ -455,7 +455,7 @@ def test_python_vec_clear_empty_reverse_and_string_repeat():
         values
     }
     fn n5_string_repeat(value: String, count: i64) -> String {
-        value.repeat(count)
+        value.repeat(count as usize)
     }
     """)
     assert ns["n5_vec_is_empty"]([]) is True
@@ -474,7 +474,7 @@ def test_python_vec_first_last_get_and_string_search():
         values.last().unwrap_or(-1)
     }
     fn n5_vec_get(values: Vec<i64>, index: i64) -> i64 {
-        values.get(index).unwrap_or(-1)
+        values.get(index as usize).unwrap_or(-1)
     }
     fn n5_string_contains(value: String, needle: String) -> bool {
         value.contains(needle)
@@ -488,7 +488,8 @@ def test_python_vec_first_last_get_and_string_search():
     assert ns["n5_vec_last"]([8, 9]) == 9
     assert ns["n5_vec_last"]([]) == -1
     assert ns["n5_vec_get"]([8, 9], 1) == 9
-    assert ns["n5_vec_get"]([8, 9], -1) == -1
+    with pytest.raises(OverflowError):
+        ns["n5_vec_get"]([8, 9], -1)
     assert ns["n5_string_contains"]("café", "fé") is True
     assert ns["n5_string_contains"]("café", "tea") is False
     assert ns["n5_string_find"]("café", "é") == 3
@@ -500,8 +501,8 @@ def test_python_vec_first_last_get_and_string_search():
 def test_python_vec_truncate_and_string_predicates():
     ns = _run_python("""
     fn n5_vec_truncate(values: Vec<i64>, length: i64) -> i64 {
-        values.truncate(length);
-        values.len()
+        values.truncate(length as usize);
+        values.len() as i64
     }
     fn n5_string_is_empty(value: String) -> bool {
         value.is_empty()
@@ -514,7 +515,8 @@ def test_python_vec_truncate_and_string_predicates():
     }
     """)
     assert ns["n5_vec_truncate"]([1, 2, 3], 2) == 2
-    assert ns["n5_vec_truncate"]([1, 2], -1) == 2
+    with pytest.raises(OverflowError):
+        ns["n5_vec_truncate"]([1, 2], -1)
     assert ns["n5_string_is_empty"]("") is True
     assert ns["n5_string_is_empty"]("polyglot") is False
     assert ns["n5_string_starts_with"]("polyglot", "poly") is True
@@ -568,7 +570,7 @@ def test_python_string_bytes_boundaries_and_ascii_case():
         value.as_bytes()
     }
     fn n5_string_is_char_boundary(value: String, index: i64) -> bool {
-        value.is_char_boundary(index)
+        value.is_char_boundary(index as usize)
     }
     fn n5_string_to_ascii_lowercase(value: String) -> String {
         value.to_ascii_lowercase()
@@ -580,7 +582,8 @@ def test_python_string_bytes_boundaries_and_ascii_case():
     assert ns["n5_string_as_bytes"]("café") == b"caf\xc3\xa9"
     assert ns["n5_string_is_char_boundary"]("café", 3) is True
     assert ns["n5_string_is_char_boundary"]("café", 4) is False
-    assert ns["n5_string_is_char_boundary"]("café", -1) is False
+    with pytest.raises(OverflowError):
+        ns["n5_string_is_char_boundary"]("café", -1)
     assert ns["n5_string_to_ascii_lowercase"]("CAFÉ") == "cafÉ"
     assert ns["n5_string_to_ascii_uppercase"]("café") == "CAFé"
 
@@ -588,11 +591,11 @@ def test_python_string_bytes_boundaries_and_ascii_case():
 def test_python_vec_rotate_fill_and_swap():
     ns = _run_python("""
     fn n5_vec_rotate_left(mut values: Vec<i64>, amount: i64) -> Vec<i64> {
-        values.rotate_left(amount);
+        values.rotate_left(amount as usize);
         values
     }
     fn n5_vec_rotate_right(mut values: Vec<i64>, amount: i64) -> Vec<i64> {
-        values.rotate_right(amount);
+        values.rotate_right(amount as usize);
         values
     }
     fn n5_vec_fill(mut values: Vec<i64>, value: i64) -> Vec<i64> {
@@ -600,7 +603,7 @@ def test_python_vec_rotate_fill_and_swap():
         values
     }
     fn n5_vec_swap(mut values: Vec<i64>, left: i64, right: i64) -> Vec<i64> {
-        values.swap(left, right);
+        values.swap(left as usize, right as usize);
         values
     }
     """)
@@ -618,12 +621,12 @@ def test_python_vec_extend_from_slice_resize_and_split_off():
         values
     }
     fn n5_vec_resize(mut values: Vec<i64>, length: i64, value: i64) -> Vec<i64> {
-        values.resize(length, value);
+        values.resize(length as usize, value);
         values
     }
     fn n5_vec_split_off(mut values: Vec<i64>, index: i64) -> i64 {
-        let tail = values.split_off(index);
-        values.len() * 10 + tail.len()
+        let tail = values.split_off(index as usize);
+        values.len() as i64 * 10 + tail.len() as i64
     }
     """)
     assert ns["n5_vec_extend_from_slice"]([1, 2], [3, 4]) == [1, 2, 3, 4]
@@ -956,7 +959,7 @@ def test_sandbox_allows_safe_builtins():
     ns = _run_python_sandboxed("""
     fn safe() -> i64 {
         let xs = [1, 2, 3];
-        xs.len()
+        xs.len() as i64
     }
     """)
     assert ns["safe"]() == 3
@@ -974,7 +977,7 @@ def test_sandbox_allows_isinstance():
 def test_sandbox_allows_len():
     ns = _run_python_sandboxed("""
     fn safe(s: String) -> i64 {
-        s.len()
+        s.len() as i64
     }
     """)
     assert ns["safe"]("abc") == 3

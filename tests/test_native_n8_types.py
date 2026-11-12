@@ -154,6 +154,7 @@ def test_python_overflow_wraps():
 
 def test_python_sized_casts():
     ns = _run_python(SOURCES["n8_sized"])
-    assert ns["n8_as_usize"](-1) == _USIZE_MAX
+    with pytest.raises(OverflowError):
+        ns["n8_as_usize"](-1)
     assert ns["n8_as_isize"](-1) == -1
     assert ns["n8_usize_add"](_USIZE_MAX) == 0

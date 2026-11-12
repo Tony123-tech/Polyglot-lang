@@ -18,24 +18,24 @@ fn spec_gap_parse_dynamic(value: String) -> i64 {
 """,
     "spec_gap_repeat": """
 fn spec_gap_repeat(value: String, count: i64) -> String {
-    value.repeat(count)
+    value.repeat(count as usize)
 }
 """,
     "spec_gap_rotate_left": """
 fn spec_gap_rotate_left(mut values: Vec<i64>, count: i64) -> Vec<i64> {
-    values.rotate_left(count);
+    values.rotate_left(count as usize);
     values
 }
 """,
     "spec_gap_rotate_right": """
 fn spec_gap_rotate_right(mut values: Vec<i64>, count: i64) -> Vec<i64> {
-    values.rotate_right(count);
+    values.rotate_right(count as usize);
     values
 }
 """,
     "spec_gap_swap": """
 fn spec_gap_swap(mut values: Vec<i64>, left: i64, right: i64) -> Vec<i64> {
-    values.swap(left, right);
+    values.swap(left as usize, right as usize);
     values
 }
 """,
@@ -154,8 +154,9 @@ def test_native_boundary_errors_are_not_silent(
 )
 def test_python_boundary_errors_are_not_silent(source, function_name, args):
     namespace = _run_python(source)
-    if function_name in {
-        "spec_gap_repeat",
+    if function_name == "spec_gap_repeat":
+        error = OverflowError
+    elif function_name in {
         "spec_gap_rotate_left",
         "spec_gap_rotate_right",
     }:

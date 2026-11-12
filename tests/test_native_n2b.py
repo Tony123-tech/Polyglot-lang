@@ -6,7 +6,7 @@ SOURCES = {
     "test_vec_len": """
 fn test_vec_len() -> i64 {
     let v: Vec<i64> = vec![10, 20, 30];
-    v.len()
+    v.len() as i64
 }
 """,
     "test_vec_push": """
@@ -15,7 +15,7 @@ fn test_vec_push() -> i64 {
     v.push(1);
     v.push(2);
     v.push(3);
-    v.len()
+    v.len() as i64
 }
 """,
     "test_vec_push_and_sum": """
@@ -47,7 +47,7 @@ fn test_vec_pop_empty_returns_none() -> i64 {
 }
 """,
     "test_vec_index": """
-fn test_vec_index(v: Vec<i64>, i: i64) -> i64 { v[i] }
+fn test_vec_index(v: Vec<i64>, i: i64) -> i64 { v[i as usize] }
 """,
     "test_vec_index_zero": """
 fn test_vec_index_zero(v: Vec<i64>) -> i64 { v[0] }
@@ -59,7 +59,7 @@ fn test_vec_mixed() -> i64 {
     v.push(5);
     let x = v.pop();
     let first = v[0];
-    let length = v.len();
+    let length = v.len() as i64;
     first + length
 }
 """,

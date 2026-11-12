@@ -20,7 +20,7 @@ fn n6_map_contains(values: HashMap<String, i64>, key: String) -> bool {
     "map_insert": """
 fn n6_map_insert(mut values: HashMap<String, i64>, key: String, value: i64) -> i64 {
     values.insert(key, value);
-    values.len()
+    values.len() as i64
 }
 fn n6_map_insert_previous(
     mut values: HashMap<String, i64>, key: String, value: i64,
