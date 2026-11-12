@@ -95,6 +95,39 @@ class RustCompileError(RuntimeError):
         return "\n".join(lines)
 
 
+class TypeErrorForBoundary(RustCompileError):
+    """Pre-Cargo error for an implicit integer boundary conversion."""
+
+    def __init__(
+        self,
+        source_type: str,
+        expected_type: str,
+        line: int,
+        col: int,
+        source_line_text: str | None = None,
+    ) -> None:
+        message = (
+            f"error: type mismatch at line {line}, column {col}\n"
+            f"  found:    {source_type}\n"
+            f"  expected: {expected_type}\n"
+            f"  help: write `as {expected_type}` here\n"
+            "  note: `as` may wrap or truncate the value; check the range first"
+        )
+        super().__init__(
+            message=message,
+            source_line=line,
+            source_col=col,
+            source_line_text=source_line_text,
+        )
+        self.source_type = source_type
+        self.expected_type = expected_type
+        self.line = line
+        self.col = col
+
+    def __str__(self) -> str:
+        return self.message
+
+
 _ERROR_HEAD_RE = re.compile(
     r"(?m)^\s*error(?:\[(?P<code>E\d+)\])?:\s*(?P<msg>[^\n]+)"
 )

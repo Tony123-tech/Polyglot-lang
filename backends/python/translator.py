@@ -127,9 +127,19 @@ from ast_nodes import (
     Unary,
     UseDecl,
     While,
+    is_i64_type,
+    is_isize_type,
+    is_usize_type,
 )
 from backends.base import BackendBase
 from backends.errors import TranslateError
+from backends.python.runtime import (
+    HOST_TARGET_WIDTH,
+    cast_i64,
+    cast_isize,
+    cast_usize,
+    get_target_width,
+)
 from match_diagnostics import missing_match_variants, warn_match_issues
 from struct_order import order_struct_declarations
 
@@ -159,6 +169,29 @@ def _sandbox_builtins() -> dict:
 # Errors
 # ---------------------------------------------------------------------------
 
+class TypeErrorForBoundary(Exception):
+    """Raised when an integer crosses a pointer-width boundary implicitly."""
+
+    def __init__(
+        self,
+        source_type: str,
+        expected_type: str,
+        line: int,
+        col: int,
+    ) -> None:
+        message = (
+            f"error: type mismatch at line {line}, column {col}\n"
+            f"  found:    {source_type}\n"
+            f"  expected: {expected_type}\n"
+            f"  help: write `as {expected_type}` here\n"
+            "  note: `as` may wrap or truncate the value; check the range first"
+        )
+        super().__init__(message)
+        self.source_type = source_type
+        self.expected_type = expected_type
+        self.line = line
+        self.col = col
+
 
 # ---------------------------------------------------------------------------
 # Type mapping
@@ -181,8 +214,8 @@ TYPE_MAP: dict[str, str] = {
     "Result": "object",
 }
 
-# Bit width and signedness for Rust integer primitives. `isize`/`usize` are
-# 64-bit on every platform this project targets.
+# Bit width and signedness for Rust integer primitives. Pointer-width casts
+# use the selected target width via the runtime helpers below.
 _INT_TYPE_BITS: dict[str, tuple[int, bool]] = {
     "i8": (8, True),
     "i16": (16, True),
@@ -257,11 +290,15 @@ def _runtime_rust_len(value) -> int:
 def _runtime_rust_slice(value, start, end):
     if isinstance(value, str):
         data = value.encode("utf-8")
+        start = 0 if start is None else start
+        end = len(data) if end is None else end
         if start > end:
             raise ValueError(
                 f"slice index starts at {start} but ends at {end}"
             )
         return data[start:end].decode("utf-8")
+    start = 0 if start is None else start
+    end = len(value) if end is None else end
     if start > end:
         raise ValueError(
             f"slice index starts at {start} but ends at {end}"
@@ -595,7 +632,7 @@ def _runtime_map_slot_aug(slot, value, op):
     return slot
 
 
-def _runtime_cast(value, ty):
+def _runtime_cast(value, ty, *, target_width: int | None = None):
     """Emulate Rust's `as` cast semantics.
 
     Integer casts truncate to the target width and reinterpret the sign bit;
@@ -620,6 +657,15 @@ def _runtime_cast(value, ty):
             except OverflowError:
                 return math.copysign(math.inf, number)
         return number
+    if ty == "usize":
+        width = get_target_width() if target_width is None else target_width
+        return int(value) & ((1 << width) - 1)
+    if ty == "isize":
+        width = get_target_width() if target_width is None else target_width
+        number = int(value) & ((1 << width) - 1)
+        return number - (1 << width) if number >= (1 << (width - 1)) else number
+    if ty == "i64" and isinstance(value, int) and not isinstance(value, bool):
+        return cast_i64(value)
     spec = _INT_TYPE_BITS.get(ty)
     if spec is None:
         return value
@@ -940,6 +986,8 @@ class Translator:
         self.enum_variants: dict[str, set[str]] = {}
         self.constant_names: set[str] = set()
         self.impl_blocks: dict[str, list[ImplBlock]] = {}
+        self._function_signatures: dict[str, list[str | None]] = {}
+        self._method_return_types: dict[tuple[str, str], str | None] = {}
         self.generic_struct_names: set[str] = set()
         self.generic_type_names: set[str] = set()
         self._temp_counter = 0
@@ -947,6 +995,7 @@ class Translator:
         self._slot_bindings: set[str] = set()
         self._numeric_types: dict[str, str] = {}
         self._return_numeric_type: str | None = None
+        self._return_type_name: str | None = None
 
     # ---- entry -------------------------------------------------------------
 
@@ -965,6 +1014,10 @@ class Translator:
         self._slot_bindings.clear()
         self._numeric_types.clear()
         self._return_numeric_type = None
+        self._return_type_name = None
+        self._function_signatures.clear()
+        self._method_return_types.clear()
+        self.impl_blocks.clear()
         # Pass 1: collect struct / enum / impl names.
         for item in program.items:
             if isinstance(item, StructDecl):
@@ -989,9 +1042,19 @@ class Translator:
                 }
             elif isinstance(item, ConstDecl):
                 self.constant_names.add(item.name)
+            elif isinstance(item, FnDecl):
+                self._function_signatures[item.name] = [
+                    self._binding_type_name(param.ty)
+                    for param in item.params
+                ]
             elif isinstance(item, ImplBlock):
                 target = self._type_name_of(item.ty)
                 self.impl_blocks.setdefault(target, []).append(item)
+                for method in item.items:
+                    if isinstance(method, FnDecl):
+                        self._method_return_types[
+                            (target, method.name)
+                        ] = self._binding_type_name(method.ret)
 
         # Pass 2: emit statements. impl blocks are consumed here.
         body: list[ast.stmt] = []
@@ -1032,9 +1095,19 @@ class Translator:
             ast.Module(body=body, type_ignores=[])
         )
 
-    def compile_rust(self, program: Program, *, sandbox: bool = False) -> dict:
+    def compile_rust(
+        self,
+        program: Program,
+        *,
+        sandbox: bool = False,
+        target_width: int | None = None,
+    ) -> dict:
         import types
 
+        if target_width is not None and target_width not in (32, 64):
+            raise ValueError(
+                f"target width must be 32 or 64, got {target_width}"
+            )
         module = self.translate_program(program)
         code = compile(module, "<polyglot>", "exec")
         module_name = f"_polyglot_generated_{next(_MODULE_COUNTER)}"
@@ -1091,7 +1164,21 @@ class Translator:
         ns["_map_entry"] = _runtime_map_entry
         ns["_map_slot_set"] = _runtime_map_slot_set
         ns["_map_slot_aug"] = _runtime_map_slot_aug
-        ns["_cast"] = _runtime_cast
+        if target_width is None:
+            ns["_cast"] = _runtime_cast
+            ns["_cast_isize"] = cast_isize
+            ns["_cast_usize"] = cast_usize
+        else:
+            ns["_cast"] = lambda value, ty: _runtime_cast(
+                value, ty, target_width=target_width,
+            )
+            ns["_cast_isize"] = lambda value: cast_isize(
+                value, target_width=target_width,
+            )
+            ns["_cast_usize"] = lambda value: cast_usize(
+                value, target_width=target_width,
+            )
+        ns["_cast_i64"] = cast_i64
         ns["_div"] = _runtime_int_div
         ns["_mod"] = _runtime_int_rem
 
@@ -1151,6 +1238,9 @@ class Translator:
     def translate_fn(
         self, fn: FnDecl, *, is_method: bool = False,
     ) -> ast.FunctionDef | ast.AsyncFunctionDef:
+        from termination import check_function
+
+        check_function(fn)
         params: list[ast.arg] = [self.translate_fn_param(p) for p in fn.params]
         has_self = bool(params) and params[0].arg == "self"
         if is_method and not has_self:
@@ -1180,6 +1270,8 @@ class Translator:
         }
         previous_return_numeric = self._return_numeric_type
         self._return_numeric_type = self._numeric_type_name(fn.ret)
+        previous_return_type_name = self._return_type_name
+        self._return_type_name = self._binding_type_name(fn.ret)
         try:
             if fn.body is not None:
                 body = self.translate_block_as_fn_body(fn.body)
@@ -1188,6 +1280,7 @@ class Translator:
             self._slot_bindings = previous_slot_bindings
             self._numeric_types = previous_numeric_types
             self._return_numeric_type = previous_return_numeric
+            self._return_type_name = previous_return_type_name
         if not body:
             body = [ast.Pass()]
         if (
@@ -1257,6 +1350,12 @@ class Translator:
         for stmt in block.stmts:
             body.extend(self.translate_stmt(stmt))
         if block.tail is not None:
+            self._check_type_boundary(
+                self._known_expr_type(block.tail),
+                self._return_type_name,
+                block.tail.line,
+                block.tail.col,
+            )
             body.append(ast.Return(
                 value=self._coerce_return_value(
                     self.translate_expr(block.tail),
@@ -1472,6 +1571,13 @@ class Translator:
             if isinstance(expr, MatchExpr):
                 return [self.translate_match_stmt(expr)]
             if isinstance(expr, Return):
+                if expr.value is not None:
+                    self._check_type_boundary(
+                        self._known_expr_type(expr.value),
+                        self._return_type_name,
+                        expr.line,
+                        expr.col,
+                    )
                 return [ast.Return(
                     value=self._coerce_return_value(
                         self.translate_opt_expr(expr.value),
@@ -1540,6 +1646,12 @@ class Translator:
             isinstance(e.target, Ident)
             and e.target.name in self._numeric_types
         ):
+            self._check_type_boundary(
+                self._known_expr_type(e.value),
+                self._numeric_types[e.target.name],
+                e.line,
+                e.col,
+            )
             value = self._coerce_numeric(
                 value, self._numeric_types[e.target.name],
             )
@@ -1612,6 +1724,14 @@ class Translator:
             )
         target = ast.Name(id=s.pattern.name, ctx=ast.Store())
         numeric_type = self._numeric_type_name(s.ty)
+        inferred_type = (
+            self._known_expr_type(s.value) if s.value is not None else None
+        )
+        self._check_type_boundary(
+            inferred_type, self._binding_type_name(s.ty), s.line, s.col,
+        )
+        if numeric_type is None and inferred_type in _PRIMITIVE_NUMERIC_TYPES:
+            numeric_type = inferred_type
         if numeric_type is not None:
             self._numeric_types[s.pattern.name] = numeric_type
         else:
@@ -1630,7 +1750,13 @@ class Translator:
             if isinstance(s.ty, TypeName)
             else self._expr_variant_type(s.value)
         )
-        if binding_type in {"Option", "Result", "HashMap"}:
+        if (
+            binding_type is None
+            and s.value is not None
+            and self._is_vec_expr(s.value)
+        ):
+            binding_type = "Vec"
+        if binding_type in {"Option", "Result", "HashMap"} or binding_type is not None:
             self._binding_types[s.pattern.name] = binding_type
         if self._is_map_slot_expr(s.value):
             self._slot_bindings.add(s.pattern.name)
@@ -1659,8 +1785,37 @@ class Translator:
                 f.line, f.col,
             )
         iter_expr = self.translate_expr(f.iter)
-        body = self.translate_block_as_body(f.body)
+        if isinstance(f.pattern, PatIdent):
+            name = f.pattern.name
+            previous_numeric_type = self._numeric_types.get(name)
+            previous_binding_type = self._binding_types.get(name)
+            loop_type = self._known_expr_type(f.iter)
+            self._numeric_types.pop(name, None)
+            self._binding_types.pop(name, None)
+            if loop_type in _PRIMITIVE_NUMERIC_TYPES:
+                self._numeric_types[name] = loop_type
+                self._binding_types[name] = loop_type
+            elif loop_type is not None:
+                self._binding_types[name] = loop_type
+            try:
+                body = self.translate_block_as_body(f.body)
+            finally:
+                self._restore_binding(self._numeric_types, name, previous_numeric_type)
+                self._restore_binding(self._binding_types, name, previous_binding_type)
+        else:
+            body = self.translate_block_as_body(f.body)
         return ast.For(target=target, iter=iter_expr, body=body, orelse=[])
+
+    @staticmethod
+    def _restore_binding(
+        bindings: dict[str, str],
+        name: str,
+        value: str | None,
+    ) -> None:
+        if value is None:
+            bindings.pop(name, None)
+        else:
+            bindings[name] = value
 
     def _for_pattern_target(self, pattern: Pattern) -> ast.expr:
         if isinstance(pattern, PatIdent):
@@ -2246,9 +2401,176 @@ class Translator:
     def _coerce_return_value(
         self, value: ast.expr | None,
     ) -> ast.expr | None:
-        if value is None or self._return_numeric_type is None:
+        if (
+            value is None
+            or self._return_numeric_type is None
+            or self._return_numeric_type in {"usize", "isize"}
+        ):
             return value
         return self._coerce_numeric(value, self._return_numeric_type)
+
+    def infer_type(self, expr: Expr) -> str | None:
+        if isinstance(expr, MethodCall):
+            receiver_type = self._known_expr_type(expr.receiver)
+            if expr.method == "len":
+                if receiver_type in {"Vec", "String", "HashMap"}:
+                    return "usize"
+                return self._method_return_types.get(
+                    (receiver_type, expr.method),
+                )
+            return self._method_return_types.get(
+                (receiver_type, expr.method),
+            )
+        if isinstance(expr, Cast) and isinstance(expr.ty, TypeName):
+            return expr.ty.name
+        if isinstance(expr, Range):
+            return (
+                self._known_expr_type(expr.end)
+                if expr.end is not None
+                else None
+            ) or (
+                self._known_expr_type(expr.start)
+                if expr.start is not None
+                else None
+            )
+        if isinstance(expr, Binary):
+            left_type = self._known_expr_type(expr.left)
+            right_type = self._known_expr_type(expr.right)
+            if left_type is not None and right_type is not None:
+                self._check_type_boundary(
+                    right_type, left_type, expr.line, expr.col,
+                )
+            return left_type or right_type
+        return None
+
+    def _known_expr_type(self, expr: Expr) -> str | None:
+        inferred = self.infer_type(expr)
+        if inferred is not None:
+            return inferred
+        if isinstance(expr, Ident):
+            return self._numeric_types.get(
+                expr.name,
+                self._binding_types.get(expr.name),
+            )
+        if isinstance(expr, StructLiteral):
+            return expr.path.split("::")[-1]
+        if isinstance(expr, Field):
+            receiver_type = self._known_expr_type(expr.receiver)
+            return self.struct_field_types.get(receiver_type or "", {}).get(
+                expr.name,
+            )
+        if isinstance(expr, Paren):
+            return self._known_expr_type(expr.inner)
+        return None
+
+    def _check_call_arguments(self, call: Call) -> None:
+        if isinstance(call.func, Ident):
+            name = call.func.name
+        elif isinstance(call.func, Path):
+            name = call.func.segments[-1]
+        else:
+            return
+        parameter_types = self._function_signatures.get(name)
+        if parameter_types is None:
+            return
+        for argument, expected_type in zip(call.args, parameter_types):
+            self._check_type_boundary(
+                self._known_expr_type(argument),
+                expected_type,
+                argument.line,
+                argument.col,
+            )
+
+    def _check_type_boundary(
+        self,
+        source_type: str | None,
+        expected_type: str | None,
+        line: int,
+        col: int,
+    ) -> None:
+        if source_type is None or expected_type is None:
+            return
+        source_ty = TypeName(line, col, source_type)
+        expected_ty = TypeName(line, col, expected_type)
+        source_is_pointer_sized = (
+            is_usize_type(source_ty) or is_isize_type(source_ty)
+        )
+        expected_is_pointer_sized = (
+            is_usize_type(expected_ty) or is_isize_type(expected_ty)
+        )
+        if (
+            (source_is_pointer_sized and is_i64_type(
+                expected_ty,
+            ))
+            or (expected_is_pointer_sized and is_i64_type(source_ty))
+            or (
+                source_is_pointer_sized
+                and expected_is_pointer_sized
+                and source_type != expected_type
+            )
+        ):
+            raise TypeErrorForBoundary(
+                source_type, expected_type, line, col,
+            )
+
+    def _check_usize_method_args(self, expr: MethodCall) -> None:
+        if expr.method in {"repeat", "is_char_boundary"}:
+            indexes = (0,)
+        elif self._is_vec_expr(expr.receiver):
+            indexes = {
+                "get": (0,),
+                "truncate": (0,),
+                "rotate_left": (0,),
+                "rotate_right": (0,),
+                "swap": (0, 1),
+                "resize": (0,),
+                "split_off": (0,),
+                "windows": (0,),
+                "chunks": (0,),
+                "insert": (0,),
+                "remove": (0,),
+            }.get(expr.method, ())
+        else:
+            indexes = ()
+        for index in indexes:
+            if index < len(expr.args):
+                arg = expr.args[index]
+                self._check_type_boundary(
+                    self._known_expr_type(arg), "usize", arg.line, arg.col,
+                )
+
+    def _is_vec_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, Ident):
+            return self._binding_types.get(expr.name) == "Vec"
+        if isinstance(expr, (ArrayExpr, RepeatArray)):
+            return True
+        if isinstance(expr, MacroCall) and expr.path == "vec":
+            return True
+        if isinstance(expr, MethodCall):
+            return self._is_vec_expr(expr.receiver)
+        return False
+
+    def translate_cast(self, node: Cast) -> ast.expr:
+        inner = self.translate_expr(node.expr)
+        if isinstance(node.ty, TypeName):
+            source_type = self.infer_type(node.expr)
+            helper = {
+                "isize": "_cast_isize",
+                "usize": "_cast_usize",
+            }.get(node.ty.name)
+            if (
+                node.ty.name == "i64"
+                and source_type in {"usize", "isize"}
+            ):
+                helper = "_cast_i64"
+            if helper is not None:
+                return ast.Call(
+                    func=ast.Name(id=helper, ctx=ast.Load()),
+                    args=[inner],
+                    keywords=[],
+                )
+            return self._coerce_numeric(inner, node.ty.name)
+        return inner
 
     def translate_expr(self, e: Expr) -> ast.expr:
         if isinstance(e, LitInt):
@@ -2324,6 +2646,23 @@ class Translator:
         if isinstance(e, Paren):
             return self.translate_expr(e.inner)
         if isinstance(e, Unary):
+            if (
+                e.op == "-"
+                and isinstance(e.operand, Cast)
+                and isinstance(e.operand.ty, TypeName)
+                and e.operand.ty.name in {"isize", "usize"}
+            ):
+                return self.translate_cast(Cast(
+                    e.operand.line,
+                    e.operand.col,
+                    Unary(
+                        e.line,
+                        e.col,
+                        "-",
+                        e.operand.expr,
+                    ),
+                    e.operand.ty,
+                ))
             return self._translate_unary(e)
         if isinstance(e, Binary):
             return self._translate_binary(e)
@@ -2339,10 +2678,12 @@ class Translator:
                 and not e.args
             ):
                 return ast.Dict(keys=[], values=[])
+            self._check_call_arguments(e)
             func = self.translate_expr(e.func)
             args = [self.translate_expr(a) for a in e.args]
             return ast.Call(func=func, args=args, keywords=[])
         if isinstance(e, MethodCall):
+            self._check_usize_method_args(e)
             recv = self.translate_expr(e.receiver)
             if e.method == "into_iter" and not e.args:
                 return recv
@@ -2837,12 +3178,19 @@ class Translator:
                 )
             if e.method == "as_slice" and not e.args:
                 return recv
+            if e.method == "to_vec" and not e.args:
+                return recv
             if e.method == "len" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_rust_len", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
+                receiver_type = self._known_expr_type(e.receiver)
+                if (
+                    receiver_type is None
+                    or (receiver_type, "len") not in self._method_return_types
+                ):
+                    return ast.Call(
+                        func=ast.Name(id="_rust_len", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
             if e.method == "chars" and not e.args:
                 return ast.Call(
                     func=ast.Name(id="list", ctx=ast.Load()),
@@ -2932,6 +3280,10 @@ class Translator:
                     ],
                     keywords=[],
                 )
+            index_type = self._known_expr_type(e.index)
+            self._check_type_boundary(
+                index_type, "usize", e.index.line, e.index.col,
+            )
             idx = self.translate_expr(e.index)
             return ast.Subscript(value=recv, slice=idx, ctx=ast.Load())
         if isinstance(e, TupleExpr):
@@ -2980,10 +3332,7 @@ class Translator:
                 args=args, keywords=[],
             )
         if isinstance(e, Cast):
-            inner = self.translate_expr(e.expr)
-            if isinstance(e.ty, TypeName):
-                return self._coerce_numeric(inner, e.ty.name)
-            return inner
+            return self.translate_cast(e)
         if isinstance(e, Return):
             raise TranslateError("Return is a statement here", e.line, e.col)
         if isinstance(e, MacroCall):
@@ -3470,15 +3819,30 @@ class PythonBackend(BackendBase):
 
     name = "python"
 
-    def __init__(self, *, trusted: bool = True, sandbox: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        trusted: bool = True,
+        sandbox: bool = False,
+        target_width: int | None = None,
+    ) -> None:
         super().__init__(trusted=trusted)
+        if target_width is not None and target_width not in (32, 64):
+            raise ValueError(
+                f"target width must be 32 or 64, got {target_width}"
+            )
         self.sandbox = sandbox
+        self.target_width = (
+            HOST_TARGET_WIDTH if target_width is None else target_width
+        )
         self.translator = Translator()
 
     def compile(self, program: Program) -> dict:
         self._check_trust()
         return self.translator.compile_rust(
-            program, sandbox=self.sandbox,
+            program,
+            sandbox=self.sandbox,
+            target_width=self.target_width,
         )
 
 

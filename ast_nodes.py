@@ -105,6 +105,10 @@ __all__ = [
     "Unary",
     "UseDecl",
     "While",
+    "is_i64_type",
+    "is_isize_type",
+    "is_usize_type",
+    "type_display_name",
 ]
 
 # ---------------------------------------------------------------------------
@@ -192,6 +196,55 @@ Type = (
     TypeName | TypeRef | TypeSlice | TypeArray
     | TypeTuple | TypeFn | TypeImplTrait | TypeDynTrait | TypeUnit
 )
+
+
+def is_usize_type(ty: Type | None) -> bool:
+    return isinstance(ty, TypeName) and ty.name == "usize"
+
+
+def is_isize_type(ty: Type | None) -> bool:
+    return isinstance(ty, TypeName) and ty.name == "isize"
+
+
+def is_i64_type(ty: Type | None) -> bool:
+    return isinstance(ty, TypeName) and ty.name == "i64"
+
+
+def type_display_name(ty: Type | None) -> str:
+    if ty is None:
+        return "()"
+    if isinstance(ty, TypeName):
+        if not ty.args:
+            return ty.name
+        args = ", ".join(type_display_name(arg) for arg in ty.args)
+        return f"{ty.name}<{args}>"
+    if isinstance(ty, TypeRef):
+        return f"&{'mut ' if ty.mutable else ''}{type_display_name(ty.inner)}"
+    if isinstance(ty, TypeSlice):
+        return f"[{type_display_name(ty.inner)}]"
+    if isinstance(ty, TypeArray):
+        size = (
+            ty.size.raw if isinstance(ty.size, LitInt)
+            else ty.size.name if isinstance(ty.size, Ident)
+            else "..."
+        )
+        return f"[{type_display_name(ty.inner)}; {size}]"
+    if isinstance(ty, TypeTuple):
+        elements = ", ".join(type_display_name(item) for item in ty.elems)
+        if len(ty.elems) == 1:
+            elements += ","
+        return f"({elements})"
+    if isinstance(ty, TypeFn):
+        params = ", ".join(type_display_name(item) for item in ty.params)
+        result = type_display_name(ty.ret) if ty.ret is not None else "()"
+        return f"fn({params}) -> {result}"
+    if isinstance(ty, TypeImplTrait):
+        return "impl " + " + ".join(bound.name for bound in ty.bounds)
+    if isinstance(ty, TypeDynTrait):
+        return "dyn " + " + ".join(bound.name for bound in ty.bounds)
+    if isinstance(ty, TypeUnit):
+        return "()"
+    raise TypeError(f"unsupported type node {type(ty).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +652,7 @@ class FnDecl(Node):
     is_pub: bool = False
     is_async: bool = False
     is_unsafe: bool = False
+    terminates: bool = False
 
 
 @dataclass
