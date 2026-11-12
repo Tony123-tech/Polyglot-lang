@@ -1,4 +1,4 @@
-# polyglot-lang Specification v0.2.2
+# polyglot-lang Specification v0.2.3
 
 ## 0. Conventions
 
@@ -382,6 +382,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.2** Narrowing a platform difference MUST be recorded as a version increase and MUST NOT be introduced as a silent test change.
 - **11.3** No async parity test may be added before the async execution model is moved out of Experimental.
   - **11.3.1** A parity test is a test that asserts identical observable behaviour across both backends for the same input. A test that asserts backend-specific behaviour, such as the synchronous Python async test required by 6, is not a parity test.
+- **11.4** v0.2.3 narrowed 8.3.2 from `RustCompileError` to a dedicated pre-compiler rejection, and recorded the native Box pattern rejection test in `tests/test_native_n2a_patterns.py`.
 
 ## 12. Conformance Status
 
