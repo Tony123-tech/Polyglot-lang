@@ -58,7 +58,7 @@ A requirement is marked Normative when it applies to both backends without platf
 ## 4. Pattern Matching
 
 - **4.1** The parser MUST support the following pattern forms: or-patterns, literal ranges, tuple patterns, struct patterns, `@` bindings, reference patterns, slice patterns, rest patterns, const patterns, path patterns, and macro patterns.
-  - **4.1.1** Code generation for const patterns and macro patterns is Platform-defined. See 10.18.
+  - **4.1.1** Code generation for const patterns and macro patterns is Platform-defined. See 10.17.
   - **4.1.2** All other forms listed in 4.1 MUST be supported by both backends.
 - **4.2** Match exhaustiveness MUST produce a diagnostic for a known `Option` or `Result` scrutinee that is missing a `None` or `Err` arm. Exhaustiveness analysis for other types is Deferred.
   - **4.2.1** The diagnostic MUST include the scrutinee type and the missing variant(s).
@@ -246,12 +246,12 @@ This section defines the platform differences permitted by this specification. E
 ### 8.3 Box patterns
 
 - **8.3.1** Box patterns MUST be supported only by the Python backend until stable Rust supports them.
-- **8.3.2** The native backend MUST reject Box patterns with an explicit error. Until a dedicated native rejection test exists, a Box pattern in native source MUST raise `RustCompileError`; this behaviour is tracked in 10.13.
+- **8.3.2** The native backend MUST reject Box patterns with an explicit error before invoking the Rust compiler.
 
 **Acceptance criteria**
 
 - A Python Box pattern test exists.
-- **Partial:** a native rejection test does not yet exist. A native Box pattern is currently skipped in the test suite. See 10.13.
+- A native rejection test exists in `tests/test_native_n2a_patterns.py`.
 
 ### 8.4 Payload enum slices
 
@@ -369,13 +369,12 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.10** Additional integer types beyond `i64`, `usize`, and `isize` are deferred. See 2.5.
 - **10.11** The `as` conversion follows Rust semantics natively; its Python backend behaviour is not yet specified and is deferred. See 2.7.
 - **10.12** `if let` forms other than `if let Some(binding) = expr` raise a translation error. See 5.4.
-- **10.13** A native Box pattern rejection test does not yet exist; Box patterns are skipped in the native test suite. See 8.3.
-- **10.14** `String::parse` failure behaviour differs across backends. See 8.7.
-- **10.15** Negative `String::repeat` counts and out-of-range `Vec::rotate_*` / `Vec::swap` arguments raise in the Python backend and panic natively. See 8.8.
-- **10.16** Non-exhaustive match produces a warning in the Python backend and a `RustCompileError` in the native backend. See 8.9.
-- **10.17** `PatConst` and `PatMacro` are parsed but not emitted by either backend. See 4.1.1.
-- **10.18** `Result::is_ok`, `Result::is_err`, and `Result::map_err` are Platform-defined. See 8.5.5.
-- **10.19** `Option::ok_or` and `Option::ok_or_else` are Platform-defined. See 8.5.6.
+- **10.13** `String::parse` failure behaviour differs across backends. See 8.7.
+- **10.14** Negative `String::repeat` counts and out-of-range `Vec::rotate_*` / `Vec::swap` arguments raise in the Python backend and panic natively. See 8.8.
+- **10.15** Non-exhaustive match produces a warning in the Python backend and a `RustCompileError` in the native backend. See 8.9.
+- **10.16** `PatConst` and `PatMacro` are parsed but not emitted by either backend. See 4.1.1.
+- **10.17** `Result::is_ok`, `Result::is_err`, and `Result::map_err` are Platform-defined. See 8.5.5.
+- **10.18** `Option::ok_or` and `Option::ok_or_else` are Platform-defined. See 8.5.6.
 
 ## 11. Versioning
 
@@ -405,13 +404,13 @@ The previously recorded failures (three inline annotation `NameError`s and one n
 
 ### 12.2 Acceptance criteria status
 
-**12.2.0** Summary: 33 Pass, 18 Partial, 1 Fail, 1 Blocked.
+**12.2.0** Summary: 35 Pass, 12 Partial, 0 Fail, 0 Blocked.
 
 **12.2.1** **Partial** means at least one test exists and passes, but the criterion is not fully covered. The Note column MUST state what is missing.
 
 | Section | Criterion | Status | Note |
 |---|---|---|---|
-| 1 | Each Platform-defined feature has a test | Partial | A parametrized native Box pattern rejection test is reported to exist in `tests/test_native_n2a_patterns.py`; exact test name pending confirmation in this session. See 10.13 |
+| 1 | Each Platform-defined feature has a test | Pass | Box pattern native rejection covered by `tests/test_native_n2a_patterns.py::test_pattern_box_native_rejected` |
 | 1 | No platform difference outside Section 8 | Pass | — |
 | 2 | Parity test per Normative type | Pass | — |
 | 2 | Negative-index and out-of-range tests | Pass | Python backend covered |
@@ -431,13 +430,13 @@ The previously recorded failures (three inline annotation `NameError`s and one n
 | 6 | Python async free-function test | Partial | Synchronous execution asserted indirectly |
 | 6 | Deferred items in Section 10 | Pass | 10.7, 10.8 |
 | 7 | Function table with status markers | Pass | 7.2.1–7.2.6 |
-| 7 | No Platform-defined function lacks Section 10 entry | Pass | 10.14–10.19 |
+| 7 | No Platform-defined function lacks Section 10 entry | Pass | 10.13–10.18 |
 | 8.1 | Native overflow test | Partial | Baseline restored; dedicated test not yet verified in this session |
 | 8.1 | Python arbitrary-precision test | Partial | Baseline restored; dedicated test not yet verified in this session |
 | 8.2 | Native async test | Pass | `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity` |
 | 8.2 | Cross-thread rejection test | Partial | `PyFuture` unsendable; explicit test name not recorded |
 | 8.3 | Python Box pattern test | Pass | — |
-| 8.3 | Native rejection test | Partial | A parametrized rejection test is reported to exist in `tests/test_native_n2a_patterns.py`; exact test name pending confirmation in this session. See 10.13 |
+| 8.3 | Native rejection test | Pass | `tests/test_native_n2a_patterns.py::test_pattern_box_native_rejected` (parametrized over five Box pattern forms) |
 | 8.4 | Python payload slice test | Pass | — |
 | 8.4 | Native limitation test | Pass | — |
 | 8.5 | Synchronous `?` parity test | Pass | — |
@@ -462,6 +461,4 @@ The previously recorded failures (three inline annotation `NameError`s and one n
 
 ### 12.3 Outstanding items that block a v0.2 conformance claim
 
-| # | Item | Priority |
-|---|---|---|
-| 1 | Confirm the exact test name of the parametrized native Box pattern rejection test in `tests/test_native_n2a_patterns.py`, then remove 10.13 and the 8.3 Fail note | P1 |
+None.
