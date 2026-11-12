@@ -176,6 +176,7 @@ class Parser:
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
         self.i = 0
+        self._parsing_for_iter = False
 
     # ---- token helpers -----------------------------------------------------
 
@@ -258,8 +259,8 @@ class Parser:
     # ---- items -------------------------------------------------------------
 
     def parse_item(self) -> Item:
-        # Attributes are consumed but not yet attached to items (deferred to v11).
-        self.parse_attrs()
+        attrs = self.parse_attrs()
+        terminates = any(attr.name == "terminates" for attr in attrs)
 
         is_pub = False
         if self.check(TokenType.PUB):
@@ -281,7 +282,9 @@ class Parser:
         tok = self.peek()
 
         if tok.type == TokenType.FN:
-            return self.parse_fn(is_pub, is_async, is_unsafe)
+            return self.parse_fn(
+                is_pub, is_async, is_unsafe, terminates=terminates,
+            )
         if tok.type == TokenType.STRUCT:
             return self.parse_struct(is_pub)
         if tok.type == TokenType.ENUM:
@@ -306,7 +309,14 @@ class Parser:
 
     # ---- fn ----------------------------------------------------------------
 
-    def parse_fn(self, is_pub: bool, is_async: bool, is_unsafe: bool) -> FnDecl:
+    def parse_fn(
+        self,
+        is_pub: bool,
+        is_async: bool,
+        is_unsafe: bool,
+        *,
+        terminates: bool = False,
+    ) -> FnDecl:
         tok = self.expect(TokenType.FN)
         name = self.expect(TokenType.IDENT).value
         generics = self.parse_generics()
@@ -327,7 +337,7 @@ class Parser:
             self.expect(TokenType.SEMI)
         return FnDecl(
             tok.line, tok.col, name, params, ret, body,
-            generics, is_pub, is_async, is_unsafe,
+            generics, is_pub, is_async, is_unsafe, terminates,
         )
 
     def parse_fn_param(self) -> FnParam:
@@ -451,8 +461,16 @@ class Parser:
         self.expect(TokenType.LBRACE)
         items: list[TraitItem] = []
         while not self.check(TokenType.RBRACE):
+            attrs = self.parse_attrs()
             if self.check(TokenType.FN):
-                fn = self.parse_fn(False, False, False)
+                fn = self.parse_fn(
+                    False,
+                    False,
+                    False,
+                    terminates=any(
+                        attr.name == "terminates" for attr in attrs
+                    ),
+                )
                 items.append(TraitItem(fn.line, fn.col, fn, None))
             elif self.check(TokenType.TYPE):
                 t = self.expect(TokenType.TYPE)
@@ -1033,7 +1051,12 @@ class Parser:
             self.advance()
             pattern = self.parse_pattern()
             self.expect(TokenType.IN)
-            iter_expr = self.parse_expr()
+            was_parsing_for_iter = self._parsing_for_iter
+            self._parsing_for_iter = True
+            try:
+                iter_expr = self.parse_expr()
+            finally:
+                self._parsing_for_iter = was_parsing_for_iter
             body = self.parse_block()
             return For(tok.line, tok.col, pattern, iter_expr, body)
 
@@ -1177,7 +1200,11 @@ class Parser:
             while self.check(TokenType.COLONCOLON) and self.peek(1).type == TokenType.IDENT:
                 self.advance()
                 segments.append(self.advance().value)
-            if self.check(TokenType.LBRACE) and self._looks_like_struct_literal():
+            if (
+                not self._parsing_for_iter
+                and self.check(TokenType.LBRACE)
+                and self._looks_like_struct_literal()
+            ):
                 return self.parse_struct_literal(tok, segments)
             if len(segments) > 1:
                 return Path(tok.line, tok.col, segments)
