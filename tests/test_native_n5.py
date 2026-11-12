@@ -693,7 +693,7 @@ def test_python_vec_partition_sort_by_key_and_is_sorted():
 @pytest.mark.native
 def test_native_option_unwrap(native_ns):
     assert native_ns["n5_option_unwrap_get"]() == 5
-    with pytest.raises(BaseException):
+    with pytest.raises(BaseException):  # noqa: B017
         native_ns["n5_option_unwrap_fail"]()
 
 
