@@ -167,7 +167,7 @@ fn unwrap_or_zero(value: Maybe) -> i64 {
     ns = _run(source)
 
     assert ns["unwrap_or_zero"](ns["Maybe"].Some(42)) == 42
-    assert ns["unwrap_or_zero"](getattr(ns["Maybe"], "None_")) == 0
+    assert ns["unwrap_or_zero"](ns["Maybe"].None_) == 0
 
 
 def test_python_struct_with_vec_field():
