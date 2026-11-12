@@ -19,7 +19,7 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 | N7 | Done | `HashMap` construction, core operations, entry API, views, and mutable slots |
 | N8 | Done | Primitive numeric semantics: Rust-style `as` casts, integer division/remainder, and overflow wrapping at typed boundaries |
 
-**Current test status:** 326 passed, 9 skipped, 7 deselected (`pytest -q`); 7 passed (`pytest -q -m slow`).
+**Current test status:** 350 passed, 4 skipped, 7 deselected (`pytest -q`); 7 passed (`pytest -q -m slow`).
 
 ## Features
 
