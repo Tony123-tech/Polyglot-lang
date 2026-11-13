@@ -786,6 +786,23 @@ class RustCodegen:
     ) -> None:
         if source_type is None or expected_type is None:
             return
+        # M4: implicit conversion between different integer types requires `as`
+        _INT_TYPE_NAMES = {
+            "i8", "i16", "i32", "i64", "i128",
+            "u8", "u16", "u32", "u64", "u128",
+            "usize", "isize",
+        }
+        if source_type in _INT_TYPE_NAMES and expected_type in _INT_TYPE_NAMES:
+            if source_type != expected_type:
+                from backends.rust.compiler import TypeErrorForBoundary
+                raise TypeErrorForBoundary(
+                    source_type,
+                    expected_type,
+                    node.line,
+                    node.col,
+                    self.source_lines.get(node.line),
+                )
+            return
         source_ty = TypeName(node.line, node.col, source_type)
         expected_ty = TypeName(node.line, node.col, expected_type)
         source_is_pointer_sized = (

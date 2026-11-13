@@ -68,3 +68,30 @@ def test_cross_backend_matrix_python(ty, val, cast_back):
     # just ensure it compiles and runs in Python
     out = _run_py(src)
     assert isinstance(out, int)
+
+@pytest.mark.native
+@pytest.mark.parametrize("src,expected", [
+    ("fn main() -> i64 { let x = 1i8 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 1i16 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 1i32 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 1i128 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 1u8 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 1u16 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 1u32 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 1u64 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 1u128 as i64; x }", 1),
+    ("fn main() -> i64 { let x = 200i64 as i8; x as i64 }", -56),
+    ("fn main() -> i64 { let x = 300i64 as u8; x as i64 }", 44),
+    ("fn main() -> i64 { let x = 255u8 as i8; x as i64 }", -1),
+    ("fn main() -> i64 { let x = 1i128 as u128; x as i64 }", 1),
+])
+def test_native_integer_matrix(src, expected, tmp_path):
+    from backends.rust.compiler import NativeBackend
+    ns = NativeBackend(cache_dir=tmp_path).compile(parse(lex(src)))
+    assert ns["main"]() == expected
+
+def test_native_boundary_error_for_implicit_conversion():
+    from backends.rust.compiler import NativeBackend, TypeErrorForBoundary
+    src = "fn main(a: i64) -> i8 { let x: i8 = a; x }"
+    with pytest.raises(TypeErrorForBoundary):
+        NativeBackend(cache_dir="/tmp/m4_test").compile(parse(lex(src)))
