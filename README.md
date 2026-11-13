@@ -199,6 +199,21 @@ and get either a Python module or a native extension without writing
 still run Cargo internally, and the current single-file model does not yet
 expose arbitrary crate dependencies.
 
+## Error codes
+
+Diagnostics include a stable error code. The table below maps each code to its class and meaning.
+
+| Code | Class | Meaning |
+|---|---|---|
+| `E001` | `TypeErrorForBoundary` | An implicit conversion between different integer types was attempted. Add an explicit `as` cast. See SPEC 2.4.6–2.4.7. |
+| `E002` | `TerminationError` | A function annotated `#[terminates]` could not be proven to terminate. See SPEC 2.8. |
+| `E003` | `TranslateError` | A generic AST-to-backend translation failure (unsupported construct, invalid pattern, etc.). |
+| `E004` | `RustCompileError` | The generated Rust failed to compile. The message includes the original source location when available. |
+| `E005` | `IncludeCycleError` | A cyclic `include!` chain was detected. The message prints the full chain. See SPEC 9.2. |
+| `E006` | `IncludeNotFoundError` | An `include!` target file does not exist or is unreadable. See SPEC 9.2. |
+| `E007` | `UnsupportedNativePatternError` | A source pattern cannot be represented by stable Rust. See SPEC 8.3. |
+| `E008` | `InvalidIntegerParseLiteralError` | A literal integer could not be parsed for the target type. |
+
 ## Known limitations
 
 - `is_ok`, `is_err`, `map_err`, `ok_or`, `and_then`, and `or_else` are Python-only inside let-bindings.
