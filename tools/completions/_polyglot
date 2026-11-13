@@ -1,0 +1,37 @@
+#compdef polyglot
+
+_polyglot() {
+    local -a subcommands
+    subcommands=(
+        "run:Compile and execute a file"
+        "build:Compile a file"
+        "check:Parse, translate, and check termination"
+        "compile:Compatibility compile command"
+    )
+
+    _arguments -C \
+        "1: :->cmd" \
+        "*:: :->args"
+
+    case $state in
+        cmd)
+            _describe "subcommand" subcommands
+            ;;
+        args)
+            case $words[1] in
+                run|build|check)
+                    _files -g "*.poly"
+                    ;;
+                compile)
+                    _arguments "--backend[Backend]:backend:(python native)" \
+                               "--stdin[Read from stdin]" \
+                               "--file[Input file]:file:_files" \
+                               "--trusted[Trusted mode]" \
+                               "--verbose[Verbose errors]"
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_polyglot "$@"
