@@ -9,7 +9,9 @@ description = "A Rust-like language with Python and native PyO3 backends."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.14.8"
-dependencies = []
+dependencies = [
+    "ccloc>=0.1.6",
+]
 
 [project.scripts]
 polyglot = "api.cli:main"
@@ -26,6 +28,7 @@ py-modules = [
     "main",
     "_native_sources",
     "conftest",
+    "include_expander",
 ]
 
 [tool.setuptools.packages.find]

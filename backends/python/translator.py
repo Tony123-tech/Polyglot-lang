@@ -1783,6 +1783,16 @@ class Translator:
             body = [ast.Pass()]
         return body
 
+    def _binding_type_with_nested(self, ty: TypeName) -> str:
+        """Encode a TypeName preserving nested collection kinds (one level)."""
+        if ty.name in {"HashMap", "BTreeMap"} and len(ty.args) >= 2:
+            value_ty = ty.args[1]
+            if isinstance(value_ty, TypeName) and value_ty.name in {
+                "HashMap", "BTreeMap", "HashSet", "Vec",
+            }:
+                return f"{ty.name}:{value_ty.name}"
+        return ty.name
+
     def translate_let(self, s: LetStmt) -> ast.stmt:
         if not isinstance(s.pattern, PatIdent):
             raise TranslateError(
@@ -1817,7 +1827,7 @@ class Translator:
         if numeric_type is not None:
             value = self._coerce_numeric(value, numeric_type)
         binding_type = (
-            s.ty.name
+            self._binding_type_with_nested(s.ty)
             if isinstance(s.ty, TypeName)
             else self._expr_variant_type(s.value)
         )
@@ -2484,11 +2494,21 @@ class Translator:
         if isinstance(expr, MethodCall):
             receiver_type = self._known_expr_type(expr.receiver)
             if expr.method == "len":
-                if receiver_type in {"Vec", "String", "HashMap"}:
+                if receiver_type in {"Vec", "String", "HashMap", "BTreeMap", "HashSet"}:
                     return "usize"
                 return self._method_return_types.get(
                     (receiver_type, expr.method),
                 )
+            # M3: nested collection method return types
+            if receiver_type and receiver_type.split(":", 1)[0] in {"HashMap", "BTreeMap"}:
+                if expr.method == "get":
+                    return self._nested_get_value_type(expr.receiver)
+                if expr.method == "get_mut":
+                    return self._nested_get_value_type(expr.receiver)
+                if expr.method in {"keys", "values", "iter"}:
+                    return "Vec"
+            if receiver_type == "Option" and expr.method == "unwrap":
+                return self._option_unwrap_type(expr.receiver)
             return self._method_return_types.get(
                 (receiver_type, expr.method),
             )
@@ -2512,6 +2532,30 @@ class Translator:
                     right_type, left_type, expr.line, expr.col,
                 )
             return left_type or right_type
+        return None
+
+    def _nested_get_value_type(self, receiver: Expr) -> str | None:
+        """Return the language type of the value stored in a map receiver."""
+        if isinstance(receiver, Ident):
+            binding = self._binding_types.get(receiver.name)
+            if binding and ":" in binding:
+                value_kind = binding.split(":", 1)[1]
+                if value_kind in {"HashMap", "BTreeMap", "HashSet", "Vec"}:
+                    return value_kind
+            return None
+        if isinstance(receiver, Paren):
+            return self._nested_get_value_type(receiver.inner)
+        return None
+
+    def _option_unwrap_type(self, receiver: Expr) -> str | None:
+        """Return the payload type of Option::unwrap from a get chain."""
+        if isinstance(receiver, MethodCall):
+            if receiver.method in {"get", "get_mut"}:
+                return self._nested_get_value_type(receiver.receiver)
+            if receiver.method == "unwrap":
+                return self._option_unwrap_type(receiver.receiver)
+        if isinstance(receiver, Paren):
+            return self._option_unwrap_type(receiver.inner)
         return None
 
     def _known_expr_type(self, expr: Expr) -> str | None:
@@ -3724,6 +3768,12 @@ class Translator:
             and expr.func.segments == ["HashMap", "new"]
         ):
             return "HashMap"
+        if isinstance(expr, MethodCall):
+            inferred = self.infer_type(expr)
+            if inferred is not None:
+                return inferred
+            if isinstance(expr.receiver, MethodCall):
+                return self._expr_variant_type(expr.receiver)
         return None
 
     def _expr_struct_type(self, expr: Expr) -> str | None:
@@ -3743,7 +3793,8 @@ class Translator:
 
     def _is_hashmap_expr(self, expr: Expr) -> bool:
         if isinstance(expr, Ident):
-            return self._binding_types.get(expr.name) == "HashMap"
+            binding = self._binding_types.get(expr.name)
+            return bool(binding) and binding.split(":", 1)[0] == "HashMap"
         if isinstance(expr, Field):
             owner = self._expr_struct_type(expr.receiver)
             if owner is None:

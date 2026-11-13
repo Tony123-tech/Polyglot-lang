@@ -253,7 +253,9 @@ def btreemap_insert_with_prev(m, k, v):
 
 
 def btreemap_get(m, k):
-    return m.get(k)
+    if k in m:
+        return _Option.some(m[k])
+    return _Option.none()
 
 
 def btreemap_remove(m, k):
