@@ -2,6 +2,27 @@
 
 A Rust-like language with a shared lexer, parser, and AST, plus a Python backend and a native PyO3 extension backend.
 
+## Why polyglot-lang?
+
+You want Rust's syntax, type safety, and explicit error handling.
+But you don't want to rewrite your whole project in Rust, or set up
+`Cargo.toml` + PyO3 + maturin just to speed up one function.
+
+`polyglot-lang` lets you write one `.poly` file:
+
+```polyglot
+fn add(a: i64, b: i64) -> i64 { a + b }
+```
+
+and choose how to run it:
+
+- **Python backend** — `polyglot run add.poly` (no build step, no Rust)
+- **Native backend** — `polyglot build add.poly` (compiles to a PyO3 extension)
+
+Same source, same tests, same error messages. No `Cargo.toml`, no
+`pyproject.toml` scaffolding.
+
+
 ## Quick Start
 
 ```sh
