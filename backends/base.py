@@ -23,7 +23,10 @@ class Backend(Protocol):
     """A backend that can compile a Polyglot Program into a usable namespace."""
 
     name: str
+    """Backend name ("python" or "native")."""
+
     trusted: bool
+    """Whether compilation of untrusted input is allowed. See SECURITY.md."""
 
     def compile(self, program: Program) -> dict[str, Any]:
         """
@@ -60,6 +63,25 @@ def get_backend(
     trusted: bool | None = None,
     target_width: int | None = None,
 ) -> Backend:
+    """Return a backend by name.
+
+    Args:
+        name: "python" (transpile to Python AST) or "native" (compile
+            to a Rust/PyO3 extension). Default: "python".
+        trusted: Allow compilation of untrusted input. If None, read
+            from POLYGLOT_TRUSTED (default: "0"). See SECURITY.md.
+        target_width: Simulate a 32- or 64-bit usize/isize target.
+            Python backend only; must be None for native.
+
+    Returns:
+        A Backend with a .compile(program) method that returns a
+        namespace dict.
+
+    Raises:
+        ValueError: Unknown backend name, or target_width passed to
+            the native backend.
+        UntrustedCompileError: On .compile() if trusted=False.
+    """
     if trusted is None:
         trusted = _trusted_from_env()
     if name == "python":
