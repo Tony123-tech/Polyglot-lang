@@ -36,6 +36,10 @@ python -c "import hello; print(hello.add(2, 3))"
 
 If you don't have a Rust toolchain, you can skip this step. The Python backend (`polyglot run`) works without it.
 
+> **First native build takes about 2 minutes.** Subsequent builds use a
+> cache and take about 3 seconds. The Python backend (`polyglot run`)
+> has no build step.
+
 ## Status
 
 | Milestone | Status | Scope |
@@ -57,7 +61,24 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | M10 | Done | Opt-in termination checking for `#[terminates]` functions |
 | F1 | Done | Installable package, CLI, examples, and delivery documentation |
 
-**Current test status:** 453 passed, 11 skipped, 7 deselected (`pytest -q`); 7 passed, 464 deselected (`pytest -q -m slow`).
+**Current test status:** 469 passed, 9 skipped, 7 deselected (`pytest -q`); 7 passed, 464 deselected (`pytest -q -m slow`).
+
+## Support matrix
+
+| Feature | Python backend | Native backend |
+|---|---|---|
+| Vec, String, Option, Result | ✅ | ✅ |
+| HashMap (core ops) | ✅ | ✅ |
+| BTreeMap | ✅ | ⬜ Deferred |
+| HashSet | ✅ | ⬜ Deferred |
+| Nested HashMap (depth 1) | ✅ | ⬜ Deferred |
+| Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, isize, usize) | ✅ | ✅ |
+| `include!` directive | ✅ | ✅ |
+| Error codes (E001–E008) | ✅ | ✅ |
+| `#[terminates]` checking | ✅ | ✅ |
+| async free functions | ✅ (synchronous) | ✅ |
+| Box patterns | ✅ | ⬜ Deferred |
+| Payload enum slices | ✅ | ⬜ Deferred |
 
 ## Features
 
@@ -191,6 +212,9 @@ expose arbitrary crate dependencies.
 - `String::from(...)` is not lowered; use `"...".to_string()` instead.
 - The `#[terminates]` checker accepts only single recursive calls that decrease one argument; a function with two recursive calls (e.g. classic `fib(n-1) + fib(n-2)`) is rejected even though it terminates.
 - `if let` is supported as a statement, not as an expression. Use `match` when an expression is required.s
+- `BTreeMap` and `HashSet` are available in the Python backend only. Native support is deferred. See SPEC 10.27.
+- Nested `HashMap` (`HashMap<K, HashMap<K2, V2>>`) is supported in the Python backend only. Native support is deferred. See SPEC 10.25.
+- `get_mut` on `BTreeMap` and `HashSet` follows the same Python-boundary copy semantics as `HashMap` (Python: mutable view; native: deferred). See SPEC 8.10.2.
 
 ## Running tests
 
