@@ -1,0 +1,8 @@
+// Demonstrates a simple function call and returning a value from main.
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+fn main() -> i64 {
+    add(2, 3)
+}

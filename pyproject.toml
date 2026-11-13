@@ -1,16 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "polyglot-lang"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.3.0"
+description = "A Rust-like language with Python and native PyO3 backends."
 readme = "README.md"
-requires-python = ">=3.14"
-dependencies = [
-    "aider-install>=0.2.0",
-    "fastapi>=0.162.0",
-    "pydantic>=2.14.3",
-    "pytest>=9.2.0",
-    "uvicorn>=0.54.0",
+license = "MIT"
+requires-python = ">=3.14.8"
+dependencies = []
+
+[project.scripts]
+polyglot = "api.cli:main"
+
+[tool.setuptools]
+py-modules = [
+    "ast_nodes",
+    "lexer",
+    "parser",
+    "termination",
+    "inline_lang",
+    "match_diagnostics",
+    "struct_order",
+    "main",
+    "_native_sources",
+    "conftest",
 ]
+
+[tool.setuptools.packages.find]
+include = ["api*", "backends*"]
 
 [tool.pytest.ini_options]
 markers = [

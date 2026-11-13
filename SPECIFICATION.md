@@ -1,4 +1,4 @@
-# polyglot-lang Specification v0.2.8
+# polyglot-lang Specification v0.3.0
 
 ## 0. Conventions
 
@@ -409,6 +409,8 @@ This section defines the platform differences permitted by this specification. E
   - **9.7.1** An environment-dependent failure is recorded in 12.1 with the platform and failure signature. A failure signature is the exception type plus the first line of the traceback that identifies the failure site. If the signature changes, the recording MUST be updated.
 - **9.8** A criterion marked **Blocked** in Section 12 MUST be re-evaluated once the test suite baseline is restored.
 - **9.9** The Python backend MUST support Python 3.14.8 or later. Earlier versions are not supported and MUST NOT be claimed as conforming.
+- **9.10** The CLI MUST provide `run`, `build`, and `check` subcommands. Errors MUST use the five-line format of 2.4.7.
+- **9.11** The package MUST be installable as `pip install polyglot-lang`. The Python backend MUST have no native dependencies; the native backend MUST document its Rust toolchain requirement.
 
 **Acceptance criteria**
 
@@ -456,6 +458,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.7** v0.2.6 un-deferred the collections-layer `HashMap`, specified its supported API and type sets in 7.2.6–7.2.7, and documented the native `get_mut` copy limitation in 8.10.2 and 10.20.
 - **11.8** v0.2.7 added dedicated tests for Platform-defined Result/Option combinators, un-deferred native `Result::and_then` and `Result::or_else`, and updated their acceptance status.
 - **11.9** v0.2.8 added opt-in termination checking for `#[terminates]` functions, a conservative shared checker for bounded ranges, decreasing `while` variants and recursive descent, and matching pre-execution errors in both backends.
+- **11.10** v0.3.0 records F1 delivery: package metadata, the `run`/`build`/`check` CLI, Quick Start and examples, and delivery acceptance criteria.
 
 ## 12. Conformance Status
 
@@ -467,8 +470,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded at the latest batch, under Python 3.14.8 (the declared minimum, per 9.9):
 
-- `pytest -q`: 416 passed, 4 skipped, 7 deselected.
-- `pytest -q -m slow`: 7 passed, 420 deselected.
+- `pytest -q`: 424 passed, 4 skipped, 7 deselected.
+- `pytest -q -m slow`: 7 passed, 427 deselected.
 
 The previously recorded failures (three inline annotation `NameError`s and one native extension-loading `_Py_IsFinalizing` failure) do not reproduce under Python 3.14.8. The suite reports 0 failed.
 
@@ -478,7 +481,7 @@ The previously recorded failures (three inline annotation `NameError`s and one n
 
 ### 12.2 Acceptance criteria status
 
-**12.2.0** Summary: 55 Pass, 6 Partial, 0 Fail, 0 Blocked.
+**12.2.0** Summary: 61 Pass, 6 Partial, 0 Fail, 0 Blocked.
 
 **12.2.1** **Partial** means at least one test exists and passes, but the criterion is not fully covered. The Note column MUST state what is missing. A criterion marked **Partial** with the note "Tests not yet recorded" means the test may exist but is not traceable to a named test in `NOTES.md` or `tests/`. Such a criterion MUST be reclassified as **Fail** if, on inspection, no such test exists.
 
@@ -545,15 +548,21 @@ The previously recorded failures (three inline annotation `NameError`s and one n
 | 9 | Quick Start validated | 9.5 | Pass | — |
 | 9 | Examples directory exists | Acceptance criterion | Pass | — |
 | 9 | Test status matches Section 12 | Acceptance criterion | Pass | README and 12.1 both record the current test baseline |
+| 9 | Package installs via pip metadata and build artifacts | F1.1 | Pass | `pyproject.toml` declares package metadata and console script; `python -m build` produces wheel and sdist |
+| 9 | `polyglot run` executes a file | F1.2 | Pass | `tests/test_f1_cli.py::test_run_hello_exits_zero_and_prints_five` |
+| 9 | `polyglot build` produces an extension | F1.3 | Pass | `tests/test_f1_cli.py::test_build_hello_produces_extension` (skipped if cargo unavailable) |
+| 9 | `polyglot check` reports termination failures | F1.4 | Pass | `tests/test_f1_cli.py::test_check_terminates_example_exits_zero`, `::test_check_non_terminating_reports_error` |
+| 9 | Quick Start runs in under 10 minutes | F1.5 | Pass | README Quick Start uses `pip install`, a short `hello.poly`, and `polyglot run`; validated by CLI tests and examples |
+| 9 | `examples/` contains seven runnable files | F1.6 | Pass | `tests/test_f1_cli.py::test_examples_directory_contains_seven_runnable_files` |
 
-### 12.3 Outstanding items that block a v0.2.8 conformance claim
+### 12.3 Outstanding items that block a v0.3.0 conformance claim
 
-No item blocks a v0.2.8 conformance claim, provided that:
+No item blocks a v0.3.0 conformance claim, provided that:
 
 - Every Partial in 12.2 is explicitly accepted as a known gap in this version.
 - The 6 Partial criteria are listed in 12.3.1 with a justification for why each does not block conformance.
 
-### 12.3.1 Accepted Partial items for v0.2.8
+### 12.3.1 Accepted Partial items for v0.3.0
 
 | Partial item | Justification |
 |---|---|

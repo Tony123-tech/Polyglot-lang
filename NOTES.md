@@ -1015,3 +1015,9 @@ See the README Status table for the authoritative milestone status.
 - Deferred: mutual recursion, loop with break, complex arithmetic, non-recursive calls, async suspension
 
 The checker also conservatively rejects non-recursive calls and async functions because their termination cannot be established by the batch-1 proof subset; both remain within SPEC 10.22.
+## F1 — Deliverable single-file toolchain
+
+- Symptom: The language could be developed and tested from a source checkout, but it was not packaged as an installable tool with a stable CLI, a short Quick Start, or runnable example files for a new user.
+- Cause: The repository focused on language semantics and backend milestones; `pyproject.toml`, `api/cli.py`, README onboarding, and example delivery artifacts were incomplete or oriented around internal compile workflows.
+- Fix: Added package metadata and a `polyglot` console script, expanded the CLI with `run`, `build`, and `check` (while preserving the compatibility `compile` command), rewrote the Quick Start, added seven runnable examples, documented F1 in SPEC v0.3.0, and added CLI delivery tests.
+- Lesson: Delivery milestones need product-facing contracts (install, entrypoint, examples, and error format) to be specified and tested like language behavior; otherwise a working compiler core remains hard to adopt.

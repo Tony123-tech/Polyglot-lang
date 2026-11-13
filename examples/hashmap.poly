@@ -1,0 +1,11 @@
+// Demonstrates HashMap insertion, lookup, and iteration.
+fn main() -> i64 {
+    let mut map: HashMap<String, i64> = HashMap::new();
+    map.insert("a".to_string(), 1);
+    map.insert("b".to_string(), 2);
+    let mut total: i64 = 0;
+    for (_key, value) in map.iter() {
+        total = total + value;
+    }
+    total
+}

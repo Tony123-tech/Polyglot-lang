@@ -21,3 +21,4 @@ venv/
 # Secrets (if any)
 .env
 .aider*
+typescript

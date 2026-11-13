@@ -1,0 +1,12 @@
+// Demonstrates #[terminates] with a decreasing while loop.
+#[terminates]
+fn countdown(mut n: i64) -> i64 {
+    while n > 0 {
+        n = n - 1;
+    }
+    n
+}
+
+fn main() -> i64 {
+    countdown(5)
+}

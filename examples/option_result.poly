@@ -1,0 +1,24 @@
+// Demonstrates Option, Result, ?, and if let.
+fn maybe_value(flag: bool) -> Option<i64> {
+    if flag {
+        Some(4)
+    } else {
+        None
+    }
+}
+
+fn add_one(x: i64) -> Result<i64, i64> {
+    let y = if x > 0 { Ok(x) } else { Err(0) }?;
+    Ok(y + 1)
+}
+
+fn main() -> i64 {
+    let mut a: i64 = 0;
+    if let Some(v) = maybe_value(true) {
+        a = v;
+    } else {
+        a = 0;
+    }
+    let b = add_one(a).unwrap();
+    a + b
+}

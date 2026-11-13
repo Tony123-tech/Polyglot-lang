@@ -1,0 +1,8 @@
+// Demonstrates String split, join, and replace operations.
+fn main() -> i64 {
+    let s = "a,b,c".to_string();
+    let parts = s.split(",");
+    let joined = parts.join("-");
+    let replaced = joined.replace("b", "x");
+    replaced.len() as i64
+}

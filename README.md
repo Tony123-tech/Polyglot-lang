@@ -1,6 +1,40 @@
 # polyglot-lang
 
-Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parser, and AST, with backends that either transpile programs to Python or compile them into native Python extensions.
+A Rust-like language with a shared lexer, parser, and AST, plus a Python backend and a native PyO3 extension backend.
+
+## Quick Start
+
+```sh
+pip install polyglot-lang
+```
+
+Create `hello.poly`:
+
+```polyglot
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() -> i64 { add(2, 3) }
+```
+
+Run it:
+
+```sh
+polyglot run hello.poly
+```
+
+Output:
+
+```text
+5
+```
+
+Build a native extension (requires a Rust toolchain and Cargo):
+
+```sh
+polyglot build hello.poly
+python -c "import hello; print(hello.add(2, 3))"
+```
+
+If you don't have a Rust toolchain, you can skip this step. The Python backend (`polyglot run`) works without it.
 
 ## Status
 
@@ -21,8 +55,9 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 | N9 | Done | Platform-defined Option/Result combinators and native Result continuations |
 | N10 | Done | SPEC v0.2.7 and final conformance status |
 | M10 | Done | Opt-in termination checking for `#[terminates]` functions |
+| F1 | Done | Installable package, CLI, examples, and delivery documentation |
 
-**Current test status:** 416 passed, 4 skipped, 7 deselected (`pytest -q`); 7 passed, 420 deselected (`pytest -q -m slow`).
+**Current test status:** 424 passed, 4 skipped, 7 deselected (`pytest -q`); 7 passed, 428 deselected (`pytest -q -m slow`).
 
 ## Features
 
@@ -30,14 +65,48 @@ Embed Rust-like syntax in Python. `polyglot-lang` provides a shared lexer, parse
 - **Python backend:** Translates the Rust-like AST to a Python AST, then compiles and executes it.
 - **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting `.so` or `.dylib` as a Python extension.
 - **Common backend interface:** Select a backend with `get_backend("python")` or `get_backend("native")`. Calling `backend.compile(program)` returns a namespace dictionary.
+- **CLI:** `polyglot run`, `polyglot build`, and `polyglot check` for file-based workflows.
 - **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
 - **N6:** Additional `Vec` methods (`first`, `last`, `get`, `truncate`, `rotate_*`, `fill`, `swap`, `resize`, `split_off`, `partition`, `sort_*`, `is_sorted`, and others) and `String` methods (`find`, `rfind`, `strip_*`, `split_once`, `lines`, `as_bytes`, `is_char_boundary`, and others).
 - **N7:** Distinct `usize`/`isize` types, explicit `as` boundaries, range-loop variable typing, and selectable Python target-width simulation.
 - **N8:** `HashMap<K, V>` construction and supported operations, typed `usize` length, dict conversion, key/value/iteration views, entry insertion, and mutable access.
 - **N9:** Dedicated Python/native coverage for Platform-defined Result/Option combinators and native `Result::and_then`/`or_else`.
-- **N10:** SPEC v0.2.7 records milestone changes, platform boundaries, and conformance status.
 - **M10:** `#[terminates]` enables conservative static termination checks for bounded ranges, decreasing `while` variants, and recursive descent.
 - **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
+
+## CLI
+
+```sh
+polyglot run <file> [--backend python|native] [--target-width N]
+polyglot build <file> [--backend native] [--target <triple>] [--out-dir <dir>]
+polyglot check <file>
+```
+
+- `run` compiles and executes a file and prints the result of `main()` when it returns a value.
+- `build` compiles a file. The native backend produces an extension module and prints its path.
+- `check` parses, translates (Python backend), and runs termination checks without executing.
+- Errors use the toolchain five-line format. Pass `--verbose` to include a traceback.
+
+The Python backend has no native dependencies. The native backend requires a Rust toolchain (`cargo` and `rustc`) and PyO3-compatible build tooling.
+
+## Examples
+
+The `examples/` directory contains runnable programs:
+
+- `hello.poly` — function call and return value
+- `fib.poly` — recursive `#[terminates]` function
+- `vec_ops.poly` — Vec mutation, length, and sorting
+- `string_ops.poly` — split, join, and replace
+- `hashmap.poly` — HashMap insert/get/iteration
+- `option_result.poly` — Option, Result, `?`, and `if let`
+- `terminates.poly` — `#[terminates]` decreasing loop
+
+Run them with:
+
+```sh
+polyglot check examples/hello.poly
+polyglot run examples/hello.poly
+```
 
 ## Primitive semantics
 
@@ -118,144 +187,10 @@ expose arbitrary crate dependencies.
 - `PyFuture` is unsendable and can only be used on the thread that created it.
 - Option `map` is intentionally unsupported because it collides with Vec `map` in codegen; both backends reject it with a clear error. Use `match` or `if let` instead.
 - `HashMap` supports only the implemented entry subset (`or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`); other entry combinators are not yet lowered.
-- `HashMap` view methods return owned `Vec`s, so they allocate; iteration order is unspecified in both backends because both use hash maps.
-- `HashMap` dispatch requires a statically known map type. Annotated bindings, `HashMap::new()` inference, `self.field`, fields reached through parameters, and nested struct fields are recognized; other expressions fall back to generic method dispatch.
-- Mutating through `get_mut` or the entry API requires an explicit dereference (`*slot = ...`); a dereference target that is not a map slot is rejected at translation time.
-
-Limitation behavior is pinned by `tests/test_known_limitations.py`, and the mapping from each item above to its test or rationale is recorded in [NOTES.md](NOTES.md#limitations-audit).
-
-## Requirements
-
-- Python 3.14 or later (tested on Python 3.14)
-- Rust toolchain, including `cargo`, for the native backend
-- `pytest` to run the test suite
-
-Create and activate a virtual environment, then install the test runner:
-
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip pytest
-```
-
-The Python backend does not require the Rust toolchain. Native compilation requires a supported Rust toolchain and platform setup. The native compiler applies the required PyO3 and linker settings automatically.
-
-## Quick start
-
-The entry points are `lex`, `parse`, and `get_backend`. The compiler returns a dictionary containing the compiled program's names.
-
-The Python backend needs no trust opt-in. The native backend requires
-`trusted=True` or `POLYGLOT_TRUSTED=1`; see [Sandbox](#sandbox) for the
-distinction between the trust gate and the sandbox.
-
-### Add function
-
-```python
-from backends import get_backend
-from lexer import lex
-from parser import parse
-
-source = """
-fn add(a: i64, b: i64) -> i64 {
-    a + b
-}
-"""
-program = parse(lex(source))
-namespace = get_backend("python").compile(program)
-
-assert namespace["add"](2, 3) == 5
-```
-
-### Point struct
-
-```python
-source = """
-struct Point {
-    x: i64,
-    y: i64,
-}
-
-impl Point {
-    fn new(x: i64, y: i64) -> Point {
-        Point { x: x, y: y }
-    }
-
-    fn sum(&self) -> i64 {
-        self.x + self.y
-    }
-}
-"""
-
-program = parse(lex(source))
-# Native compilation requires explicit trust opt-in.
-# See the Sandbox section for why this is separate from sandboxing.
-namespace = get_backend("native", trusted=True).compile(program)
-point = namespace["Point"](3, 4)
-
-assert point.sum() == 7
-```
-
-### Sum a vector
-
-```python
-from backends import get_backend
-from lexer import lex
-from parser import parse
-
-source = """
-fn sum(values: Vec<i64>) -> i64 {
-    let mut total: i64 = 0;
-
-    for value in values {
-        total = total + value;
-    }
-
-    total
-}
-"""
-
-program = parse(lex(source))
-namespace = get_backend("python").compile(program)
-
-assert namespace["sum"]([1, 2, 3]) == 6
-```
-
-Choose `"python"` or `"native"` according to the program features and whether native compilation is desired. Native `format!` currently requires its first argument to be a string literal; code generation handles that form specially.
-
-## Project layout
-
-```text
-polyglot-lang/
-├── ast_nodes.py
-├── lexer.py
-├── parser.py
-├── conftest.py
-├── main.py
-├── match_diagnostics.py
-├── struct_order.py
-├── _native_sources.py
-├── api/
-│   ├── cli.py
-│   ├── config.py
-│   ├── executor.py
-│   ├── models.py
-│   ├── server.py
-│   └── worker.py
-├── backends/
-│   ├── base.py
-│   ├── python/
-│   │   ├── translator.py
-│   │   └── runtime.py
-│   └── rust/
-│       ├── codegen.py
-│       └── compiler.py
-├── tools/
-│   └── compile_native.py
-├── tests/
-│   └── test_native_*.py
-├── NOTES.md
-└── README.md
-```
+- `vec![...]` macro syntax is parsed as a token stream and is not lowered; use `[...].to_vec()` instead.
+- `String::from(...)` is not lowered; use `"...".to_string()` instead.
+- The `#[terminates]` checker accepts only single recursive calls that decrease one argument; a function with two recursive calls (e.g. classic `fib(n-1) + fib(n-2)`) is rejected even though it terminates.
+- `if let` is supported as a statement, not as an expression. Use `match` when an expression is required.s
 
 ## Running tests
 
@@ -277,7 +212,7 @@ rm -rf ~/.cache/polyglot-native
 
 ## Roadmap
 
-N0 through N8 are complete. Remaining known limitations are listed under
+N0 through N10, M10, and F1 are complete. Remaining known limitations are listed under
 [Known limitations](#known-limitations), including the out-of-scope items
 `while let Some(x) = iter.next()`, async impl methods, and cross-thread
 `PyFuture` use.

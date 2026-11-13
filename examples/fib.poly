@@ -1,0 +1,13 @@
+// Demonstrates a recursive #[terminates] function with a decreasing argument.
+#[terminates]
+fn countdown_sum(n: i64) -> i64 {
+    if n > 0 {
+        n + countdown_sum(n - 1)
+    } else {
+        0
+    }
+}
+
+fn main() -> i64 {
+    countdown_sum(10)
+}
