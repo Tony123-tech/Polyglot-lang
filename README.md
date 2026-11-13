@@ -226,7 +226,7 @@ Diagnostics include a stable error code. The table below maps each code to its c
 - `vec![...]` macro syntax is parsed as a token stream and is not lowered; use `[...].to_vec()` instead.
 - `String::from(...)` is not lowered; use `"...".to_string()` instead.
 - The `#[terminates]` checker accepts only single recursive calls that decrease one argument; a function with two recursive calls (e.g. classic `fib(n-1) + fib(n-2)`) is rejected even though it terminates.
-- `if let` is supported as a statement, not as an expression. Use `match` when an expression is required.s
+- `if let` is supported as a statement, not as an expression. Use `match` when an expression is required.
 - `BTreeMap` and `HashSet` are available in the Python backend only. Native support is deferred. See SPEC 10.27.
 - Nested `HashMap` (`HashMap<K, HashMap<K2, V2>>`) is supported in the Python backend only. Native support is deferred. See SPEC 10.25.
 - `get_mut` on `BTreeMap` and `HashSet` follows the same Python-boundary copy semantics as `HashMap` (Python: mutable view; native: deferred). See SPEC 8.10.2.
