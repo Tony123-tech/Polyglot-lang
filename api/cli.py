@@ -184,30 +184,87 @@ def cmd_compile(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="polyglot")
+    parser = argparse.ArgumentParser(
+        prog="polyglot",
+        description=(
+            "Compile and run a Rust-like language with two backends: "
+            "a Python transpiler (no native dependencies) and a native "
+            "PyO3/Rust extension backend (requires a Rust toolchain)."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  polyglot run hello.poly\n"
+            "  polyglot run hello.poly --backend native\n"
+            "  polyglot build hello.poly --out-dir out/\n"
+            "  polyglot check hello.poly"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run_p = sub.add_parser("run", help="Compile and execute a file")
-    run_p.add_argument("file")
-    run_p.add_argument("--backend", choices=["python", "native"], default="python")
-    run_p.add_argument("--target-width", type=int, dest="target_width", default=None)
-    run_p.add_argument("--verbose", action="store_true")
+    run_p = sub.add_parser(
+        "run",
+        help="Compile and execute a file",
+        description=(
+            "Compile a .poly file and execute it. Prints the result of "
+            "main() when it returns a value."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  polyglot run hello.poly\n"
+            "  polyglot run hello.poly --backend native"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    run_p.add_argument("file", help="Path to the .poly file")
+    run_p.add_argument("--backend", choices=["python", "native"], default="python", help="Backend to use (default: python)")
+    run_p.add_argument("--target-width", type=int, dest="target_width", default=None, help="Simulate a 32- or 64-bit usize/isize target (Python backend only)")
+    run_p.add_argument("--verbose", action="store_true", help="Print full tracebacks on error")
     run_p.set_defaults(func=cmd_run)
 
-    build_p = sub.add_parser("build", help="Compile a file")
-    build_p.add_argument("file")
-    build_p.add_argument("--backend", choices=["python", "native"], default="native")
-    build_p.add_argument("--target", dest="target", default=None)
-    build_p.add_argument("--out-dir", dest="out_dir", default=None)
-    build_p.add_argument("--verbose", action="store_true")
+    build_p = sub.add_parser(
+        "build",
+        help="Compile a file",
+        description=(
+            "Compile a .poly file. The native backend produces a Python "
+            "extension module and prints its path."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  polyglot build hello.poly\n"
+            "  polyglot build hello.poly --out-dir out/"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    build_p.add_argument("file", help="Path to the .poly file")
+    build_p.add_argument("--backend", choices=["python", "native"], default="native", help="Backend to use (default: native)")
+    build_p.add_argument("--target", dest="target", default=None, help="Target triple (reserved; not yet implemented)")
+    build_p.add_argument("--out-dir", dest="out_dir", default=None, help="Directory for the built extension (default: source directory)")
+    build_p.add_argument("--verbose", action="store_true", help="Print full tracebacks on error")
     build_p.set_defaults(func=cmd_build)
 
-    check_p = sub.add_parser("check", help="Parse, translate, and check termination")
-    check_p.add_argument("file")
-    check_p.add_argument("--verbose", action="store_true")
+    check_p = sub.add_parser(
+        "check",
+        help="Parse, translate, and check termination",
+        description=(
+            "Parse a .poly file, translate it to the Python backend, and "
+            "run termination checks. Does not execute the program."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  polyglot check hello.poly"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    check_p.add_argument("file", help="Path to the .poly file")
+    check_p.add_argument("--verbose", action="store_true", help="Print full tracebacks on error")
     check_p.set_defaults(func=cmd_check)
 
-    compile_p = sub.add_parser("compile", help="Compatibility compile command")
+    compile_p = sub.add_parser(
+        "compile",
+        help="Compatibility compile command",
+        description="Compile and print the exported names. Used by api.executor.",
+    )
     compile_p.add_argument("--backend", choices=["python", "native"], required=True)
     src = compile_p.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true")
