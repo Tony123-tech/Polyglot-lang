@@ -37,6 +37,8 @@ from ast_nodes import (
 class TerminationError(Exception):
     """Raised when an annotated function has no supported termination proof."""
 
+    code = "E002"
+
     def __init__(
         self,
         fn_name: str,
@@ -44,21 +46,26 @@ class TerminationError(Exception):
         suggestion: str,
         line: int,
         col: int,
+        span: tuple[int, int] | None = None,
     ) -> None:
         self.fn_name = fn_name
         self.reason = reason
         self.suggestion = suggestion
         self.line = line
         self.col = col
+        self.span = span
         super().__init__(self.format())
 
     def format(self) -> str:
+        at = f"at: line {self.line}, column {self.col}"
+        if self.span is not None:
+            at += f" (span {self.span[0]}..{self.span[1]})"
         return (
-            f"error: cannot prove termination of `{self.fn_name}`\n"
+            f"error[{self.code}]: cannot prove termination of `{self.fn_name}`\n"
             f"  reason: {self.reason}\n"
             f"  help: {self.suggestion}\n"
             "  note: this function is annotated #[terminates]\n"
-            f"  at: line {self.line}, column {self.col}"
+            f"  {at}"
         )
 
     def __str__(self) -> str:
@@ -292,6 +299,7 @@ def check_function(fn: FnDecl) -> None:
             "provide a body with a supported decreasing measure",
             fn.line,
             fn.col,
+            getattr(fn, "span", None),
         )
     if fn.is_async:
         raise TerminationError(
@@ -300,6 +308,7 @@ def check_function(fn: FnDecl) -> None:
             "remove async from the annotated function",
             fn.line,
             fn.col,
+            getattr(fn, "span", None),
         )
 
     parameters = _parameter_info(fn)
@@ -349,11 +358,13 @@ def check_function(fn: FnDecl) -> None:
                 "recursive argument",
                 node.line,
                 node.col,
+                getattr(fn, "span", None),
             )
 
     def fail(reason: str, suggestion: str, node: Node) -> None:
         raise TerminationError(
             fn.name, reason, suggestion, node.line, node.col,
+            getattr(fn, "span", None),
         )
 
     def visit(value: object, lower_bounds: dict[str, int]) -> None:

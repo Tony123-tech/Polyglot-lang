@@ -26,7 +26,7 @@ def test_rust_compile_error_captures_diagnostic_fields():
     assert error.error_line == 3
     assert error.error_col == 7
     assert error.error_code == "E0308"
-    assert "Rust compile error" in error.pretty()
+    assert "error[E004]:" in error.pretty()
 
 
 def test_rust_compile_error_without_source_location():
@@ -40,7 +40,7 @@ def test_rust_compile_error_without_source_location():
     assert error.rust_col is None
     assert error.message == "linking with `cc` failed: linker command not found"
     assert error.error_code is None
-    assert "Rust compile error" in error.pretty()
+    assert "error[E004]:" in error.pretty()
 
 
 def test_rust_compile_error_captures_warnings_without_replacing_error():

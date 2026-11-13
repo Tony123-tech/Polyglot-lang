@@ -303,6 +303,8 @@ class Parser:
             return self.parse_const(is_static=True, is_pub=is_pub)
         if tok.type == TokenType.TYPE:
             return self.parse_type_alias(is_pub)
+        if tok.type == TokenType.IDENT and tok.value == "include" and self.peek(1).type == TokenType.BANG:
+            return self.parse_include_item()
 
         self.error(f"expected item, got {tok.type.name} {tok.value!r}")
         raise AssertionError("unreachable")
@@ -335,9 +337,12 @@ class Parser:
             body = self.parse_block()
         else:
             self.expect(TokenType.SEMI)
+        end_tok = self.tokens[self.i - 1] if self.i > 0 else tok
+        span = (tok.pos, end_tok.pos + len(end_tok.value))
         return FnDecl(
             tok.line, tok.col, name, params, ret, body,
             generics, is_pub, is_async, is_unsafe, terminates,
+            span=span,
         )
 
     def parse_fn_param(self) -> FnParam:
@@ -529,6 +534,19 @@ class Parser:
         ty = self.parse_type()
         self.expect(TokenType.SEMI)
         return TypeAlias(tok.line, tok.col, name, ty, generics, is_pub)
+
+    def parse_include_item(self):
+        from ast_nodes import IncludeDecl
+
+        tok = self.expect(TokenType.IDENT)
+        self.expect(TokenType.BANG)
+        self.expect(TokenType.LPAREN)
+        path_tok = self.expect(TokenType.STRING, "include path string")
+        self.expect(TokenType.RPAREN)
+        self.expect(TokenType.SEMI)
+        end = path_tok.pos + len(path_tok.value) + 2
+        span = (tok.pos, end)
+        return IncludeDecl(tok.line, tok.col, path_tok.value, span=span)
 
     # ---- types -------------------------------------------------------------
 
@@ -889,7 +907,12 @@ class Parser:
             if tok.type == TokenType.AS and min_prec <= CAST_PREC:
                 self.advance()
                 ty = self.parse_type()
-                left = Cast(tok.line, tok.col, left, ty)
+                node = Cast(tok.line, tok.col, left, ty)
+                start = left.span[0] if getattr(left, "span", None) else tok.pos
+                end_tok = self.tokens[self.i - 1] if self.i > 0 else tok
+                end = end_tok.pos + len(end_tok.value)
+                node.span = (start, end)
+                left = node
                 continue
 
             # Range
@@ -961,10 +984,15 @@ class Parser:
             prec = INFIX_PREC.get(tok.type)
             if prec is None or prec < min_prec:
                 break
-            self.advance()
+            op_tok = self.advance()
             right = self.parse_expr(prec + 1)
-            op = self._infix_op(tok.type)
-            left = Binary(tok.line, tok.col, op, left, right)
+            op = self._infix_op(op_tok.type)
+            node = Binary(op_tok.line, op_tok.col, op, left, right)
+            start = left.span[0] if getattr(left, "span", None) else op_tok.pos
+            end_tok = self.tokens[self.i - 1] if self.i > 0 else op_tok
+            end = right.span[1] if getattr(right, "span", None) else (end_tok.pos + len(end_tok.value))
+            node.span = (start, end)
+            left = node
 
         return left
 
@@ -1138,23 +1166,33 @@ class Parser:
 
         if tok.type == TokenType.NUMBER:
             self.advance()
-            return self._make_number(tok)
+            suffix = None
+            if self.check(TokenType.IDENT) and self.peek().value in {
+                "i8", "i16", "i32", "i64", "i128",
+                "u8", "u16", "u32", "u64", "u128", "isize", "usize",
+            }:
+                suffix = self.advance().value
+            return self._make_number(tok, suffix=suffix)
 
         if tok.type == TokenType.STRING:
             self.advance()
-            return LitStr(tok.line, tok.col, tok.value)
+            span = (tok.pos, tok.pos + len(tok.value) + 2)
+            return LitStr(tok.line, tok.col, tok.value, span=span)
 
         if tok.type == TokenType.CHAR:
             self.advance()
-            return LitChar(tok.line, tok.col, tok.value)
+            span = (tok.pos, tok.pos + len(tok.value) + 2)
+            return LitChar(tok.line, tok.col, tok.value, span=span)
 
         if tok.type == TokenType.TRUE:
             self.advance()
-            return LitBool(tok.line, tok.col, True)
+            span = (tok.pos, tok.pos + len(tok.value))
+            return LitBool(tok.line, tok.col, True, span=span)
 
         if tok.type == TokenType.FALSE:
             self.advance()
-            return LitBool(tok.line, tok.col, False)
+            span = (tok.pos, tok.pos + len(tok.value))
+            return LitBool(tok.line, tok.col, False, span=span)
 
         # tuple / paren
         if tok.type == TokenType.LPAREN:
@@ -1197,22 +1235,26 @@ class Parser:
         if tok.type == TokenType.IDENT:
             self.advance()
             segments = [tok.value]
+            end_tok = tok
             while self.check(TokenType.COLONCOLON) and self.peek(1).type == TokenType.IDENT:
                 self.advance()
-                segments.append(self.advance().value)
+                end_tok = self.advance()
+                segments.append(end_tok.value)
             if (
                 not self._parsing_for_iter
                 and self.check(TokenType.LBRACE)
                 and self._looks_like_struct_literal()
             ):
                 return self.parse_struct_literal(tok, segments)
+            span = (tok.pos, end_tok.pos + len(end_tok.value))
             if len(segments) > 1:
-                return Path(tok.line, tok.col, segments)
-            return Ident(tok.line, tok.col, segments[0])
+                return Path(tok.line, tok.col, segments, span=span)
+            return Ident(tok.line, tok.col, segments[0], span=span)
 
         if tok.type == TokenType.SELF:
             self.advance()
-            return Ident(tok.line, tok.col, "self")
+            span = (tok.pos, tok.pos + len(tok.value))
+            return Ident(tok.line, tok.col, "self", span=span)
 
         self.error(f"expected expression, got {tok.type.name} {tok.value!r}")
         raise AssertionError("unreachable")
@@ -1248,19 +1290,24 @@ class Parser:
         self.expect(TokenType.RBRACE)
         return StructLiteral(tok.line, tok.col, "::".join(segments), fields, rest)
 
-    def _make_number(self, tok: Token) -> Expr:
+    def _make_number(self, tok: Token, suffix: str | None = None) -> Expr:
         raw = tok.value
         clean = raw.replace("_", "")
         low = clean.lower()
+        end = tok.pos + len(raw)
+        if suffix:
+            raw = raw + suffix
+            end += len(suffix)
+        span = (tok.pos, end)
         if low.startswith("0x"):
-            return LitInt(tok.line, tok.col, int(clean, 16), raw)
+            return LitInt(tok.line, tok.col, int(clean, 16), raw, span=span)
         if low.startswith("0b"):
-            return LitInt(tok.line, tok.col, int(clean, 2), raw)
+            return LitInt(tok.line, tok.col, int(clean, 2), raw, span=span)
         if low.startswith("0o"):
-            return LitInt(tok.line, tok.col, int(clean, 8), raw)
+            return LitInt(tok.line, tok.col, int(clean, 8), raw, span=span)
         if "." in clean or "e" in low:
-            return LitFloat(tok.line, tok.col, float(clean), raw)
-        return LitInt(tok.line, tok.col, int(clean), raw)
+            return LitFloat(tok.line, tok.col, float(clean), raw, span=span)
+        return LitInt(tok.line, tok.col, int(clean), raw, span=span)
 
     # ---- control flow ------------------------------------------------------
 

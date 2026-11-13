@@ -914,7 +914,7 @@ def test_pattern_macro_nested_in_tuple(native_backend):
     source = _macro_pattern_source("(m!(), y)")
     with pytest.raises(RustCompileError) as error:
         native_backend.compile(parse(lex(source)))
-    assert "Rust compile error" in error.value.pretty()
+    assert "error[E004]:" in error.value.pretty()
 
 
 @pytest.mark.native
@@ -936,7 +936,7 @@ fn invalid_path_binding() -> i64 {
 """
     with pytest.raises(RustCompileError) as error:
         native_backend.compile(parse(lex(source)))
-    assert "Rust compile error" in error.value.pretty()
+    assert "error[E004]:" in error.value.pretty()
 
 
 @pytest.mark.native
@@ -1066,7 +1066,7 @@ fn invalid_or_binding() -> i64 {
 """
     with pytest.raises(RustCompileError) as error:
         native_backend.compile(parse(lex(source)))
-    assert "Rust compile error" in error.value.pretty()
+    assert "error[E004]:" in error.value.pretty()
 
 
 @pytest.mark.native
@@ -1079,7 +1079,7 @@ fn invalid_struct_pattern(point: Point) -> i64 {
 """
     with pytest.raises(RustCompileError) as error:
         native_backend.compile(parse(lex(source)))
-    assert "Rust compile error" in error.value.pretty()
+    assert "error[E004]:" in error.value.pretty()
 
 
 @pytest.mark.native
@@ -1092,7 +1092,7 @@ fn invalid_struct_pattern(point: Point) -> i64 {
 """
     with pytest.raises(RustCompileError) as error:
         native_backend.compile(parse(lex(source)))
-    assert "Rust compile error" in error.value.pretty()
+    assert "error[E004]:" in error.value.pretty()
 
 
 @pytest.mark.native
@@ -1105,7 +1105,7 @@ fn invalid_tuple_pattern() -> i64 {
 """
     with pytest.raises(RustCompileError) as error:
         native_backend.compile(parse(lex(source)))
-    assert "Rust compile error" in error.value.pretty()
+    assert "error[E004]:" in error.value.pretty()
 
 
 @pytest.mark.native
@@ -1418,7 +1418,7 @@ fn invalid(value: (i64, i64)) -> i64 {
     with pytest.raises(TranslateError) as error:
         compile_rust(parse(lex(source)))
     assert "(x, x)" in str(error.value)
-    assert "at 3:" in str(error.value)
+    assert "at: line 3," in str(error.value)
 
 
 def test_python_unsupported_pattern_has_translate_error():
@@ -1438,7 +1438,7 @@ fn unresolved(value: i64) -> i64 {
     with pytest.raises(RustCompileError) as error:
         native_backend.compile(parse(lex(source)))
     pretty = error.value.pretty()
-    assert "Rust compile error" in pretty
+    assert "error[E004]:" in pretty
     assert "NOT_DEFINED" in pretty
     assert error.value.error_line is not None
     assert error.value.error_col is not None

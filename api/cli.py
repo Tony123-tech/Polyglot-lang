@@ -19,6 +19,12 @@ from typing import Any
 
 from ast_nodes import Program
 from backends import UntrustedCompileError, get_backend
+from include_expander import (
+    IncludeCycleError,
+    IncludeNotFoundError,
+    expand_includes,
+    load_program,
+)
 from lexer import lex
 from parser import parse
 from termination import TerminationError
@@ -28,23 +34,28 @@ def _read_source(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def _parse_program(source: str) -> Program:
-    return parse(lex(source))
+def _parse_program(source: str, path: str | None = None) -> Program:
+    program = parse(lex(source))
+    if path is not None:
+        program = expand_includes(program, path)
+    return program
 
 
 def _format_five_line(error: Exception) -> str:
-    """Format an error using the toolchain five-line format."""
-    if isinstance(error, TerminationError):
+    """Format an error using the toolchain five-line/six-line format."""
+    if isinstance(error, (TerminationError, IncludeCycleError, IncludeNotFoundError)):
         return error.format()
 
     message = str(error).strip() or error.__class__.__name__
-    if message.count("\n") >= 4 and message.startswith("error:"):
+    if message.startswith(("error:", "error[")):
         return message
 
     for attr in ("message", "msg"):
         value = getattr(error, attr, None)
-        if isinstance(value, str) and value.count("\n") >= 4 and value.startswith("error:"):
-            return value.strip()
+        if isinstance(value, str):
+            value = value.strip()
+            if value.startswith(("error:", "error[")):
+                return value
 
     line = getattr(error, "line", None)
     col = getattr(error, "col", None)
@@ -62,6 +73,8 @@ def _format_five_line(error: Exception) -> str:
     note = error.__class__.__name__
     if isinstance(error, FileNotFoundError):
         help_text = "check that the path exists and is readable"
+    elif isinstance(error, (IncludeCycleError, IncludeNotFoundError)):
+        help_text = getattr(error, "help_text", help_text)
     elif isinstance(error, UntrustedCompileError):
         help_text = "run compilation in a trusted context"
     elif "parse" in note.lower() or "syntax" in note.lower():
@@ -104,8 +117,7 @@ def _native_artifact_path(source_path: Path) -> Path:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    source = _read_source(args.file)
-    program = _parse_program(source)
+    program = load_program(args.file)
     backend = get_backend(args.backend, trusted=True, target_width=args.target_width)
     namespace = backend.compile(program)
     result = _run_main(namespace)
@@ -115,14 +127,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_build(args: argparse.Namespace) -> int:
-    if args.target is not None:
-        raise NotImplementedError(
-            "--target is not yet implemented; cross-compilation is deferred. "
-            "Remove --target to build for the host."
-        )
     source_path = Path(args.file)
-    source = source_path.read_text(encoding="utf-8")
-    program = _parse_program(source)
+    program = load_program(source_path)
     backend_name = args.backend
 
     if backend_name == "python":
@@ -144,7 +150,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     key = hashlib.sha256(source_rs.encode()).hexdigest()[:16]
     build_dir = Path(cache_dir) / key
-    ext = getattr(backend, "_find_extension")(build_dir)
+    ext = backend._find_extension(build_dir)
     out_dir = Path(args.out_dir) if args.out_dir else source_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     dest = out_dir / f"{source_path.stem}{ext.suffix}"
@@ -154,8 +160,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    source = _read_source(args.file)
-    program = _parse_program(source)
+    program = load_program(args.file)
     # Translation/codegen runs termination checks for #[terminates] functions.
     from backends.python.translator import Translator
 

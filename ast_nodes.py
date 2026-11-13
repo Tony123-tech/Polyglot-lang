@@ -32,7 +32,6 @@ __all__ = [
     "ExprStmt",
     "Field",
     "FnDecl",
-    # Items
     "FnParam",
     "For",
     "GenericParam",
@@ -40,15 +39,14 @@ __all__ = [
     "IfExpr",
     "IfLet",
     "ImplBlock",
+    "IncludeDecl",
     "Index",
     "Item",
     "ItemStmt",
-    # Statements
     "LetStmt",
     "LitBool",
     "LitChar",
     "LitFloat",
-    # Expressions
     "LitInt",
     "LitStr",
     "Loop",
@@ -57,7 +55,6 @@ __all__ = [
     "MatchExpr",
     "MethodCall",
     "ModDecl",
-    # Base
     "Node",
     "Paren",
     "PatBinding",
@@ -75,7 +72,6 @@ __all__ = [
     "PatSlice",
     "PatStruct",
     "PatTuple",
-    # Patterns
     "PatWildcard",
     "Path",
     "Pattern",
@@ -96,7 +92,6 @@ __all__ = [
     "TypeDynTrait",
     "TypeFn",
     "TypeImplTrait",
-    # Types
     "TypeName",
     "TypeRef",
     "TypeSlice",
@@ -119,6 +114,7 @@ __all__ = [
 class Node:
     line: int
     col: int
+    span: tuple[int, int] | None = field(default=None, kw_only=True)
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +725,11 @@ class TypeAlias(Node):
 
 
 @dataclass
+class IncludeDecl(Node):
+    path: str
+
+
+@dataclass
 class GenericParam(Node):
     name: str
     bounds: list[TypeName] = field(default_factory=list)
@@ -743,5 +744,5 @@ class Attr(Node):
 
 Item = (
     FnDecl | StructDecl | EnumDecl | ImplBlock | TraitDecl
-    | UseDecl | ModDecl | ConstDecl | TypeAlias
+    | UseDecl | ModDecl | ConstDecl | TypeAlias | IncludeDecl
 )

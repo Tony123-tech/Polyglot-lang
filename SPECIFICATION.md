@@ -1,4 +1,4 @@
-# polyglot-lang Specification v0.3.0
+# polyglot-lang Specification v0.3.4
 
 ## 0. Conventions
 
@@ -40,7 +40,7 @@ A requirement is marked Normative when it applies to both backends without platf
     - (d) a suggested fix using `as`,
     - (e) a warning that `as` may wrap or truncate the value.
 
-    The suggestion and warning MUST use one format for every boundary. The compiler MUST NOT classify boundaries as safe or unsafe.
+    The suggestion and warning MUST use one format for every boundary. The compiler MUST NOT classify boundaries as safe or unsafe. Errors MUST include a stable error code. When a character span is available, the location line MUST include ` (span S..E)`. With a span, the diagnostic uses a six-line format; without a span, the five-line format is used.
   - **2.4.8** The Python backend MUST represent `usize` and `isize` as `int` and MUST NOT raise on a value that is within the target's `usize`/`isize` range.
   - **2.4.9** An `OverflowError` MUST be raised only at an explicit `as` boundary (per 2.4.6), when the value does not fit the target type. `len()` and other `usize`-returning operations MUST NOT raise on their own.
   - **2.4.10** `usize` and `isize` are platform-dependent in width. The width MUST be determined by the compilation target, not by the machine running the compiler.
@@ -51,7 +51,7 @@ A requirement is marked Normative when it applies to both backends without platf
     - (c) be selectable by the user so that host-width behaviour remains available.
   - **2.4.13** A program that depends on a specific `usize` width MUST declare it explicitly (mechanism deferred to a later version).
   - **2.4.14** A `for` loop variable takes the element type produced by the iterator. A range over `usize` yields `usize`; a range over `i64` yields `i64`. No implicit conversion is inserted.
-- **2.5** Additional integer types MAY be introduced after the `usize` and `isize` work is complete. Deferred.
+- **2.5** The additional integer types `i8`, `i16`, `i32`, `u8`, `u16`, `u32`, `u64`, `i128`, and `u128` MUST be supported. The implicit-conversion rules of 2.4.6 and the diagnostic requirements of 2.4.7 apply to all integer types (including `usize`, `isize`, and `i64`). Explicit `as` conversions between integer types MUST follow Rust semantics for truncation, wrapping, and sign interpretation. The Python backend enforces integer cast boundaries as documented in 8.1.
 - **2.6** Integer overflow behaviour MUST be documented per backend in Section 8.1. Cross-backend parity is not required.
 - **2.7** The `as` conversion MUST follow Rust semantics in the native backend. Its Python backend behaviour MUST be documented in Section 8 until the type system work is complete. Deferred.
 - **2.8** Termination checking is opt-in through `#[terminates]`.
@@ -247,42 +247,47 @@ Every row MUST have an entry in Section 8 and a cross-reference in Section 10.
 | Type | Status | Reference |
 |---|---|---|
 | `HashMap` | Normative | 7.1, 7.4, 7.2.7 |
+| `BTreeMap` | Partial (M3-remaining) | 7.2.8, 10.27 |
+| `HashSet` | Partial (M3-remaining) | 7.2.8, 10.27 |
 | Async executor (`PyFuture`) | Platform-defined | 8.2.2–8.2.3 |
 | Payload enum exposure | Platform-defined (native: internal; Python: public) | 8.4.2 |
 
-`HashMap<K, V>` supports `K` in `{i64, String}` and `V` in
-`{i64, String, bool, f64, Vec<i64>}`. Other key/value types are Deferred.
+`HashMap<K, V>` supports `K` in `{i64, String}` and `V` in `{i64, String, bool, f64, Vec<i64>, HashMap<K2, V2>}` where `K2`/`V2` are themselves in the supported sets (depth 1). `BTreeMap` and `HashSet` support the same core key/value constraints where applicable. Deeper nesting is Deferred. See 10.25.
 
 ### 7.2.7 `HashMap<K, V>` (collections)
 
 | Function | Status | Reference |
 |---|---|---|
-| `new` | Normative | — |
-| `insert`, `get`, `remove`, `contains_key` | Normative | — |
+| `new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter` | Normative (N8) | 7.2.6, 8.10.1 |
+| `entry(k).or_insert(v)` | Normative (N8 minimal entry subset) | — |
 | `get_mut` | Platform-defined at the Python boundary | 8.10.2 |
-| `len` | Normative; returns `usize` | — |
-| `is_empty` | Normative | — |
-| `keys`, `values` | Normative; return `Vec` | — |
-| `iter` | Normative; yields `(K, V)` pairs | — |
-| `entry(k).or_insert(v)` | Normative; minimal entry subset | — |
-| `entry(k).or_insert_with`, `and_modify` | Deferred | 10.21 |
+| `entry(k).or_insert_with(f)` | Partial (M3-remaining) | 10.27 |
+| `entry(k).and_modify(f)` | Partial (M3-remaining) | 10.27 |
+| `entry(k).or_insert_with_key(f)` | Partial (M3-remaining) | 10.27 |
+
+### 7.2.8 `BTreeMap<K, V>` and `HashSet<T>` (collections)
+
+| Function | Status | Reference |
+|---|---|---|
+| `BTreeMap::new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter`, `entry`, `get_mut` | Partial (M3-remaining) | 10.27 |
+| `HashSet::new`, `insert`, `contains`, `remove`, `len`, `is_empty`, `iter` | Partial (M3-remaining) | 10.27 |
 
 ## 8. Platform Differences
 
 This section defines the platform differences permitted by this specification. Each difference MUST have a test asserting the documented behaviour.
 
-### 8.1 Integer overflow
+### 8.1 Integer overflow and integer casts
 
-- **8.1.1** Native `i64` overflow MUST follow Rust semantics: panic in debug builds and wrap in release builds.
-  - **8.1.1.1** Native tests MUST assert wrap behaviour under `--release` and panic behaviour under the default debug profile, or under `--release` with `overflow-checks = true`.
-- **8.1.2** Python integers MUST remain arbitrary precision.
-- **8.1.3** Cross-backend numerical results MAY differ when overflow occurs.
+- **8.1.1** Integer overflow behaviour is Platform-defined. Native fixed-width integer overflow follows Rust semantics (panic in debug builds; wrap in release builds unless overflow checks are enabled). Python integers remain arbitrary precision.
+  - **8.1.1.1** Native tests MUST assert wrap or panic behaviour according to build/profile where covered.
+- **8.1.2** Cross-backend numerical results MAY differ when overflow occurs.
+- **8.1.3** Explicit `as` conversions between integer types MUST follow Rust semantics natively. In the Python backend, fixed-width integer `as` casts apply Rust-like wrapping/truncation/sign interpretation unless the source is a literal integer value outside the target range, in which case `OverflowError` is raised at the `as` boundary. `usize`/`isize` casts remain range-checked per 2.4.9 and 2.4.12. See 2.5 and 10.26.
 - **8.1.4** This difference MUST be recorded in Section 10.
 
 **Acceptance criteria**
 
-- A native test asserts panic or wrap according to build profile.
-- A Python test asserts arbitrary-precision behaviour.
+- Native overflow/cast tests exist where covered by the test suite.
+- Python overflow/cast and boundary tests exist where covered by the test suite.
 
 ### 8.2 Async execution
 
@@ -400,8 +405,8 @@ This section defines the platform differences permitted by this specification. E
 ## 9. Toolchain and Delivery
 
 - **9.1** The toolchain MUST include a lexer, a parser, an AST, both backends, diagnostics that map native errors to source positions, and a module mechanism.
-- **9.2** The module mechanism SHOULD be a one-way inclusion directive. Full module and import syntax is Deferred.
-- **9.3** Diagnostics MUST map native errors back to original source lines.
+- **9.2** The module mechanism MUST provide a one-way inclusion directive. `include!("path/to/file.poly");` at item position parses the included file and splices its items at the include site. Relative paths resolve relative to the including file's directory; absolute paths are allowed. Included files MAY contain includes recursively. Cyclic includes MUST be detected and rejected with a five-line error that prints the include chain. Full `mod` and `use` syntax remains Deferred.
+- **9.3** Diagnostics MUST map native errors back to original source lines and MUST include a stable error code and, where available, a character span.
 - **9.4** A command-line interface SHOULD provide a run command and a build command.
 - **9.5** The README Quick Start MUST allow a new user to run a first program without reading this specification.
 - **9.6** Installation SHOULD be a single package installation. The Python backend MUST have no native dependencies.
@@ -432,8 +437,8 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.7** `while let Some(x) = iter.next()` is deferred. See 6.5.
 - **10.8** Async `impl` methods are deferred. See 6.4.
 - **10.9 (Retired in v0.2.5).** The transitional `usize`/`isize` behavior is retired; implementations use distinct pointer-sized types and explicit casts. See 2.4.5.
-- **10.10** Additional integer types beyond `i64`, `usize`, and `isize` are deferred. See 2.5.
-- **10.11** The `as` conversion follows Rust semantics natively; its Python backend behaviour is not yet specified and is deferred. See 2.7.
+- **10.10 (Retired in v0.3.3).** Additional fixed-width integer types are specified in 2.5 and implemented in scope of M4-remaining. See 2.5 and 8.1.
+- **10.11 (Retired in v0.3.3).** Python backend `as` conversion behavior for additional integer types is specified in 8.1 and 10.26. See 2.5 and 2.7.
 - **10.12** `if let` forms other than `if let Some(binding) = expr` raise a translation error. See 5.4.
 - **10.13** `String::parse` failure behaviour differs across backends. See 8.7.
 - **10.14** Negative `String::repeat` counts and out-of-range `Vec::rotate_*` / `Vec::swap` arguments raise in the Python backend and panic natively. See 8.8.
@@ -443,8 +448,13 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.18** `Option::ok_or` and `Option::ok_or_else` are Platform-defined. See 8.5.6.
 - **10.19** No platform difference may be removed from this section without a corresponding SPEC version increase. See 11.1.
 - **10.20** Native `HashMap::get_mut` returns a copied `Option<V>` at the Python boundary; the copy cannot mutate the input dictionary. See 8.10.2.
-- **10.21** The full HashMap entry API (`or_insert_with`, `and_modify`), `BTreeMap`, `HashSet`, and key/value types outside the supported sets in 7.2.6 are Deferred.
+- **10.21** M3-remaining extends the collection targets in 7.2.6–7.2.8, but full parity for extended entry methods, `BTreeMap`, `HashSet`, nested HashMap depth-1 values, and collection `get_mut` semantics is Partial in this pass. See 10.25 and 10.27.
 - **10.22** Termination proofs for mutual recursion, loops with `break`, complex arithmetic, non-recursive function calls, and async suspension are Deferred. Such constructs are conservatively rejected in an annotated function when the checker cannot prove termination.
+- **10.23** Cyclic includes are rejected. Full `mod` and `use` syntax remains Deferred. See 9.2.
+- **10.24** AST spans are best-effort; nodes with a single token have span equal to that token's span. See 2.4.7 and 9.3.
+- **10.25** Nested `HashMap` value depth is 1 (e.g. `HashMap<K, HashMap<K2, V2>>` where `K2`/`V2` are supported). Deeper nesting is Deferred. See 7.2.6.
+- **10.26** M4 Python-backend integer `as` casts apply Rust-like wrapping for fixed-width integer targets unless the source is a literal integer value outside the target range, in which case `OverflowError` is raised at the `as` boundary. `usize`/`isize` casts remain range-checked per 2.4.9 and 2.4.12. See 2.5 and 8.1.
+- **10.27** M3-remaining: native backend support for `BTreeMap`, `HashSet`, extended entry methods, nested `HashMap` depth-1 values, and collection `get_mut` copy semantics beyond existing `HashMap` coverage is incomplete in this pass; Python backend support is partial. See 7.2.6–7.2.8.
 
 ## 11. Versioning
 
@@ -459,6 +469,10 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.8** v0.2.7 added dedicated tests for Platform-defined Result/Option combinators, un-deferred native `Result::and_then` and `Result::or_else`, and updated their acceptance status.
 - **11.9** v0.2.8 added opt-in termination checking for `#[terminates]` functions, a conservative shared checker for bounded ranges, decreasing `while` variants and recursive descent, and matching pre-execution errors in both backends.
 - **11.10** v0.3.0 records F1 delivery: package metadata, the `run`/`build`/`check` CLI, Quick Start and examples, and delivery acceptance criteria.
+- **11.11** v0.3.1 records M6: the concrete `include!` one-way inclusion directive, recursive expansion, and cycle/missing-file diagnostics.
+- **11.12** v0.3.2 records M7: stable diagnostic error codes, AST character spans, and the extended five/six-line diagnostic format.
+- **11.13** v0.3.3 records M4-remaining: additional fixed-width integer types, integer boundary diagnostics across all integer types, and documented Python/native `as`-cast behavior for those types.
+- **11.14** v0.3.4 records M3-remaining: HashMap API completion targets, BTreeMap/HashSet collection types, extended supported key/value sets, and documented partial implementation status.
 
 ## 12. Conformance Status
 
@@ -468,12 +482,12 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 ### 12.1 Test suite baseline
 
-As recorded at the latest batch, under Python 3.14.8 (the declared minimum, per 9.9):
+As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 424 passed, 4 skipped, 7 deselected.
-- `pytest -q -m slow`: 7 passed, 427 deselected.
+- `pytest -q`: 453 passed, 11 skipped, 7 deselected.
+- `pytest -q -m slow`: 7 passed, 464 deselected.
 
-The previously recorded failures (three inline annotation `NameError`s and one native extension-loading `_Py_IsFinalizing` failure) do not reproduce under Python 3.14.8. The suite reports 0 failed.
+The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, and M3-remaining tests added in v0.3.1–v0.3.4 (including partial/skipped M3 cases).
 
 - **12.1.1** The numbers above are from the current repository state at the time of writing. They MUST be updated whenever the test suite changes. The summary counts in 12.2.0 are derived from the 12.2 table below and MUST be recomputed whenever a row changes.
 - **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. The baseline is now restored; Blocked criteria have been re-evaluated in 12.2 and any that remain are marked **Partial** with a note recording what is still unverified.
@@ -554,6 +568,12 @@ The previously recorded failures (three inline annotation `NameError`s and one n
 | 9 | `polyglot check` reports termination failures | F1.4 | Pass | `tests/test_f1_cli.py::test_check_terminates_example_exits_zero`, `::test_check_non_terminating_reports_error` |
 | 9 | Quick Start runs in under 10 minutes | F1.5 | Pass | README Quick Start uses `pip install`, a short `hello.poly`, and `polyglot run`; validated by CLI tests and examples |
 | 9 | `examples/` contains seven runnable files | F1.6 | Pass | `tests/test_f1_cli.py::test_examples_directory_contains_seven_runnable_files` |
+| M6 | `include!` splices items and runs in both backends | 9.2, 10.23 | Pass | `tests/test_m6_include.py::test_include_add_both_backends`, `::test_include_add_native_backend` |
+| M6 | Nested and relative-path includes resolve correctly | 9.2 | Pass | `tests/test_m6_include.py::test_nested_include`, `::test_include_path_relative_to_including_file` |
+| M6 | Cyclic/missing includes rejected with five-line diagnostics | 9.2, 10.23 | Pass | `tests/test_m6_include.py::test_cyclic_include_rejected`, `::test_missing_include_file` |
+| M7 | Stable error codes and span-aware diagnostics | 2.4.7, 9.3, 10.24 | Pass | `tests/test_m7_diagnostics.py::test_e001_boundary_error_has_code_and_span`, `::test_e002_termination_error_has_code_and_span`, `::test_e005_include_cycle_has_code_and_chain`, `::test_every_error_class_emits_code_exactly_once`, `::test_span_present_for_multi_token_expression` |
+| M4 | Additional integer types, `as` casts, and E001 boundaries | 2.5, 8.1, 10.26 | Partial | Python and selected native cases covered by `tests/test_m4_integers.py`; full cross-backend matrix/native parity validation not completed in this pass |
+| M3 | HashMap API completion, BTreeMap, HashSet, nested values, and `get_mut` semantics | 7.2.6–7.2.8, 10.25, 10.27 | Partial | Basic Python HashSet/BTreeMap covered by `tests/test_m3_collections.py`; extended entry methods, nested HashMap depth-1, BTreeMap/HashSet `get_mut` boundary semantics, and native parity are incomplete in this pass |
 
 ### 12.3 Outstanding items that block a v0.3.0 conformance claim
 

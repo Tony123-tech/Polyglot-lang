@@ -48,9 +48,11 @@ class RustCompileError(RuntimeError):
     generated_source: str = ""
     error_code: str | None = None
     warnings: list[str] = field(default_factory=list)
+    span: tuple[int, int] | None = None
+    code: str = "E004"
 
     def __post_init__(self) -> None:
-        RuntimeError.__init__(self, self.message)
+        RuntimeError.__init__(self, self.format())
 
     @property
     def error_line(self) -> int | None:
@@ -64,17 +66,30 @@ class RustCompileError(RuntimeError):
     def rust_message(self) -> str:
         return self.raw_stderr
 
+    def format(self) -> str:
+        line = self.source_line if self.source_line is not None else self.rust_line
+        col = self.source_col if self.source_col is not None else self.rust_col
+        at = f"at: line {line}, column {col}" if line is not None and col is not None else "at: <unknown>"
+        if self.span is not None:
+            at += f" (span {self.span[0]}..{self.span[1]})"
+        reason = self.message.splitlines()[0] if self.message else "rust compilation failed"
+        help_text = "inspect the generated Rust and fix the reported issue"
+        note = "RustCompileError"
+        if self.error_code:
+            note += f" [{self.error_code}]"
+        return (
+            f"error[{self.code}]: {reason}\n"
+            f"  reason: {reason}\n"
+            f"  help: {help_text}\n"
+            f"  note: {note}\n"
+            f"  {at}"
+        )
+
     def __str__(self) -> str:
-        location = ""
-        if self.rust_line is not None:
-            location = f" at line {self.rust_line}"
-            if self.rust_col is not None:
-                location += f":{self.rust_col}"
-        code = f" [{self.error_code}]" if self.error_code else ""
-        return f"Rust compile error: {self.message}{code}{location}"
+        return self.format()
 
     def pretty(self) -> str:
-        lines = [str(self)]
+        lines = [self.format()]
         if self.source_line is not None:
             lines.append(
                 f"Polyglot source at {self.source_line}:"
@@ -89,14 +104,17 @@ class RustCompileError(RuntimeError):
             for i in range(start, end):
                 marker = ">>" if i + 1 == self.error_line else "  "
                 lines.append(f"{marker} {i + 1:4d} | {src_lines[i]}")
-        lines.append("")
-        lines.append("Rust stderr:")
-        lines.append(self.rust_message)
+        if self.raw_stderr:
+            lines.append("")
+            lines.append("Rust stderr:")
+            lines.append(self.rust_message)
         return "\n".join(lines)
 
 
 class TypeErrorForBoundary(RustCompileError):
     """Pre-Cargo error for an implicit integer boundary conversion."""
+
+    code = "E001"
 
     def __init__(
         self,
@@ -105,27 +123,41 @@ class TypeErrorForBoundary(RustCompileError):
         line: int,
         col: int,
         source_line_text: str | None = None,
+        span: tuple[int, int] | None = None,
     ) -> None:
-        message = (
-            f"error: type mismatch at line {line}, column {col}\n"
-            f"  found:    {source_type}\n"
-            f"  expected: {expected_type}\n"
-            f"  help: write `as {expected_type}` here\n"
-            "  note: `as` may wrap or truncate the value; check the range first"
-        )
+        self.source_type = source_type
+        self.expected_type = expected_type
+        self.line = line
+        self.col = col
+        self.span = span
+        message = self.format_boundary()
         super().__init__(
             message=message,
             source_line=line,
             source_col=col,
             source_line_text=source_line_text,
+            span=span,
+            code="E001",
         )
-        self.source_type = source_type
-        self.expected_type = expected_type
-        self.line = line
-        self.col = col
+
+    def format_boundary(self) -> str:
+        at = f"at: line {self.line}, column {self.col}"
+        if self.span is not None:
+            at += f" (span {self.span[0]}..{self.span[1]})"
+        return (
+            f"error[{self.code}]: type mismatch at line {self.line}, column {self.col}\n"
+            f"  found:    {self.source_type}\n"
+            f"  expected: {self.expected_type}\n"
+            f"  help: write `as {self.expected_type}` here\n"
+            "  note: `as` may wrap or truncate the value; check the range first\n"
+            f"  {at}"
+        )
+
+    def format(self) -> str:
+        return self.format_boundary()
 
     def __str__(self) -> str:
-        return self.message
+        return self.format_boundary()
 
 
 _ERROR_HEAD_RE = re.compile(

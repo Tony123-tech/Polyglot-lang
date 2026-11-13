@@ -73,12 +73,17 @@ def _assert_boundary_error(
     source_type: str = "usize",
     expected_type: str = "i64",
 ) -> None:
+    at = f"  at: line {error.line}, column {error.col}"
+    span = getattr(error, "span", None)
+    if span is not None:
+        at += f" (span {span[0]}..{span[1]})"
     expected = (
-        f"error: type mismatch at line {error.line}, column {error.col}\n"
+        f"error[E001]: type mismatch at line {error.line}, column {error.col}\n"
         f"  found:    {source_type}\n"
         f"  expected: {expected_type}\n"
         f"  help: write `as {expected_type}` here\n"
-        "  note: `as` may wrap or truncate the value; check the range first"
+        "  note: `as` may wrap or truncate the value; check the range first\n"
+        f"{at}"
     )
     assert str(error) == expected
 

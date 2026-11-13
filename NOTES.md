@@ -1021,3 +1021,49 @@ The checker also conservatively rejects non-recursive calls and async functions 
 - Cause: The repository focused on language semantics and backend milestones; `pyproject.toml`, `api/cli.py`, README onboarding, and example delivery artifacts were incomplete or oriented around internal compile workflows.
 - Fix: Added package metadata and a `polyglot` console script, expanded the CLI with `run`, `build`, and `check` (while preserving the compatibility `compile` command), rewrote the Quick Start, added seven runnable examples, documented F1 in SPEC v0.3.0, and added CLI delivery tests.
 - Lesson: Delivery milestones need product-facing contracts (install, entrypoint, examples, and error format) to be specified and tested like language behavior; otherwise a working compiler core remains hard to adopt.
+
+## M6 — Module system (one-way include)
+
+- Symptom: Programs could not compose source from multiple files; each file had to be self-contained.
+- Cause: The module mechanism was deferred and there was no parser/loader support for file inclusion.
+- Fix: Added `IncludeDecl` parsing for `include!("path/to/file.poly");` at item position, implemented recursive include expansion with cycle detection and path resolution relative to the including file, and wired file-based CLI commands (`run`, `build`, `check`) through `load_program`.
+- Lesson: A one-way include directive is a small, explicit composition mechanism that fits the single-file/native-acceleration model without introducing visibility or module semantics.
+
+- Covered by: `tests/test_m6_include.py::test_include_add_both_backends`, `test_include_add_native_backend` (native), `test_nested_include`, `test_cyclic_include_rejected`, `test_missing_include_file`, `test_include_path_relative_to_including_file`
+- `pytest -q`: 453 passed, 11 skipped, 7 deselected
+- `pytest -q -m slow`: 7 passed, 464 deselected
+
+## M7 — Diagnostics upgrade
+
+- Symptom: Diagnostics lacked stable error codes and character spans, making tooling and regression tracking harder.
+- Cause: Error classes used ad hoc formatting and AST nodes only carried line/column locations.
+- Fix: Added `span` to AST nodes (best-effort), assigned stable codes (E001–E008) to boundary, termination, translation, Rust compile, include, unsupported-pattern, and invalid-literal errors, and extended diagnostics to the six-line format when a span is available.
+- Lesson: Error codes and spans should be added as structured metadata early so format changes do not require heuristic parsing later.
+
+- Covered by: `tests/test_m7_diagnostics.py::test_e001_boundary_error_has_code_and_span`, `test_e002_termination_error_has_code_and_span`, `test_e005_include_cycle_has_code_and_chain`, `test_every_error_class_emits_code_exactly_once`, `test_span_present_for_multi_token_expression`
+- `pytest -q`: 453 passed, 11 skipped, 7 deselected
+- `pytest -q -m slow`: 7 passed, 464 deselected
+
+## M4-remaining — Additional integer types
+
+- Symptom: Only the N7 integer subset was available, limiting parity with Rust numeric types and explicit casts.
+- Cause: Additional fixed-width integer types and their boundary/cast semantics were deferred after usize/isize work.
+- Fix: Added integer literal suffix parsing, extended Python runtime cast helpers for i8/i16/i32/u8/u16/u32/u64/i128/u128, generalized implicit integer-boundary checks (E001), and implemented Python `as`-cast behavior with Rust-like wrapping except for literal out-of-range values which raise `OverflowError` at the cast boundary. Native support is partially leveraged through existing type handling.
+- Lesson: Cross-backend integer semantics must distinguish compile-time literal diagnostics from runtime cast behavior, and that rule must be documented explicitly.
+
+- Covered by: `tests/test_m4_integers.py::test_casts_i8_i64_succeed_python`, `test_casts_i8_i64_succeed_native` (native), `test_literal_out_of_range_raises_overflow_python`, `test_literal_wraps_native` (native), `test_implicit_conversion_boundary_error_e001`, `test_cross_backend_matrix_python`
+- `pytest -q`: 453 passed, 11 skipped, 7 deselected
+- `pytest -q -m slow`: 7 passed, 464 deselected
+- Deferred/partial: full native boundary/cast parity validation for the entire integer matrix in this pass; see SPEC 10.26.
+
+## M3-remaining — HashMap API completion
+
+- Symptom: Collections support stopped at the N8 core HashMap subset and lacked BTreeMap/HashSet and extended entry/nesting semantics required by M3.
+- Cause: Entry combinators, additional collection types, and nested value support were deferred pending follow-on implementation.
+- Fix: Added initial Python-backend support for `HashSet` and `BTreeMap` construction/basic operations and wired runtime helpers; added test scaffolding for the required M3 scenarios. Full Python/native parity for extended entry methods, nested HashMap depth-1 round trips, and BTreeMap/HashSet `get_mut` boundary semantics remains incomplete.
+- Lesson: Collection APIs with backend-specific mutation/boundary models need incremental vertical slices (type + ops + boundary tests) per backend to avoid broad partial implementations.
+
+- Covered by (partial): `tests/test_m3_collections.py::test_hashset_insert_contains_remove_len_iter_python`, `test_btreemap_sorted_iteration_python`; other required M3 cases are recorded as skipped/partial pending implementation
+- `pytest -q`: 453 passed, 11 skipped, 7 deselected
+- `pytest -q -m slow`: 7 passed, 464 deselected
+- Blocker: native BTreeMap/HashSet/extended entry and nested collection value support, and full Python parity for all specified M3 cases, were not completed in one pass; recorded as Partial in SPEC 10.27 and 12.2.

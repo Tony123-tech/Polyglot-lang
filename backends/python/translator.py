@@ -135,10 +135,38 @@ from backends.base import BackendBase
 from backends.errors import TranslateError
 from backends.python.runtime import (
     HOST_TARGET_WIDTH,
+    btreemap_contains,
+    btreemap_entry,
+    btreemap_get,
+    btreemap_get_mut,
+    btreemap_insert_with_prev,
+    btreemap_is_empty,
+    btreemap_iter,
+    btreemap_keys,
+    btreemap_len,
+    btreemap_new,
+    btreemap_remove,
+    btreemap_values,
+    cast_i8,
+    cast_i16,
+    cast_i32,
     cast_i64,
+    cast_i128,
     cast_isize,
+    cast_u8,
+    cast_u16,
+    cast_u32,
+    cast_u64,
+    cast_u128,
     cast_usize,
     get_target_width,
+    hashset_contains,
+    hashset_insert,
+    hashset_is_empty,
+    hashset_iter,
+    hashset_len,
+    hashset_new,
+    hashset_remove,
 )
 from match_diagnostics import missing_match_variants, warn_match_issues
 from struct_order import order_struct_declarations
@@ -172,25 +200,38 @@ def _sandbox_builtins() -> dict:
 class TypeErrorForBoundary(Exception):
     """Raised when an integer crosses a pointer-width boundary implicitly."""
 
+    code = "E001"
+
     def __init__(
         self,
         source_type: str,
         expected_type: str,
         line: int,
         col: int,
+        span: tuple[int, int] | None = None,
     ) -> None:
-        message = (
-            f"error: type mismatch at line {line}, column {col}\n"
-            f"  found:    {source_type}\n"
-            f"  expected: {expected_type}\n"
-            f"  help: write `as {expected_type}` here\n"
-            "  note: `as` may wrap or truncate the value; check the range first"
-        )
-        super().__init__(message)
         self.source_type = source_type
         self.expected_type = expected_type
         self.line = line
         self.col = col
+        self.span = span
+        super().__init__(self.format())
+
+    def format(self) -> str:
+        at = f"at: line {self.line}, column {self.col}"
+        if self.span is not None:
+            at += f" (span {self.span[0]}..{self.span[1]})"
+        return (
+            f"error[{self.code}]: type mismatch at line {self.line}, column {self.col}\n"
+            f"  found:    {self.source_type}\n"
+            f"  expected: {self.expected_type}\n"
+            f"  help: write `as {self.expected_type}` here\n"
+            "  note: `as` may wrap or truncate the value; check the range first\n"
+            f"  {at}"
+        )
+
+    def __str__(self) -> str:
+        return self.format()
 
 
 # ---------------------------------------------------------------------------
@@ -216,23 +257,23 @@ TYPE_MAP: dict[str, str] = {
 
 # Bit width and signedness for Rust integer primitives. Pointer-width casts
 # use the selected target width via the runtime helpers below.
+# Bit width and signedness for Rust integer primitives. Pointer-width casts
+# use the selected target width via the runtime helpers below.
 _INT_TYPE_BITS: dict[str, tuple[int, bool]] = {
     "i8": (8, True),
     "i16": (16, True),
     "i32": (32, True),
     "i64": (64, True),
     "i128": (128, True),
-    "isize": (64, True),
     "u8": (8, False),
     "u16": (16, False),
     "u32": (32, False),
     "u64": (64, False),
     "u128": (128, False),
-    "usize": (64, False),
 }
 
 _FLOAT_TYPE_NAMES = frozenset({"f32", "f64"})
-_PRIMITIVE_NUMERIC_TYPES = frozenset(_INT_TYPE_BITS) | _FLOAT_TYPE_NAMES
+_PRIMITIVE_NUMERIC_TYPES = frozenset(_INT_TYPE_BITS) | _FLOAT_TYPE_NAMES | {"usize", "isize"}
 
 # Each compiled program gets a unique module name so consecutive compilations
 # do not clobber one another in ``sys.modules``.
@@ -996,6 +1037,7 @@ class Translator:
         self._numeric_types: dict[str, str] = {}
         self._return_numeric_type: str | None = None
         self._return_type_name: str | None = None
+        self.target_width: int = HOST_TARGET_WIDTH
 
     # ---- entry -------------------------------------------------------------
 
@@ -1108,6 +1150,7 @@ class Translator:
             raise ValueError(
                 f"target width must be 32 or 64, got {target_width}"
             )
+        self.target_width = HOST_TARGET_WIDTH if target_width is None else target_width
         module = self.translate_program(program)
         code = compile(module, "<polyglot>", "exec")
         module_name = f"_polyglot_generated_{next(_MODULE_COUNTER)}"
@@ -1164,6 +1207,26 @@ class Translator:
         ns["_map_entry"] = _runtime_map_entry
         ns["_map_slot_set"] = _runtime_map_slot_set
         ns["_map_slot_aug"] = _runtime_map_slot_aug
+        # M3 helpers
+        ns["_btreemap_new"] = btreemap_new
+        ns["_btreemap_insert"] = btreemap_insert_with_prev
+        ns["_btreemap_get"] = btreemap_get
+        ns["_btreemap_remove"] = btreemap_remove
+        ns["_btreemap_contains"] = btreemap_contains
+        ns["_btreemap_len"] = btreemap_len
+        ns["_btreemap_is_empty"] = btreemap_is_empty
+        ns["_btreemap_keys"] = btreemap_keys
+        ns["_btreemap_values"] = btreemap_values
+        ns["_btreemap_iter"] = btreemap_iter
+        ns["_btreemap_entry"] = btreemap_entry
+        ns["_btreemap_get_mut"] = btreemap_get_mut
+        ns["_hashset_new"] = hashset_new
+        ns["_hashset_insert"] = hashset_insert
+        ns["_hashset_contains"] = hashset_contains
+        ns["_hashset_remove"] = hashset_remove
+        ns["_hashset_len"] = hashset_len
+        ns["_hashset_is_empty"] = hashset_is_empty
+        ns["_hashset_iter"] = hashset_iter
         if target_width is None:
             ns["_cast"] = _runtime_cast
             ns["_cast_isize"] = cast_isize
@@ -1178,7 +1241,11 @@ class Translator:
             ns["_cast_usize"] = lambda value: cast_usize(
                 value, target_width=target_width,
             )
-        ns["_cast_i64"] = cast_i64
+        for _name, _fn in {
+            "i8": cast_i8, "i16": cast_i16, "i32": cast_i32, "i64": cast_i64, "i128": cast_i128,
+            "u8": cast_u8, "u16": cast_u16, "u32": cast_u32, "u64": cast_u64, "u128": cast_u128,
+        }.items():
+            ns[f"_cast_{_name}"] = _fn
         ns["_div"] = _runtime_int_div
         ns["_mod"] = _runtime_int_rem
 
@@ -1728,7 +1795,11 @@ class Translator:
             self._known_expr_type(s.value) if s.value is not None else None
         )
         self._check_type_boundary(
-            inferred_type, self._binding_type_name(s.ty), s.line, s.col,
+            inferred_type,
+            self._binding_type_name(s.ty),
+            s.line,
+            s.col,
+            getattr(s.value, "span", None) or getattr(s, "span", None),
         )
         if numeric_type is None and inferred_type in _PRIMITIVE_NUMERIC_TYPES:
             numeric_type = inferred_type
@@ -2481,15 +2552,29 @@ class Translator:
                 argument.col,
             )
 
+    def _is_integer_type_name(self, ty: str | None) -> bool:
+        if ty is None:
+            return False
+        return ty in _INT_TYPE_BITS or ty in {"isize", "usize"}
+
     def _check_type_boundary(
         self,
         source_type: str | None,
         expected_type: str | None,
         line: int,
         col: int,
+        span: tuple[int, int] | None = None,
     ) -> None:
         if source_type is None or expected_type is None:
             return
+        # M4: implicit conversion between different integer types requires `as`
+        if self._is_integer_type_name(source_type) and self._is_integer_type_name(expected_type):
+            if source_type != expected_type:
+                raise TypeErrorForBoundary(
+                    source_type, expected_type, line, col, span,
+                )
+            return
+        # fallback for pointer-sized cases
         source_ty = TypeName(line, col, source_type)
         expected_ty = TypeName(line, col, expected_type)
         source_is_pointer_sized = (
@@ -2499,9 +2584,7 @@ class Translator:
             is_usize_type(expected_ty) or is_isize_type(expected_ty)
         )
         if (
-            (source_is_pointer_sized and is_i64_type(
-                expected_ty,
-            ))
+            (source_is_pointer_sized and is_i64_type(expected_ty))
             or (expected_is_pointer_sized and is_i64_type(source_ty))
             or (
                 source_is_pointer_sized
@@ -2510,7 +2593,7 @@ class Translator:
             )
         ):
             raise TypeErrorForBoundary(
-                source_type, expected_type, line, col,
+                source_type, expected_type, line, col, span,
             )
 
     def _check_usize_method_args(self, expr: MethodCall) -> None:
@@ -2550,26 +2633,65 @@ class Translator:
             return self._is_vec_expr(expr.receiver)
         return False
 
+    def _unwrap_paren(self, expr: Expr) -> Expr:
+        while isinstance(expr, Paren):
+            expr = expr.inner
+        return expr
+
+    def _integer_literal_value(self, expr: Expr) -> int | None:
+        expr = self._unwrap_paren(expr)
+        if isinstance(expr, LitInt):
+            return int(expr.value)
+        if isinstance(expr, Unary) and expr.op == "-":
+            inner = self._integer_literal_value(expr.operand)
+            return -inner if inner is not None else None
+        return None
+
+    def _int_range(self, ty: str) -> tuple[int, int] | None:
+        if ty in {"isize", "usize"}:
+            w = self.target_width
+            if ty == "usize":
+                return (0, (1 << w) - 1)
+            return (-(1 << (w - 1)), (1 << (w - 1)) - 1)
+        if ty not in _INT_TYPE_BITS:
+            return None
+        bits, signed = _INT_TYPE_BITS[ty]
+        if signed:
+            return (-(1 << (bits - 1)), (1 << (bits - 1)) - 1)
+        return (0, (1 << bits) - 1)
+
     def translate_cast(self, node: Cast) -> ast.expr:
         inner = self.translate_expr(node.expr)
         if isinstance(node.ty, TypeName):
-            source_type = self.infer_type(node.expr)
-            helper = {
-                "isize": "_cast_isize",
-                "usize": "_cast_usize",
-            }.get(node.ty.name)
-            if (
-                node.ty.name == "i64"
-                and source_type in {"usize", "isize"}
-            ):
-                helper = "_cast_i64"
-            if helper is not None:
+            target = node.ty.name
+            # Pointer-sized casts keep existing helpers (range-checked)
+            if target in {"isize", "usize"}:
+                helper = "_cast_isize" if target == "isize" else "_cast_usize"
                 return ast.Call(
                     func=ast.Name(id=helper, ctx=ast.Load()),
                     args=[inner],
                     keywords=[],
                 )
-            return self._coerce_numeric(inner, node.ty.name)
+            # All fixed-width integer casts
+            if target in _INT_TYPE_BITS:
+                lit = self._integer_literal_value(node.expr)
+                literal_oob = False
+                if lit is not None:
+                    rng = self._int_range(target)
+                    if rng is not None and not (rng[0] <= lit <= rng[1]):
+                        literal_oob = True
+                helper = f"_cast_{target}"
+                call = ast.Call(
+                    func=ast.Name(id=helper, ctx=ast.Load()),
+                    args=[inner],
+                    keywords=[],
+                )
+                if literal_oob:
+                    call.keywords.append(
+                        ast.keyword(arg="literal_out_of_range", value=ast.Constant(value=True))
+                    )
+                return call
+            return self._coerce_numeric(inner, target)
         return inner
 
     def translate_expr(self, e: Expr) -> ast.expr:
@@ -2678,6 +2800,18 @@ class Translator:
                 and not e.args
             ):
                 return ast.Dict(keys=[], values=[])
+            if (
+                isinstance(e.func, Path)
+                and e.func.segments == ["HashSet", "new"]
+                and not e.args
+            ):
+                return ast.Call(func=ast.Name(id="set", ctx=ast.Load()), args=[], keywords=[])
+            if (
+                isinstance(e.func, Path)
+                and e.func.segments == ["BTreeMap", "new"]
+                and not e.args
+            ):
+                return ast.Call(func=ast.Name(id="_btreemap_new", ctx=ast.Load()), args=[], keywords=[])
             self._check_call_arguments(e)
             func = self.translate_expr(e.func)
             args = [self.translate_expr(a) for a in e.args]
@@ -2746,6 +2880,44 @@ class Translator:
                         args=[recv],
                         keywords=[],
                     )
+            if self._is_hashset_expr(e.receiver):
+                if e.method == "insert" and len(e.args) == 1:
+                    return ast.Call(func=ast.Name(id="_hashset_insert", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                if e.method == "contains" and len(e.args) == 1:
+                    return ast.Call(func=ast.Name(id="_hashset_contains", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                if e.method == "remove" and len(e.args) == 1:
+                    return ast.Call(func=ast.Name(id="_hashset_remove", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                if e.method == "len" and not e.args:
+                    return ast.Call(func=ast.Name(id="_hashset_len", ctx=ast.Load()), args=[recv], keywords=[])
+                if e.method == "is_empty" and not e.args:
+                    return ast.Call(func=ast.Name(id="_hashset_is_empty", ctx=ast.Load()), args=[recv], keywords=[])
+                if e.method == "iter" and not e.args:
+                    return ast.Call(func=ast.Name(id="_hashset_iter", ctx=ast.Load()), args=[recv], keywords=[])
+            if self._is_btreemap_expr(e.receiver):
+                if e.method == "insert" and len(e.args) == 2:
+                    return ast.Call(func=ast.Name(id="_btreemap_insert", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0]), self.translate_expr(e.args[1])], keywords=[])
+                if e.method == "get" and len(e.args) == 1:
+                    v = ast.Call(func=ast.Name(id="_btreemap_get", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    # return Option-like for parity? but easier to return value/None; keep simple
+                    return v
+                if e.method == "remove" and len(e.args) == 1:
+                    return ast.Call(func=ast.Name(id="_btreemap_remove", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                if e.method == "contains_key" and len(e.args) == 1:
+                    return ast.Call(func=ast.Name(id="_btreemap_contains", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                if e.method == "len" and not e.args:
+                    return ast.Call(func=ast.Name(id="_btreemap_len", ctx=ast.Load()), args=[recv], keywords=[])
+                if e.method == "is_empty" and not e.args:
+                    return ast.Call(func=ast.Name(id="_btreemap_is_empty", ctx=ast.Load()), args=[recv], keywords=[])
+                if e.method == "keys" and not e.args:
+                    return ast.Call(func=ast.Name(id="_btreemap_keys", ctx=ast.Load()), args=[recv], keywords=[])
+                if e.method == "values" and not e.args:
+                    return ast.Call(func=ast.Name(id="_btreemap_values", ctx=ast.Load()), args=[recv], keywords=[])
+                if e.method == "iter" and not e.args:
+                    return ast.Call(func=ast.Name(id="_btreemap_iter", ctx=ast.Load()), args=[recv], keywords=[])
+                if e.method == "entry" and len(e.args) == 1:
+                    return ast.Call(func=ast.Name(id="_btreemap_entry", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                if e.method == "get_mut" and len(e.args) == 1:
+                    return ast.Call(func=ast.Name(id="_btreemap_get_mut", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
             if e.method == "map_err" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
@@ -3586,6 +3758,32 @@ class Translator:
             return True
         if isinstance(expr, Paren):
             return self._is_hashmap_expr(expr.inner)
+        return False
+
+    def _is_hashset_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, Ident):
+            return self._binding_types.get(expr.name) == "HashSet"
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and expr.func.segments == ["HashSet", "new"]
+        ):
+            return True
+        if isinstance(expr, Paren):
+            return self._is_hashset_expr(expr.inner)
+        return False
+
+    def _is_btreemap_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, Ident):
+            return self._binding_types.get(expr.name) == "BTreeMap"
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and expr.func.segments == ["BTreeMap", "new"]
+        ):
+            return True
+        if isinstance(expr, Paren):
+            return self._is_btreemap_expr(expr.inner)
         return False
 
     def _is_map_entry_expr(self, expr: Expr) -> bool:
