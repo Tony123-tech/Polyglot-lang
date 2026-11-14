@@ -1158,3 +1158,29 @@ caught bug 10, which the Python-only tests would have missed.
 **Technical debt:** `_Option` is defined twice (`translator.py:856`,
 `runtime.py:330`). Long-term this should be unified. The current duck
 typing in `_iflet_match` is a workaround, not a fix.
+
+## polyglot build — module name vs filename mismatch
+
+**Symptom:** `polyglot build hello.poly` produces `hello.dylib`, but the
+exported init symbol is `PyInit_polyglot_native`. `import hello` fails;
+the module must be loaded as `polyglot_native`.
+
+**Cause:** The native backend emits a single `#[pymodule]` named
+`polyglot_native` regardless of the source filename. The output filename
+is derived from the source file, so filename and module name diverge.
+
+**Fix (test):** `test_built_extension_loads_and_runs` loads via
+`ExtensionFileLoader("polyglot_native", path)` + `exec_module()`. This
+makes the test pass and removes the deprecated `load_module()` call.
+
+**Open issue:** README Quick Start says `import hello`, which does not
+work. Either the native backend should emit `PyInit_<filename>` per
+source file, or README should document the `polyglot_native` loading
+pattern. Tracked for a follow-up.
+
+**Test baseline:** 469 passed, 9 skipped, 16 deselected; slow
+16 passed, 478 deselected.
+
+**Lesson:** The filename and the exported module symbol are separate
+identities. Tests that load the artifact must use the symbol name, not
+the filename. Documentation must state which one is user-visible.
