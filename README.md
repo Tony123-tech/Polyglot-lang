@@ -25,6 +25,8 @@ Same source, same tests, same error messages. No `Cargo.toml`, no
 
 ## Quick Start
 
+New to Rust-like syntax? See [GUIDE.md](GUIDE.md) for a step-by-step tutorial.
+
 ```sh
 pip install polyglot-lang
 ```
