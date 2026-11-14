@@ -127,3 +127,21 @@ def test_console_script_entry_point():
     )
     assert result.returncode == 0
     assert result.stdout.strip() == "5"
+
+@pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo is unavailable")
+@pytest.mark.slow
+def test_built_extension_loads_and_runs(tmp_path):
+    result = _run_cli("build", "examples/hello.poly", "--out-dir", str(tmp_path))
+    assert result.returncode == 0
+    # Find the .so/.dylib
+    libs = list(tmp_path.glob("*.so")) + list(tmp_path.glob("*.dylib"))
+    assert libs, "no extension produced"
+    # Load it and call add
+    from importlib.machinery import ExtensionFileLoader
+    from importlib.util import module_from_spec, spec_from_loader
+    loader = ExtensionFileLoader("polyglot_native", str(libs[0]))
+    spec = spec_from_loader("polyglot_native", loader)
+    assert spec is not None
+    mod = module_from_spec(spec)
+    loader.exec_module(mod)
+    assert mod.add(2, 3) == 5
