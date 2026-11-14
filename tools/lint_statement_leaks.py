@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Regression guard for commit 5d9d9d9."""
 import ast
-import re
 import sys
 from pathlib import Path
 
