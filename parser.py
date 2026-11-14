@@ -859,9 +859,7 @@ class Parser:
                 continue
 
             e = self.parse_expr()
-            if self.eat(TokenType.SEMI):
-                stmts.append(ExprStmt(e.line, e.col, e))
-            elif isinstance(e, IfLet) and not self._iflet_has_tail(e):
+            if self.eat(TokenType.SEMI) or isinstance(e, IfLet) and not self._iflet_has_tail(e):
                 stmts.append(ExprStmt(e.line, e.col, e))
             elif self.check(TokenType.RBRACE) and not isinstance(e, (For, While, Loop)) and not self._ifexpr_has_stmts(e):
                 tail = e
@@ -877,9 +875,10 @@ class Parser:
             return False
         if e.then_block.tail is not None:
             return True
-        if isinstance(e.else_branch, Block) and e.else_branch.tail is not None:
-            return True
-        return False
+        return bool(
+            isinstance(e.else_branch, Block)
+            and e.else_branch.tail is not None
+        )
 
     def _ifexpr_has_stmts(self, e) -> bool:
         if not isinstance(e, IfExpr):

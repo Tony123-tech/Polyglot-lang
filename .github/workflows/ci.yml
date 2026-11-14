@@ -25,6 +25,9 @@ jobs:
       - name: Lint statement leaks
         run: python3 tools/lint_statement_leaks.py
 
+      - name: Lint with ruff
+        run: ruff check .
+
       - name: Lint docs
         run: python3 tools/lint_docs.py
 

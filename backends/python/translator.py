@@ -134,8 +134,8 @@ from ast_nodes import (
 from backends.base import BackendBase
 from backends.errors import TranslateError
 from backends.python.runtime import (
-    _iflet_match,
     HOST_TARGET_WIDTH,
+    _iflet_match,
     btreemap_contains,
     btreemap_entry,
     btreemap_get,
@@ -4026,7 +4026,8 @@ class Translator:
     def _translate_macro(self, m: MacroCall) -> ast.expr:
         if m.path == "vec":
             if isinstance(m.args, str):
-                from lexer import lex as _lex, TokenType
+                from lexer import TokenType
+                from lexer import lex as _lex
                 from parser import Parser as _Parser
                 tokens = _lex(m.args)
                 parser = _Parser(tokens)
