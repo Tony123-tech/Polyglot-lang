@@ -497,7 +497,7 @@ The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M
 
 ### 12.2 Acceptance criteria status
 
-**12.2.0** Summary: 61 Pass, 6 Partial, 0 Fail, 0 Blocked.
+**12.2.0** Summary: 62 Pass, 5 Partial, 0 Fail, 0 Blocked.
 
 **12.2.1** **Partial** means at least one test exists and passes, but the criterion is not fully covered. The Note column MUST state what is missing. A criterion marked **Partial** with the note "Tests not yet recorded" means the test may exist but is not traceable to a named test in `NOTES.md` or `tests/`. Such a criterion MUST be reclassified as **Fail** if, on inspection, no such test exists.
 
