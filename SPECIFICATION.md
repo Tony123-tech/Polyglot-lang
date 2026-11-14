@@ -41,6 +41,7 @@ A requirement is marked Normative when it applies to both backends without platf
     - (e) a warning that `as` may wrap or truncate the value.
 
     The suggestion and warning MUST use one format for every boundary. The compiler MUST NOT classify boundaries as safe or unsafe. Errors MUST include a stable error code. When a character span is available, the location line MUST include ` (span S..E)`. With a span, the diagnostic uses a six-line format; without a span, the five-line format is used.
+
   - **2.4.8** The Python backend MUST represent `usize` and `isize` as `int` and MUST NOT raise on a value that is within the target's `usize`/`isize` range.
   - **2.4.9** An `OverflowError` MUST be raised only at an explicit `as` boundary (per 2.4.6), when the value does not fit the target type. `len()` and other `usize`-returning operations MUST NOT raise on their own.
   - **2.4.10** `usize` and `isize` are platform-dependent in width. The width MUST be determined by the compilation target, not by the machine running the compiler.
@@ -51,6 +52,7 @@ A requirement is marked Normative when it applies to both backends without platf
     - (c) be selectable by the user so that host-width behaviour remains available.
   - **2.4.13** A program that depends on a specific `usize` width MUST declare it explicitly (mechanism deferred to a later version).
   - **2.4.14** A `for` loop variable takes the element type produced by the iterator. A range over `usize` yields `usize`; a range over `i64` yields `i64`. No implicit conversion is inserted.
+
 - **2.5** The additional integer types `i8`, `i16`, `i32`, `u8`, `u16`, `u32`, `u64`, `i128`, and `u128` MUST be supported. The implicit-conversion rules of 2.4.6 and the diagnostic requirements of 2.4.7 apply to all integer types (including `usize`, `isize`, and `i64`). Explicit `as` conversions between integer types MUST follow Rust semantics for truncation, wrapping, and sign interpretation. The Python backend enforces integer cast boundaries as documented in 8.1.
 - **2.6** Integer overflow behaviour MUST be documented per backend in Section 8.1. Cross-backend parity is not required.
 - **2.7** The `as` conversion MUST follow Rust semantics in the native backend. Its Python backend behaviour MUST be documented in Section 8 until the type system work is complete. Deferred.
@@ -161,116 +163,116 @@ A requirement is marked Normative when it applies to both backends without platf
 
 ### 7.2.1 `Vec<T>` (core)
 
-| Function | Status | Reference |
-|---|---|---|
-| `push`, `pop`, `len` | Normative | 2.4.3 |
-| index `v[i]` | Normative | requires `usize` per 2.4.4 |
-| `contains` | Normative | — |
-| `sort`, `sort_by` | Normative | — |
-| `map`, `filter`, `fold` | Normative | `filter` receiver-type check per 5.7 |
-| slice `&v[a..b]` | Normative | — |
-| `extend` | Normative | — |
-| `insert`, `remove`, `retain`, `dedup` | Normative | — |
-| `windows`, `chunks` | Normative | — |
-| `is_empty`, `clear`, `reverse` | Normative | — |
-| `first`, `last`, `get` | Normative | — |
-| `truncate` | Normative | — |
-| `sort_unstable` | Normative | — |
-| `rotate_left`, `rotate_right`, `fill`, `swap` | Normative | out-of-range behaviour per 8.8 |
-| `extend_from_slice`, `resize`, `split_off` | Normative | — |
-| `partition`, `sort_by_key`, `is_sorted` | Normative | — |
+| Function                                      | Status    | Reference                            |
+| --------------------------------------------- | --------- | ------------------------------------ |
+| `push`, `pop`, `len`                          | Normative | 2.4.3                                |
+| index `v[i]`                                  | Normative | requires `usize` per 2.4.4           |
+| `contains`                                    | Normative | —                                    |
+| `sort`, `sort_by`                             | Normative | —                                    |
+| `map`, `filter`, `fold`                       | Normative | `filter` receiver-type check per 5.7 |
+| slice `&v[a..b]`                              | Normative | —                                    |
+| `extend`                                      | Normative | —                                    |
+| `insert`, `remove`, `retain`, `dedup`         | Normative | —                                    |
+| `windows`, `chunks`                           | Normative | —                                    |
+| `is_empty`, `clear`, `reverse`                | Normative | —                                    |
+| `first`, `last`, `get`                        | Normative | —                                    |
+| `truncate`                                    | Normative | —                                    |
+| `sort_unstable`                               | Normative | —                                    |
+| `rotate_left`, `rotate_right`, `fill`, `swap` | Normative | out-of-range behaviour per 8.8       |
+| `extend_from_slice`, `resize`, `split_off`    | Normative | —                                    |
+| `partition`, `sort_by_key`, `is_sorted`       | Normative | —                                    |
 
 ### 7.2.2 `String` (core)
 
-| Function | Status | Reference |
-|---|---|---|
-| `len` (UTF-8 bytes), `chars`, `bytes` | Normative | — |
-| `split`, `join` | Normative | — |
-| `replace`, `trim`, `starts_with`, `ends_with` | Normative | — |
-| `to_uppercase`, `to_lowercase` | Normative | — |
-| `parse::<T>` | Normative; failure behaviour Platform-defined | 8.7 |
-| slice `&s[a..b]` (UTF-8 byte offsets) | Normative | 8.8 |
-| `==`, `<` and other comparisons | Normative | — |
-| `+` concatenation | Normative | — |
-| `repeat` | Normative | negative-count behaviour per 8.8 |
-| `find` | Normative | — |
-| `is_empty` | Normative | — |
-| `trim_start`, `trim_end`, `is_ascii` | Normative | — |
-| `lines`, `split_whitespace` | Normative | — |
-| `as_bytes`, `is_char_boundary`, `to_ascii_lowercase`, `to_ascii_uppercase` | Normative | — |
-| `rfind`, `strip_prefix`, `strip_suffix`, `split_once`, `rsplit_once` | Normative | — |
+| Function                                                                   | Status                                        | Reference                        |
+| -------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------- |
+| `len` (UTF-8 bytes), `chars`, `bytes`                                      | Normative                                     | —                                |
+| `split`, `join`                                                            | Normative                                     | —                                |
+| `replace`, `trim`, `starts_with`, `ends_with`                              | Normative                                     | —                                |
+| `to_uppercase`, `to_lowercase`                                             | Normative                                     | —                                |
+| `parse::<T>`                                                               | Normative; failure behaviour Platform-defined | 8.7                              |
+| slice `&s[a..b]` (UTF-8 byte offsets)                                      | Normative                                     | 8.8                              |
+| `==`, `<` and other comparisons                                            | Normative                                     | —                                |
+| `+` concatenation                                                          | Normative                                     | —                                |
+| `repeat`                                                                   | Normative                                     | negative-count behaviour per 8.8 |
+| `find`                                                                     | Normative                                     | —                                |
+| `is_empty`                                                                 | Normative                                     | —                                |
+| `trim_start`, `trim_end`, `is_ascii`                                       | Normative                                     | —                                |
+| `lines`, `split_whitespace`                                                | Normative                                     | —                                |
+| `as_bytes`, `is_char_boundary`, `to_ascii_lowercase`, `to_ascii_uppercase` | Normative                                     | —                                |
+| `rfind`, `strip_prefix`, `strip_suffix`, `split_once`, `rsplit_once`       | Normative                                     | —                                |
 
 ### 7.2.3 `Option<T>` (core)
 
-| Function | Status | Reference |
-|---|---|---|
-| construction `Some`, `None` | Normative | — |
-| `is_some`, `is_none`, `unwrap`, `unwrap_or` | Normative | — |
-| `and_then`, `or_else`, `filter` | Normative; native uses Rust standard combinators | `filter` receiver-type check per 5.7 |
-| `ok_or`, `ok_or_else` | Platform-defined | 5.8.2, 8.5.6 |
-| `map` | **Unsupported** | 5.7; collides with `Vec::map` until dispatch is fully type-aware |
+| Function                                    | Status                                           | Reference                                                        |
+| ------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
+| construction `Some`, `None`                 | Normative                                        | —                                                                |
+| `is_some`, `is_none`, `unwrap`, `unwrap_or` | Normative                                        | —                                                                |
+| `and_then`, `or_else`, `filter`             | Normative; native uses Rust standard combinators | `filter` receiver-type check per 5.7                             |
+| `ok_or`, `ok_or_else`                       | Platform-defined                                 | 5.8.2, 8.5.6                                                     |
+| `map`                                       | **Unsupported**                                  | 5.7; collides with `Vec::map` until dispatch is fully type-aware |
 
 ### 7.2.4 `Result<T, E>` (core)
 
-| Function | Status | Reference |
-|---|---|---|
-| construction `Ok`, `Err` | Normative | — |
-| `?` operator, synchronous | Normative; `Err` representation Platform-defined | 5.2, 5.5, 8.5.1–8.5.2 |
-| `?` operator, asynchronous | Platform-defined | 5.3, 8.5.3 |
-| `is_ok`, `is_err`, `map_err` | Platform-defined | 5.8.1, 8.5.5 |
-| `ok`, `err` | Normative | — |
-| `and_then`, `or_else` (native) | Normative; native errors use `PyErr` | 5.6, 8.5.4 |
-| `and_then`, `or_else` (Python) | Normative | — |
+| Function                       | Status                                           | Reference             |
+| ------------------------------ | ------------------------------------------------ | --------------------- |
+| construction `Ok`, `Err`       | Normative                                        | —                     |
+| `?` operator, synchronous      | Normative; `Err` representation Platform-defined | 5.2, 5.5, 8.5.1–8.5.2 |
+| `?` operator, asynchronous     | Platform-defined                                 | 5.3, 8.5.3            |
+| `is_ok`, `is_err`, `map_err`   | Platform-defined                                 | 5.8.1, 8.5.5          |
+| `ok`, `err`                    | Normative                                        | —                     |
+| `and_then`, `or_else` (native) | Normative; native errors use `PyErr`             | 5.6, 8.5.4            |
+| `and_then`, `or_else` (Python) | Normative                                        | —                     |
 
 ### 7.2.5 Platform-defined function behaviour
 
 Every row MUST have an entry in Section 8 and a cross-reference in Section 10.
 
-| Behaviour | Reference |
-|---|---|
-| Integer overflow | 8.1 |
-| `as` conversion, Python backend | 2.7 (Deferred) |
-| `parse` failure behaviour | 8.7 |
-| Async execution model | 8.2 (Experimental) |
-| `Err` concrete representation | 8.5.2 |
-| `Result::is_ok`, `is_err`, `map_err` | 8.5.5 |
-| `Option::ok_or`, `ok_or_else` | 8.5.6 |
-| Box patterns | 8.3 |
-| Payload enum slices | 8.4 |
-| `usize` / `isize` boundary | 2.4.5, 8.6 |
-| `HashMap::get_mut` Python-boundary result | 8.10.2 |
-| Numeric and index boundary errors | 8.8 |
-| Non-exhaustive match diagnostic | 8.9 |
+| Behaviour                                 | Reference          |
+| ----------------------------------------- | ------------------ |
+| Integer overflow                          | 8.1                |
+| `as` conversion, Python backend           | 2.7 (Deferred)     |
+| `parse` failure behaviour                 | 8.7                |
+| Async execution model                     | 8.2 (Experimental) |
+| `Err` concrete representation             | 8.5.2              |
+| `Result::is_ok`, `is_err`, `map_err`      | 8.5.5              |
+| `Option::ok_or`, `ok_or_else`             | 8.5.6              |
+| Box patterns                              | 8.3                |
+| Payload enum slices                       | 8.4                |
+| `usize` / `isize` boundary                | 2.4.5, 8.6         |
+| `HashMap::get_mut` Python-boundary result | 8.10.2             |
+| Numeric and index boundary errors         | 8.8                |
+| Non-exhaustive match diagnostic           | 8.9                |
 
 ### 7.2.6 Collections and platform-specific types
 
-| Type | Status | Reference |
-|---|---|---|
-| `HashMap` | Normative | 7.1, 7.4, 7.2.7 |
-| `BTreeMap` | Partial (M3-remaining) | 7.2.8, 10.27 |
-| `HashSet` | Partial (M3-remaining) | 7.2.8, 10.27 |
-| Async executor (`PyFuture`) | Platform-defined | 8.2.2–8.2.3 |
-| Payload enum exposure | Platform-defined (native: internal; Python: public) | 8.4.2 |
+| Type                        | Status                                              | Reference       |
+| --------------------------- | --------------------------------------------------- | --------------- |
+| `HashMap`                   | Normative                                           | 7.1, 7.4, 7.2.7 |
+| `BTreeMap`                  | Partial (M3-remaining)                              | 7.2.8, 10.27    |
+| `HashSet`                   | Partial (M3-remaining)                              | 7.2.8, 10.27    |
+| Async executor (`PyFuture`) | Platform-defined                                    | 8.2.2–8.2.3     |
+| Payload enum exposure       | Platform-defined (native: internal; Python: public) | 8.4.2           |
 
 `HashMap<K, V>` supports `K` in `{i64, String}` and `V` in `{i64, String, bool, f64, Vec<i64>, HashMap<K2, V2>}` where `K2`/`V2` are themselves in the supported sets (depth 1). `BTreeMap` and `HashSet` support the same core key/value constraints where applicable. Deeper nesting is Deferred. See 10.25.
 
 ### 7.2.7 `HashMap<K, V>` (collections)
 
-| Function | Status | Reference |
-|---|---|---|
-| `new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter` | Normative (N8) | 7.2.6, 8.10.1 |
-| `entry(k).or_insert(v)` | Normative (N8 minimal entry subset) | — |
-| `get_mut` | Platform-defined at the Python boundary | 8.10.2 |
-| `entry(k).or_insert_with(f)` | Partial (M3-remaining) | 10.27 |
-| `entry(k).and_modify(f)` | Partial (M3-remaining) | 10.27 |
-| `entry(k).or_insert_with_key(f)` | Partial (M3-remaining) | 10.27 |
+| Function                                                                                      | Status                                  | Reference     |
+| --------------------------------------------------------------------------------------------- | --------------------------------------- | ------------- |
+| `new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter` | Normative (N8)                          | 7.2.6, 8.10.1 |
+| `entry(k).or_insert(v)`                                                                       | Normative (N8 minimal entry subset)     | —             |
+| `get_mut`                                                                                     | Platform-defined at the Python boundary | 8.10.2        |
+| `entry(k).or_insert_with(f)`                                                                  | Partial (M3-remaining)                  | 10.27         |
+| `entry(k).and_modify(f)`                                                                      | Partial (M3-remaining)                  | 10.27         |
+| `entry(k).or_insert_with_key(f)`                                                              | Partial (M3-remaining)                  | 10.27         |
 
 ### 7.2.8 `BTreeMap<K, V>` and `HashSet<T>` (collections)
 
-| Function | Status | Reference |
-|---|---|---|
-| `BTreeMap::new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter`, `entry`, `get_mut` | Partial (M3-remaining) | 10.27 |
-| `HashSet::new`, `insert`, `contains`, `remove`, `len`, `is_empty`, `iter` | Partial (M3-remaining) | 10.27 |
+| Function                                                                                                                    | Status                 | Reference |
+| --------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------- |
+| `BTreeMap::new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter`, `entry`, `get_mut` | Partial (M3-remaining) | 10.27     |
+| `HashSet::new`, `insert`, `contains`, `remove`, `len`, `is_empty`, `iter`                                                   | Partial (M3-remaining) | 10.27     |
 
 ## 8. Platform Differences
 
@@ -484,8 +486,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 453 passed, 11 skipped, 7 deselected.
-- `pytest -q -m slow`: 7 passed, 464 deselected.
+- `pytest -q`: 469 passed, 9 skipped, 14 deselected.
+- `pytest -q -m slow`: 14 passed, 478 deselected.
 
 The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, and M3-remaining tests added in v0.3.1–v0.3.4 (including partial/skipped M3 cases).
 
@@ -499,81 +501,81 @@ The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M
 
 **12.2.1** **Partial** means at least one test exists and passes, but the criterion is not fully covered. The Note column MUST state what is missing. A criterion marked **Partial** with the note "Tests not yet recorded" means the test may exist but is not traceable to a named test in `NOTES.md` or `tests/`. Such a criterion MUST be reclassified as **Fail** if, on inspection, no such test exists.
 
-| Section | Criterion | Covers clause | Status | Note |
-|---|---|---|---|---|
-| 1 | Each Platform-defined feature has a test | 1.7 | Pass | Box pattern native rejection covered by `tests/test_native_n2a_patterns.py::test_pattern_box_native_rejected` |
-| 1 | No platform difference outside Section 8 | 1.6 | Pass | — |
-| 2 | Parity test per Normative type | 2.1–2.3 | Pass | — |
-| 2 | Negative-index and out-of-range tests | 2.4.2 | Pass | Python backend covered |
-| 2 | Native rejects `i64` index without conversion | 2.4.4 | Pass | `tests/test_n7_usize.py::test_native_i64_index_requires_explicit_cast` |
-| 2 | Every Deferred requirement in Section 10 | 2.5, 2.7 | Pass | 2.5 and 2.7 remain recorded as Deferred |
-| 2 | Range loop variable preserves the range element type | 2.4.14 | Pass | `tests/test_n7_usize.py::test_native_range_variable_inherits_usize_type`, `::test_python_range_variable_inherits_usize_type` |
-| 2 | Parser accepts `#[terminates]` | 2.8.1 | Pass | `tests/test_m10_termination.py::test_terminates_attribute_is_parsed_on_and_off` |
-| 2 | AST carries the termination flag | 2.8.1 | Pass | `tests/test_m10_termination.py::test_fn_decl_terminates_flag_is_preserved_in_ast` |
-| 2 | Checker accepts bounded `for` loops | 2.8.3 | Pass | `tests/test_m10_termination.py::test_python_terminating_patterns_execute`, `::test_native_terminating_patterns_execute` |
-| 2 | Checker accepts decreasing `while` variants | 2.8.3 | Pass | `tests/test_m10_termination.py::test_python_terminating_patterns_execute`, `::test_native_terminating_patterns_execute` |
-| 2 | Checker accepts decreasing recursion | 2.8.3 | Pass | `tests/test_m10_termination.py::test_python_terminating_patterns_execute`, `::test_native_terminating_patterns_execute` |
-| 2 | Checker rejects non-decreasing recursion | 2.8.4 | Pass | `tests/test_m10_termination.py::test_python_non_terminating_patterns_rejected`, `::test_native_non_terminating_patterns_rejected` |
-| 2 | Checker rejects increasing `while` variants | 2.8.4 | Pass | `tests/test_m10_termination.py::test_python_non_terminating_patterns_rejected`, `::test_native_non_terminating_patterns_rejected` |
-| 2 | Checker rejects `loop` without `break` | 2.8.4 | Pass | `tests/test_m10_termination.py::test_python_non_terminating_patterns_rejected`, `::test_native_non_terminating_patterns_rejected` |
-| 2 | Both backends produce the same termination error | 2.8.5 | Pass | `tests/test_m10_termination.py::test_termination_error_message_is_backend_identical` |
-| 2 | Unannotated functions are not checked | 2.8.2 | Pass | `tests/test_m10_termination.py::test_checker_ignores_unannotated_functions`, `::test_python_unannotated_recursion_compiles_without_running`, `::test_native_unannotated_recursion_compiles_without_running` |
-| 3 | Parity test per mutability rule | 3.1–3.3 | Pass | — |
-| 3 | Native code preserves declared mutability | 3.4 | Partial | No dedicated test name recorded in NOTES |
-| 4 | Numbered test per pattern form | 4.1 | Pass | N2a batches 1–5 |
-| 4 | Rejection tests with error class and location | 4.3, 4.6 | Pass | — |
-| 4 | Exhaustiveness-diagnostic test | 4.2 | Pass | Diagnostic text asserted in `tests/test_spec_conformance.py` |
-| 5 | Synchronous `?` parity test | 5.2 | Pass | — |
-| 5 | Async `?` documented | 5.3 | Pass | 8.5.3 |
-| 5 | Unsupported combinator in Section 10 | 5.7 | Pass | 10.6 |
-| 5 | Platform-defined test for each of `is_ok`, `is_err`, `map_err`, `ok_or`, `ok_or_else` | 5.8 | Pass | `tests/test_n9_result.py` contains a dedicated test per combinator and backend |
-| 6 | Native async free-function test | 6.4 | Pass | — |
-| 6 | Async embedding test | 6.4 | Pass | — |
-| 6 | Python async free-function test | 6.4.1 | Partial | Synchronous execution asserted indirectly |
-| 6 | Deferred items in Section 10 | 6.4, 6.5 | Pass | 10.7, 10.8 |
-| 7 | Function table with status markers | 7.2 | Pass | 7.2.1–7.2.7 |
-| 7 | No Platform-defined function lacks Section 10 entry | 7.3 | Pass | 10.13–10.18, 10.20 |
-| 7 | HashMap supported methods, type sets, and dictionary boundary | 7.2.6–7.2.7, 8.10.1 | Pass | `tests/test_n8_hashmap.py` |
-| 7 | HashMap `get_mut` reference at native Python boundary | 8.10.2 | Partial | Native returns an owned copy because the input map is passed by value; see 10.20 |
-| 8.1 | Native overflow test | 8.1.1 | Partial | Baseline restored; dedicated test not yet verified in this session |
-| 8.1 | Python arbitrary-precision test | 8.1.2 | Partial | Baseline restored; dedicated test not yet verified in this session |
-| 8.2 | Native async test | 8.2.2 | Pass | `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity` |
-| 8.2 | Cross-thread rejection test | 8.2.3 | Partial | `PyFuture` unsendable; explicit test name not recorded |
-| 8.3 | Python Box pattern test | 8.3.1 | Pass | — |
-| 8.3 | Native rejection test | 8.3.2 | Pass | `tests/test_native_n2a_patterns.py::test_pattern_box_native_rejected` (parametrized over five Box pattern forms) |
-| 8.4 | Python payload slice test | 8.4.1 | Pass | — |
-| 8.4 | Native limitation test | 8.4.2 | Pass | — |
-| 8.5 | Synchronous `?` parity test | 8.5.1 | Pass | — |
-| 8.5 | Async `?` documented | 8.5.3 | Pass | — |
-| 8.5 | Native `Result::and_then` and `Result::or_else` | 8.5.4 | Pass | `tests/test_n9_result.py::test_native_result_and_then_and_or_else` |
-| 8.5 | Platform-defined test for `Result::is_ok`, `is_err`, `map_err` | 8.5.5 | Pass | Dedicated Python and native tests in `tests/test_n9_result.py` |
-| 8.5 | Platform-defined test for `Option::ok_or`, `ok_or_else` | 8.5.6 | Pass | Dedicated Python and native tests in `tests/test_n9_result.py` |
-| 8.6 | `Vec::len()` parity test | 8.6.1 | Pass | `tests/test_n7_usize.py::test_python_explicit_len_cast_and_usize_return`, `::test_native_explicit_len_cast_and_usize_return` |
-| 8.6 | Range-validation tests | 8.6.2–8.6.3 | Pass | `tests/test_n7_usize.py::test_python_usize_cast_overflow_raises`, `::test_python_backend_target_width_is_instance_scoped` |
-| 8.7 | Native parse failure test | 8.7.1 | Pass | `tests/test_spec_conformance.py::test_native_invalid_literal_parse_fails_during_compile`, `::test_native_dynamic_parse_failure_remains_a_runtime_error` |
-| 8.7 | Python `ValueError` test | 8.7.2 | Pass | `tests/test_spec_conformance.py::test_python_invalid_literal_parse_raises_value_error`, `::test_python_dynamic_parse_failure_raises_value_error` |
-| 8.7 | Parity on successful parse | 8.7.3 | Pass | `tests/test_spec_conformance.py::test_parse_success_matches_both_backends` |
-| 8.8 | Native boundary tests | 8.8.1–8.8.4 | Pass | `tests/test_spec_conformance.py::test_native_boundary_errors_are_not_silent` |
-| 8.8 | Python boundary tests | 8.8.1–8.8.4 | Pass | `tests/test_spec_conformance.py::test_python_boundary_errors_are_not_silent` |
-| 8.8 | Parity that both raise | 8.8.1–8.8.4 | Pass | Both parametrized boundary tests in `tests/test_spec_conformance.py` |
-| 8.9 | Native non-exhaustive test | 8.9.2 | Pass | `tests/test_spec_conformance.py::test_native_non_exhaustive_known_match_is_compile_error` |
-| 8.9 | Python non-exhaustive test | 8.9.3 | Pass | `tests/test_spec_conformance.py::test_python_non_exhaustive_known_match_warns_and_raises` |
-| 9 | CLI exists | Acceptance criterion | Pass | `api/cli.py` |
-| 9 | Quick Start validated | 9.5 | Pass | — |
-| 9 | Examples directory exists | Acceptance criterion | Pass | — |
-| 9 | Test status matches Section 12 | Acceptance criterion | Pass | README and 12.1 both record the current test baseline |
-| 9 | Package installs via pip metadata and build artifacts | F1.1 | Pass | `pyproject.toml` declares package metadata and console script; `python -m build` produces wheel and sdist |
-| 9 | `polyglot run` executes a file | F1.2 | Pass | `tests/test_f1_cli.py::test_run_hello_exits_zero_and_prints_five` |
-| 9 | `polyglot build` produces an extension | F1.3 | Pass | `tests/test_f1_cli.py::test_build_hello_produces_extension` (skipped if cargo unavailable) |
-| 9 | `polyglot check` reports termination failures | F1.4 | Pass | `tests/test_f1_cli.py::test_check_terminates_example_exits_zero`, `::test_check_non_terminating_reports_error` |
-| 9 | Quick Start runs in under 10 minutes | F1.5 | Pass | README Quick Start uses `pip install`, a short `hello.poly`, and `polyglot run`; validated by CLI tests and examples |
-| 9 | `examples/` contains seven runnable files | F1.6 | Pass | `tests/test_f1_cli.py::test_examples_directory_contains_seven_runnable_files` |
-| M6 | `include!` splices items and runs in both backends | 9.2, 10.23 | Pass | `tests/test_m6_include.py::test_include_add_both_backends`, `::test_include_add_native_backend` |
-| M6 | Nested and relative-path includes resolve correctly | 9.2 | Pass | `tests/test_m6_include.py::test_nested_include`, `::test_include_path_relative_to_including_file` |
-| M6 | Cyclic/missing includes rejected with five-line diagnostics | 9.2, 10.23 | Pass | `tests/test_m6_include.py::test_cyclic_include_rejected`, `::test_missing_include_file` |
-| M7 | Stable error codes and span-aware diagnostics | 2.4.7, 9.3, 10.24 | Pass | `tests/test_m7_diagnostics.py::test_e001_boundary_error_has_code_and_span`, `::test_e002_termination_error_has_code_and_span`, `::test_e005_include_cycle_has_code_and_chain`, `::test_every_error_class_emits_code_exactly_once`, `::test_span_present_for_multi_token_expression` |
-| M4 | Additional integer types, `as` casts, and E001 boundaries | 2.5, 8.1, 10.26 | Partial | Python and selected native cases covered by `tests/test_m4_integers.py`; full cross-backend matrix/native parity validation not completed in this pass |
-| M3 | HashMap API completion, BTreeMap, HashSet, nested values, and `get_mut` semantics | 7.2.6–7.2.8, 10.25, 10.27 | Partial | Basic Python HashSet/BTreeMap covered by `tests/test_m3_collections.py`; extended entry methods, nested HashMap depth-1, BTreeMap/HashSet `get_mut` boundary semantics, and native parity are incomplete in this pass |
+| Section | Criterion                                                                             | Covers clause             | Status  | Note                                                                                                                                                                                                                                                                                |
+| ------- | ------------------------------------------------------------------------------------- | ------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1       | Each Platform-defined feature has a test                                              | 1.7                       | Pass    | Box pattern native rejection covered by `tests/test_native_n2a_patterns.py::test_pattern_box_native_rejected`                                                                                                                                                                       |
+| 1       | No platform difference outside Section 8                                              | 1.6                       | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 2       | Parity test per Normative type                                                        | 2.1–2.3                   | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 2       | Negative-index and out-of-range tests                                                 | 2.4.2                     | Pass    | Python backend covered                                                                                                                                                                                                                                                              |
+| 2       | Native rejects `i64` index without conversion                                         | 2.4.4                     | Pass    | `tests/test_n7_usize.py::test_native_i64_index_requires_explicit_cast`                                                                                                                                                                                                              |
+| 2       | Every Deferred requirement in Section 10                                              | 2.5, 2.7                  | Pass    | 2.5 and 2.7 remain recorded as Deferred                                                                                                                                                                                                                                             |
+| 2       | Range loop variable preserves the range element type                                  | 2.4.14                    | Pass    | `tests/test_n7_usize.py::test_native_range_variable_inherits_usize_type`, `::test_python_range_variable_inherits_usize_type`                                                                                                                                                        |
+| 2       | Parser accepts `#[terminates]`                                                        | 2.8.1                     | Pass    | `tests/test_m10_termination.py::test_terminates_attribute_is_parsed_on_and_off`                                                                                                                                                                                                     |
+| 2       | AST carries the termination flag                                                      | 2.8.1                     | Pass    | `tests/test_m10_termination.py::test_fn_decl_terminates_flag_is_preserved_in_ast`                                                                                                                                                                                                   |
+| 2       | Checker accepts bounded `for` loops                                                   | 2.8.3                     | Pass    | `tests/test_m10_termination.py::test_python_terminating_patterns_execute`, `::test_native_terminating_patterns_execute`                                                                                                                                                             |
+| 2       | Checker accepts decreasing `while` variants                                           | 2.8.3                     | Pass    | `tests/test_m10_termination.py::test_python_terminating_patterns_execute`, `::test_native_terminating_patterns_execute`                                                                                                                                                             |
+| 2       | Checker accepts decreasing recursion                                                  | 2.8.3                     | Pass    | `tests/test_m10_termination.py::test_python_terminating_patterns_execute`, `::test_native_terminating_patterns_execute`                                                                                                                                                             |
+| 2       | Checker rejects non-decreasing recursion                                              | 2.8.4                     | Pass    | `tests/test_m10_termination.py::test_python_non_terminating_patterns_rejected`, `::test_native_non_terminating_patterns_rejected`                                                                                                                                                   |
+| 2       | Checker rejects increasing `while` variants                                           | 2.8.4                     | Pass    | `tests/test_m10_termination.py::test_python_non_terminating_patterns_rejected`, `::test_native_non_terminating_patterns_rejected`                                                                                                                                                   |
+| 2       | Checker rejects `loop` without `break`                                                | 2.8.4                     | Pass    | `tests/test_m10_termination.py::test_python_non_terminating_patterns_rejected`, `::test_native_non_terminating_patterns_rejected`                                                                                                                                                   |
+| 2       | Both backends produce the same termination error                                      | 2.8.5                     | Pass    | `tests/test_m10_termination.py::test_termination_error_message_is_backend_identical`                                                                                                                                                                                                |
+| 2       | Unannotated functions are not checked                                                 | 2.8.2                     | Pass    | `tests/test_m10_termination.py::test_checker_ignores_unannotated_functions`, `::test_python_unannotated_recursion_compiles_without_running`, `::test_native_unannotated_recursion_compiles_without_running`                                                                         |
+| 3       | Parity test per mutability rule                                                       | 3.1–3.3                   | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 3       | Native code preserves declared mutability                                             | 3.4                       | Partial | No dedicated test name recorded in NOTES                                                                                                                                                                                                                                            |
+| 4       | Numbered test per pattern form                                                        | 4.1                       | Pass    | N2a batches 1–5                                                                                                                                                                                                                                                                     |
+| 4       | Rejection tests with error class and location                                         | 4.3, 4.6                  | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 4       | Exhaustiveness-diagnostic test                                                        | 4.2                       | Pass    | Diagnostic text asserted in `tests/test_spec_conformance.py`                                                                                                                                                                                                                        |
+| 5       | Synchronous `?` parity test                                                           | 5.2                       | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 5       | Async `?` documented                                                                  | 5.3                       | Pass    | 8.5.3                                                                                                                                                                                                                                                                               |
+| 5       | Unsupported combinator in Section 10                                                  | 5.7                       | Pass    | 10.6                                                                                                                                                                                                                                                                                |
+| 5       | Platform-defined test for each of `is_ok`, `is_err`, `map_err`, `ok_or`, `ok_or_else` | 5.8                       | Pass    | `tests/test_n9_result.py` contains a dedicated test per combinator and backend                                                                                                                                                                                                      |
+| 6       | Native async free-function test                                                       | 6.4                       | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 6       | Async embedding test                                                                  | 6.4                       | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 6       | Python async free-function test                                                       | 6.4.1                     | Partial | Synchronous execution asserted indirectly                                                                                                                                                                                                                                           |
+| 6       | Deferred items in Section 10                                                          | 6.4, 6.5                  | Pass    | 10.7, 10.8                                                                                                                                                                                                                                                                          |
+| 7       | Function table with status markers                                                    | 7.2                       | Pass    | 7.2.1–7.2.7                                                                                                                                                                                                                                                                         |
+| 7       | No Platform-defined function lacks Section 10 entry                                   | 7.3                       | Pass    | 10.13–10.18, 10.20                                                                                                                                                                                                                                                                  |
+| 7       | HashMap supported methods, type sets, and dictionary boundary                         | 7.2.6–7.2.7, 8.10.1       | Pass    | `tests/test_n8_hashmap.py`                                                                                                                                                                                                                                                          |
+| 7       | HashMap `get_mut` reference at native Python boundary                                 | 8.10.2                    | Partial | Native returns an owned copy because the input map is passed by value; see 10.20                                                                                                                                                                                                    |
+| 8.1     | Native overflow test                                                                  | 8.1.1                     | Partial | Baseline restored; dedicated test not yet verified in this session                                                                                                                                                                                                                  |
+| 8.1     | Python arbitrary-precision test                                                       | 8.1.2                     | Partial | Baseline restored; dedicated test not yet verified in this session                                                                                                                                                                                                                  |
+| 8.2     | Native async test                                                                     | 8.2.2                     | Pass    | `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity`                                                                                                                                                                                                    |
+| 8.2     | Cross-thread rejection test                                                           | 8.2.3                     | Partial | `PyFuture` unsendable; explicit test name not recorded                                                                                                                                                                                                                              |
+| 8.3     | Python Box pattern test                                                               | 8.3.1                     | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 8.3     | Native rejection test                                                                 | 8.3.2                     | Pass    | `tests/test_native_n2a_patterns.py::test_pattern_box_native_rejected` (parametrized over five Box pattern forms)                                                                                                                                                                    |
+| 8.4     | Python payload slice test                                                             | 8.4.1                     | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 8.4     | Native limitation test                                                                | 8.4.2                     | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 8.5     | Synchronous `?` parity test                                                           | 8.5.1                     | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 8.5     | Async `?` documented                                                                  | 8.5.3                     | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 8.5     | Native `Result::and_then` and `Result::or_else`                                       | 8.5.4                     | Pass    | `tests/test_n9_result.py::test_native_result_and_then_and_or_else`                                                                                                                                                                                                                  |
+| 8.5     | Platform-defined test for `Result::is_ok`, `is_err`, `map_err`                        | 8.5.5                     | Pass    | Dedicated Python and native tests in `tests/test_n9_result.py`                                                                                                                                                                                                                      |
+| 8.5     | Platform-defined test for `Option::ok_or`, `ok_or_else`                               | 8.5.6                     | Pass    | Dedicated Python and native tests in `tests/test_n9_result.py`                                                                                                                                                                                                                      |
+| 8.6     | `Vec::len()` parity test                                                              | 8.6.1                     | Pass    | `tests/test_n7_usize.py::test_python_explicit_len_cast_and_usize_return`, `::test_native_explicit_len_cast_and_usize_return`                                                                                                                                                        |
+| 8.6     | Range-validation tests                                                                | 8.6.2–8.6.3               | Pass    | `tests/test_n7_usize.py::test_python_usize_cast_overflow_raises`, `::test_python_backend_target_width_is_instance_scoped`                                                                                                                                                           |
+| 8.7     | Native parse failure test                                                             | 8.7.1                     | Pass    | `tests/test_spec_conformance.py::test_native_invalid_literal_parse_fails_during_compile`, `::test_native_dynamic_parse_failure_remains_a_runtime_error`                                                                                                                             |
+| 8.7     | Python `ValueError` test                                                              | 8.7.2                     | Pass    | `tests/test_spec_conformance.py::test_python_invalid_literal_parse_raises_value_error`, `::test_python_dynamic_parse_failure_raises_value_error`                                                                                                                                    |
+| 8.7     | Parity on successful parse                                                            | 8.7.3                     | Pass    | `tests/test_spec_conformance.py::test_parse_success_matches_both_backends`                                                                                                                                                                                                          |
+| 8.8     | Native boundary tests                                                                 | 8.8.1–8.8.4               | Pass    | `tests/test_spec_conformance.py::test_native_boundary_errors_are_not_silent`                                                                                                                                                                                                        |
+| 8.8     | Python boundary tests                                                                 | 8.8.1–8.8.4               | Pass    | `tests/test_spec_conformance.py::test_python_boundary_errors_are_not_silent`                                                                                                                                                                                                        |
+| 8.8     | Parity that both raise                                                                | 8.8.1–8.8.4               | Pass    | Both parametrized boundary tests in `tests/test_spec_conformance.py`                                                                                                                                                                                                                |
+| 8.9     | Native non-exhaustive test                                                            | 8.9.2                     | Pass    | `tests/test_spec_conformance.py::test_native_non_exhaustive_known_match_is_compile_error`                                                                                                                                                                                           |
+| 8.9     | Python non-exhaustive test                                                            | 8.9.3                     | Pass    | `tests/test_spec_conformance.py::test_python_non_exhaustive_known_match_warns_and_raises`                                                                                                                                                                                           |
+| 9       | CLI exists                                                                            | Acceptance criterion      | Pass    | `api/cli.py`                                                                                                                                                                                                                                                                        |
+| 9       | Quick Start validated                                                                 | 9.5                       | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 9       | Examples directory exists                                                             | Acceptance criterion      | Pass    | —                                                                                                                                                                                                                                                                                   |
+| 9       | Test status matches Section 12                                                        | Acceptance criterion      | Pass    | README and 12.1 both record the current test baseline                                                                                                                                                                                                                               |
+| 9       | Package installs via pip metadata and build artifacts                                 | F1.1                      | Pass    | `pyproject.toml` declares package metadata and console script; `python -m build` produces wheel and sdist                                                                                                                                                                           |
+| 9       | `polyglot run` executes a file                                                        | F1.2                      | Pass    | `tests/test_f1_cli.py::test_run_hello_exits_zero_and_prints_five`                                                                                                                                                                                                                   |
+| 9       | `polyglot build` produces an extension                                                | F1.3                      | Pass    | `tests/test_f1_cli.py::test_build_hello_produces_extension` (skipped if cargo unavailable)                                                                                                                                                                                          |
+| 9       | `polyglot check` reports termination failures                                         | F1.4                      | Pass    | `tests/test_f1_cli.py::test_check_terminates_example_exits_zero`, `::test_check_non_terminating_reports_error`                                                                                                                                                                      |
+| 9       | Quick Start runs in under 10 minutes                                                  | F1.5                      | Pass    | README Quick Start uses `pip install`, a short `hello.poly`, and `polyglot run`; validated by CLI tests and examples                                                                                                                                                                |
+| 9       | `examples/` contains seven runnable files                                             | F1.6                      | Pass    | `tests/test_f1_cli.py::test_examples_directory_contains_seven_runnable_files`                                                                                                                                                                                                       |
+| M6      | `include!` splices items and runs in both backends                                    | 9.2, 10.23                | Pass    | `tests/test_m6_include.py::test_include_add_both_backends`, `::test_include_add_native_backend`                                                                                                                                                                                     |
+| M6      | Nested and relative-path includes resolve correctly                                   | 9.2                       | Pass    | `tests/test_m6_include.py::test_nested_include`, `::test_include_path_relative_to_including_file`                                                                                                                                                                                   |
+| M6      | Cyclic/missing includes rejected with five-line diagnostics                           | 9.2, 10.23                | Pass    | `tests/test_m6_include.py::test_cyclic_include_rejected`, `::test_missing_include_file`                                                                                                                                                                                             |
+| M7      | Stable error codes and span-aware diagnostics                                         | 2.4.7, 9.3, 10.24         | Pass    | `tests/test_m7_diagnostics.py::test_e001_boundary_error_has_code_and_span`, `::test_e002_termination_error_has_code_and_span`, `::test_e005_include_cycle_has_code_and_chain`, `::test_every_error_class_emits_code_exactly_once`, `::test_span_present_for_multi_token_expression` |
+| M4      | Additional integer types, `as` casts, and E001 boundaries                             | 2.5, 8.1, 10.26           | Partial | Python and selected native cases covered by `tests/test_m4_integers.py`; full cross-backend matrix/native parity validation not completed in this pass                                                                                                                              |
+| M3      | HashMap API completion, BTreeMap, HashSet, nested values, and `get_mut` semantics     | 7.2.6–7.2.8, 10.25, 10.27 | Partial | Basic Python HashSet/BTreeMap covered by `tests/test_m3_collections.py`; extended entry methods, nested HashMap depth-1, BTreeMap/HashSet `get_mut` boundary semantics, and native parity are incomplete in this pass                                                               |
 
 ### 12.3 Outstanding items that block a v0.3.0 conformance claim
 
@@ -584,12 +586,12 @@ No item blocks a v0.3.0 conformance claim, provided that:
 
 ### 12.3.1 Accepted Partial items for v0.3.0
 
-| Partial item | Justification |
-|---|---|
-| 3.4 mutability preservation test | Behaviour exists; only the test name is missing from NOTES |
-| 6.4.1 Python async synchronous execution | Behaviour is backend-specific per 11.3.1; not a parity gap |
-| 8.1 overflow tests | Baseline restored; dedicated verification is next milestone scope |
-| 8.2 cross-thread rejection test | `PyFuture` unsendable is documented; explicit test is next milestone scope |
+| Partial item                                        | Justification                                                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 3.4 mutability preservation test                    | Behaviour exists; only the test name is missing from NOTES                                                                     |
+| 6.4.1 Python async synchronous execution            | Behaviour is backend-specific per 11.3.1; not a parity gap                                                                     |
+| 8.1 overflow tests                                  | Baseline restored; dedicated verification is next milestone scope                                                              |
+| 8.2 cross-thread rejection test                     | `PyFuture` unsendable is documented; explicit test is next milestone scope                                                     |
 | 8.10.2 native `HashMap::get_mut` boundary reference | The by-value native map cannot safely return a mutable reference; the documented platform behaviour returns a copy. See 10.20. |
 
 Each item above is either (a) covered by a Deferred clause, (b) a test-recording gap rather than a behaviour gap, or (c) explicitly assigned to next milestone in the roadmap.

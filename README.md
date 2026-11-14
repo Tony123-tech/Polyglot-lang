@@ -82,7 +82,7 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | M10 | Done | Opt-in termination checking for `#[terminates]` functions |
 | F1 | Done | Installable package, CLI, examples, and delivery documentation |
 
-**Current test status:** 469 passed, 9 skipped, 7 deselected (`pytest -q`); 7 passed, 464 deselected (`pytest -q -m slow`).
+**Current test status:** 469 passed, 9 skipped, 14 deselected (`pytest -q`); 14 passed, 478 deselected (`pytest -q -m slow`).
 
 ## Support matrix
 
