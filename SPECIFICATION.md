@@ -491,8 +491,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 469 passed, 9 skipped, 15 deselected.
-- `pytest -q -m slow`: 15 passed, 478 deselected.
+- `pytest -q`: 469 passed, 9 skipped, 16 deselected.
+- `pytest -q -m slow`: 16 passed, 478 deselected.
 
 The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, and M3-remaining tests added in v0.3.1–v0.3.4 (including partial/skipped M3 cases).
 
