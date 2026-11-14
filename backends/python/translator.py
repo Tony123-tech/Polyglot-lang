@@ -257,8 +257,6 @@ TYPE_MAP: dict[str, str] = {
 
 # Bit width and signedness for Rust integer primitives. Pointer-width casts
 # use the selected target width via the runtime helpers below.
-# Bit width and signedness for Rust integer primitives. Pointer-width casts
-# use the selected target width via the runtime helpers below.
 _INT_TYPE_BITS: dict[str, tuple[int, bool]] = {
     "i8": (8, True),
     "i16": (16, True),
@@ -2840,6 +2838,16 @@ class Translator:
         if isinstance(e, Call):
             if (
                 isinstance(e.func, Path)
+                and e.func.segments == ["String", "from"]
+                and len(e.args) == 1
+            ):
+                return ast.Call(
+                    func=ast.Name(id="str", ctx=ast.Load()),
+                    args=[self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if (
+                isinstance(e.func, Path)
                 and e.func.segments == ["HashMap", "new"]
                 and not e.args
             ):
@@ -3956,6 +3964,25 @@ class Translator:
     # ---- macros ------------------------------------------------------------
 
     def _translate_macro(self, m: MacroCall) -> ast.expr:
+        if m.path == "vec":
+            if isinstance(m.args, str):
+                from lexer import lex as _lex, TokenType
+                from parser import Parser as _Parser
+                tokens = _lex(m.args)
+                parser = _Parser(tokens)
+                elems = []
+                while not parser.at_end():
+                    elems.append(parser.parse_expr())
+                    if not parser.eat(TokenType.COMMA):
+                        break
+                return ast.List(
+                    elts=[self.translate_expr(x) for x in elems],
+                    ctx=ast.Load(),
+                )
+            return ast.List(
+                elts=[self.translate_expr(a) for a in m.args],
+                ctx=ast.Load(),
+            )
         target = MACRO_MAP.get(m.path)
         if target is None:
             raise TranslateError(
