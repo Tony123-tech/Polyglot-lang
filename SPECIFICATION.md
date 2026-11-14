@@ -59,7 +59,10 @@ A requirement is marked Normative when it applies to both backends without platf
 - **2.8** Termination checking is opt-in through `#[terminates]`.
   - **2.8.1** A function annotated `#[terminates]` MUST be proven to terminate. Compilation MUST fail if the proof fails.
   - **2.8.2** Functions without `#[terminates]` are not checked.
-  - **2.8.3** The checker MUST accept bounded `for` loops, `while` loops with a strictly decreasing variant that has a lower bound, and recursive calls that strictly decrease at least one argument.
+  - **2.8.3** The checker MUST accept bounded `for` loops, `while` loops with
+  a strictly decreasing variant that has a lower bound, and a **single**
+  recursive call that strictly decreases at least one argument. Multiple
+  recursive calls are Deferred per 10.22.
   - **2.8.4** The checker is sound but incomplete. It MUST NOT accept a non-terminating function annotated `#[terminates]`.
   - **2.8.5** Termination failure MUST use the five-item format of 2.4.7, adapted as in the termination error format.
 
@@ -181,6 +184,7 @@ A requirement is marked Normative when it applies to both backends without platf
 | `rotate_left`, `rotate_right`, `fill`, `swap` | Normative | out-of-range behaviour per 8.8       |
 | `extend_from_slice`, `resize`, `split_off`    | Normative | —                                    |
 | `partition`, `sort_by_key`, `is_sorted`       | Normative | —                                    |
+| `vec![...]` macro | **Unsupported** | parsed, not lowered; use `[...].to_vec()` |
 
 ### 7.2.2 `String` (core)
 
@@ -201,6 +205,7 @@ A requirement is marked Normative when it applies to both backends without platf
 | `lines`, `split_whitespace`                                                | Normative                                     | —                                |
 | `as_bytes`, `is_char_boundary`, `to_ascii_lowercase`, `to_ascii_uppercase` | Normative                                     | —                                |
 | `rfind`, `strip_prefix`, `strip_suffix`, `split_once`, `rsplit_once`       | Normative                                     | —                                |
+| `String::from(...)` | **Unsupported** | not lowered; use `"...".to_string()` |
 
 ### 7.2.3 `Option<T>` (core)
 
@@ -486,8 +491,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 469 passed, 9 skipped, 14 deselected.
-- `pytest -q -m slow`: 14 passed, 478 deselected.
+- `pytest -q`: 469 passed, 9 skipped, 15 deselected.
+- `pytest -q -m slow`: 15 passed, 478 deselected.
 
 The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, and M3-remaining tests added in v0.3.1–v0.3.4 (including partial/skipped M3 cases).
 
@@ -595,3 +600,7 @@ No item blocks a v0.3.0 conformance claim, provided that:
 | 8.10.2 native `HashMap::get_mut` boundary reference | The by-value native map cannot safely return a mutable reference; the documented platform behaviour returns a copy. See 10.20. |
 
 Each item above is either (a) covered by a Deferred clause, (b) a test-recording gap rather than a behaviour gap, or (c) explicitly assigned to next milestone in the roadmap.
+- **10.28** `String::from(...)` is parsed but not lowered by either backend;
+  use `"...".to_string()` instead. See 7.2.2.
+- **10.29** The `vec![...]` macro expression is parsed as a token stream but
+  not lowered by either backend; use `[...].to_vec()` instead. See 7.2.1.

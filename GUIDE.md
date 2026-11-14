@@ -138,14 +138,14 @@ Use `0..=5` for an inclusive range.
 
 ```polyglot
 fn main() -> i64 {
-    let mut xs = vec![1, 2, 3];
+    let mut xs = [1, 2, 3].to_vec();
     xs.push(4);
     xs.pop();
     xs.len() as i64
 }
 ```
 
-`vec![1, 2, 3]` creates a list. `xs.push(4)` appends. `xs.pop()`
+`[1, 2, 3].to_vec()` creates a list. `xs.push(4)` appends. `xs.pop()`
 removes the last element. `xs.len()` returns a `usize`, so you need
 `as i64` to return it as an `i64`.
 
@@ -171,13 +171,13 @@ error message tells you exactly what to do.
 
 ```polyglot
 fn main() -> i64 {
-    let s = String::from("hello, world");
+    let s = "hello, world".to_string();
     let parts = s.split(", ");
     parts.len() as i64
 }
 ```
 
-`String::from("...")` and `"...".to_string()` both create strings.
+`"...".to_string()` creates a string. (`String::from("...")` is parsed but not yet lowered; see SPEC 10.28.)
 `split`, `join`, `replace`, `trim`, and `contains` work like Python
 strings, but they return Polyglot types (`Vec<String>`, `Option<usize>`).
 
@@ -198,7 +198,7 @@ fn find_even(xs: Vec<i64>) -> Option<i64> {
 }
 
 fn main() -> i64 {
-    match find_even(vec![1, 3, 4, 5]) {
+    match find_even([1, 3, 4, 5].to_vec()) {
         Some(x) => x,
         None => -1,
     }
@@ -217,7 +217,7 @@ fn parse_number(s: String) -> Result<i64, String> {
 }
 
 fn main() -> i64 {
-    match parse_number(String::from("42")) {
+    match parse_number("42".to_string()) {
         Ok(n) => n,
         Err(_) => -1,
     }
@@ -231,7 +231,7 @@ propagates an `Err` to the caller.
 
 ```polyglot
 fn main() -> i64 {
-    if let Some(x) = find_even(vec![1, 3, 4]) {
+    if let Some(x) = find_even([1, 3, 4].to_vec()) {
         x
     } else {
         -1
@@ -240,6 +240,10 @@ fn main() -> i64 {
 ```
 
 `if let` is shorter than `match` when you only care about one variant.
+
+Note: `if let` works as the final expression of a block, but not inside a
+`let` binding. Use `match` if you need an `if let` expression in the middle
+of another expression.
 
 ## 8. When to use the native backend
 

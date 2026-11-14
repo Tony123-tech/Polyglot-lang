@@ -84,7 +84,7 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | M10 | Done | Opt-in termination checking for `#[terminates]` functions |
 | F1 | Done | Installable package, CLI, examples, and delivery documentation |
 
-**Current test status:** 469 passed, 9 skipped, 14 deselected (`pytest -q`); 14 passed, 478 deselected (`pytest -q -m slow`).
+**Current test status:** 469 passed, 9 skipped, 15 deselected (`pytest -q`); 15 passed, 478 deselected (`pytest -q -m slow`).
 
 ## Support matrix
 
@@ -92,9 +92,9 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 |---|---|---|
 | Vec, String, Option, Result | ✅ | ✅ |
 | HashMap (core ops) | ✅ | ✅ |
-| BTreeMap | ✅ | ⬜ Deferred |
-| HashSet | ✅ | ⬜ Deferred |
-| Nested HashMap (depth 1) | ✅ | ⬜ Deferred |
+| BTreeMap | 🟡 Partial | ⬜ Deferred |
+| HashSet | 🟡 Partial | ⬜ Deferred |
+| Nested HashMap (depth 1) | 🟡 Partial | ⬜ Deferred |
 | Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, isize, usize) | ✅ | ✅ |
 | `include!` directive | ✅ | ✅ |
 | Error codes (E001–E008) | ✅ | ✅ |
@@ -102,6 +102,11 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | async free functions | ✅ (synchronous) | ✅ |
 | Box patterns | ✅ | ⬜ Deferred |
 | Payload enum slices | ✅ | ⬜ Deferred |
+
+🟡 Partial = basic operations only (`new`, `insert`, `get`, `remove`,
+`contains_key`, `len`, `is_empty`, `keys`, `values`, `iter`). Extended
+entry methods, nested HashMap depth-1 round trips, and `get_mut` boundary
+semantics are incomplete. See SPEC 7.2.8, 10.25, 10.27.
 
 ## Features
 
@@ -244,12 +249,23 @@ Diagnostics include a stable error code. The table below maps each code to its c
 - Box patterns, enum payload slices, and nested Vec slice patterns are Python-only.
 - Async is not supported on impl methods.
 - `PyFuture` is unsendable and can only be used on the thread that created it.
-- Option `map` is intentionally unsupported because it collides with Vec `map` in codegen; both backends reject it with a clear error. Use `match` or `if let` instead.
+- Option `map` is intentionally unsupported because method dispatch is not
+  yet fully type-aware; `Vec::map` and `Option::map` collide at the call
+  site. `Vec::filter` and `Option::filter` are currently distinguished by a
+  receiver-type check, which is not sufficient for `map`. Both backends
+  reject it with a clear error. Use `match` or `if let` instead. See SPEC 5.7.
 - `HashMap` supports only the implemented entry subset (`or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`); other entry combinators are not yet lowered.
 - `vec![...]` macro syntax is parsed as a token stream and is not lowered; use `[...].to_vec()` instead.
 - `String::from(...)` is not lowered; use `"...".to_string()` instead.
-- The `#[terminates]` checker accepts only single recursive calls that decrease one argument; a function with two recursive calls (e.g. classic `fib(n-1) + fib(n-2)`) is rejected even though it terminates.
-- `if let` is supported as a statement, not as an expression. Use `match` when an expression is required.
+- The `#[terminates]` checker accepts a **single** recursive call that
+  strictly decreases one argument. Multiple recursive calls (e.g. classic
+  `fib(n-1) + fib(n-2)`) are deferred and therefore rejected even though
+  they terminate. Mutual recursion, loops with `break`, complex arithmetic,
+  non-recursive calls, and async suspension are also deferred. See SPEC 10.22.
+- `if let` is supported as a statement and as the final expression of a
+  block (e.g. the tail of `main()`), but not as a sub-expression inside a
+  `let` binding or a function argument. Use `match` when an `if let`
+  expression is required inside another expression.
 - `BTreeMap` and `HashSet` are available in the Python backend only. Native support is deferred. See SPEC 10.27.
 - Nested `HashMap` (`HashMap<K, HashMap<K2, V2>>`) is supported in the Python backend only. Native support is deferred. See SPEC 10.25.
 - `get_mut` on `BTreeMap` and `HashSet` follows the same Python-boundary copy semantics as `HashMap` (Python: mutable view; native: deferred). See SPEC 8.10.2.

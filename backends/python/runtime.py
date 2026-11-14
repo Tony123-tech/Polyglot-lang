@@ -399,3 +399,11 @@ def hashset_is_empty(s):
 
 def hashset_iter(s):
     return list(s)
+
+def _iflet_match(opt, then_fn, else_fn):
+    # Duck typing: accept any Option-like object with is_some()/unwrap().
+    # translator.py and runtime.py each define their own _Option class,
+    # so isinstance against either one would miss the other.
+    if hasattr(opt, "is_some") and hasattr(opt, "unwrap") and opt.is_some():
+        return then_fn(opt.unwrap())
+    return else_fn()

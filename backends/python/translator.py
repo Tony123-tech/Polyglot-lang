@@ -134,6 +134,7 @@ from ast_nodes import (
 from backends.base import BackendBase
 from backends.errors import TranslateError
 from backends.python.runtime import (
+    _iflet_match,
     HOST_TARGET_WIDTH,
     btreemap_contains,
     btreemap_entry,
@@ -1165,6 +1166,7 @@ class Translator:
         ns["_rust_len"] = _runtime_rust_len
         ns["_rust_slice"] = _runtime_rust_slice
         ns["_Option"] = _Option
+        ns["_iflet_match"] = _iflet_match
         ns["_Result"] = _Result
         ns["_ResultErrSentinel"] = _ResultErrSentinel
         ns["_PythonEnumVariant"] = _PythonEnumVariant
@@ -1922,6 +1924,54 @@ class Translator:
         elif isinstance(ifx.else_branch, IfExpr):
             orelse = [self.translate_if_stmt(ifx.else_branch)]
         return ast.If(test=test, body=body, orelse=orelse)
+
+    def _translate_iflet_expr(self, ifx: IfLet) -> ast.expr:
+        if not (
+            isinstance(ifx.pattern, PatEnum)
+            and ifx.pattern.path.split("::")[-1] == "Some"
+            and len(ifx.pattern.args) == 1
+            and isinstance(ifx.pattern.args[0], PatIdent)
+        ):
+            raise TranslateError(
+                "if-let expression currently supports `Some(binding)` only",
+                ifx.pattern.line, ifx.pattern.col,
+            )
+        binding = ifx.pattern.args[0]
+        if ifx.then_block.tail is None or ifx.then_block.stmts:
+            raise TranslateError(
+                "if-let expression requires a single tail expression in the then-branch",
+                ifx.then_block.line, ifx.then_block.col,
+            )
+        if isinstance(ifx.else_branch, Block) and (
+            ifx.else_branch.tail is None or ifx.else_branch.stmts
+        ):
+            raise TranslateError(
+                "if-let expression requires a single tail expression in the else-branch",
+                ifx.else_branch.line, ifx.else_branch.col,
+            )
+        then_expr = self.translate_expr(ifx.then_block.tail)
+        else_expr = self._translate_else_expr(ifx.else_branch)
+        return ast.Call(
+            func=ast.Name(id="_iflet_match", ctx=ast.Load()),
+            args=[
+                self.translate_expr(ifx.value),
+                ast.Lambda(
+                    args=ast.arguments(
+                        posonlyargs=[], args=[ast.arg(arg=binding.name)],
+                        kwonlyargs=[], kw_defaults=[], defaults=[],
+                    ),
+                    body=then_expr,
+                ),
+                ast.Lambda(
+                    args=ast.arguments(
+                        posonlyargs=[], args=[],
+                        kwonlyargs=[], kw_defaults=[], defaults=[],
+                    ),
+                    body=else_expr,
+                ),
+            ],
+            keywords=[],
+        )
 
     def translate_if_let_stmt(self, ifx: IfLet) -> list[ast.stmt]:
         temp_name = f"_polyglot_if_let_{self._temp_counter}"
@@ -3525,7 +3575,17 @@ class Translator:
             )
         if isinstance(e, StructLiteral):
             return self._translate_struct_literal(e)
+        if isinstance(e, IfLet):
+            return self._translate_iflet_expr(e)
         if isinstance(e, IfExpr):
+            if e.then_block.stmts or (
+                isinstance(e.else_branch, Block) and e.else_branch.stmts
+            ):
+                raise TranslateError(
+                    "if-expression body must be a single expression; "
+                    "use an if-statement instead",
+                    e.line, e.col,
+                )
             return ast.IfExp(
                 test=self.translate_expr(e.cond),
                 body=self.translate_expr(e.then_block.tail)

@@ -177,6 +177,7 @@ class Parser:
         self.tokens = tokens
         self.i = 0
         self._parsing_for_iter = False
+        self._parsing_iflet_value = False
 
     # ---- token helpers -----------------------------------------------------
 
@@ -858,15 +859,39 @@ class Parser:
                 continue
 
             e = self.parse_expr()
-            if self.eat(TokenType.SEMI) or isinstance(e, IfLet):
+            if self.eat(TokenType.SEMI):
                 stmts.append(ExprStmt(e.line, e.col, e))
-            elif self.check(TokenType.RBRACE):
+            elif isinstance(e, IfLet) and not self._iflet_has_tail(e):
+                stmts.append(ExprStmt(e.line, e.col, e))
+            elif self.check(TokenType.RBRACE) and not isinstance(e, (For, While, Loop)) and not self._ifexpr_has_stmts(e):
                 tail = e
                 break
             else:
                 stmts.append(ExprStmt(e.line, e.col, e))
         self.expect(TokenType.RBRACE)
         return Block(tok.line, tok.col, stmts, tail)
+
+
+    def _iflet_has_tail(self, e) -> bool:
+        if not isinstance(e, IfLet):
+            return False
+        if e.then_block.tail is not None:
+            return True
+        if isinstance(e.else_branch, Block) and e.else_branch.tail is not None:
+            return True
+        return False
+
+    def _ifexpr_has_stmts(self, e) -> bool:
+        if not isinstance(e, IfExpr):
+            return False
+        if e.then_block.stmts:
+            return True
+        if e.else_branch is not None:
+            if isinstance(e.else_branch, Block) and e.else_branch.stmts:
+                return True
+            if isinstance(e.else_branch, IfExpr) and self._ifexpr_has_stmts(e.else_branch):
+                return True
+        return False
 
     def parse_let(self) -> LetStmt:
         tok = self.expect(TokenType.LET)
@@ -888,6 +913,12 @@ class Parser:
 
         while True:
             tok = self.peek()
+
+            # Statement-only nodes (For/While/Loop) cannot be a binary operand.
+            if isinstance(left, (For, While, Loop)) and tok.type not in (
+                TokenType.SEMI, TokenType.RBRACE,
+            ):
+                break
 
             # Assignment (right-associative, lowest precedence)
             if tok.type in (
@@ -1260,6 +1291,8 @@ class Parser:
         raise AssertionError("unreachable")
 
     def _looks_like_struct_literal(self) -> bool:
+        if self._parsing_iflet_value:
+            return False
         if not self.check(TokenType.LBRACE):
             return False
         nxt = self.peek(1)
@@ -1316,7 +1349,12 @@ class Parser:
         if self.eat(TokenType.LET):
             pattern = self.parse_pattern()
             self.expect(TokenType.EQ)
-            value = self.parse_expr()
+            was_iflet = self._parsing_iflet_value
+            self._parsing_iflet_value = True
+            try:
+                value = self.parse_expr()
+            finally:
+                self._parsing_iflet_value = was_iflet
             then_block = self.parse_block()
             else_branch: Expr | Block | IfExpr | IfLet | None = None
             if self.eat(TokenType.ELSE):

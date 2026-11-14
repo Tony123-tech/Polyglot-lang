@@ -2,6 +2,30 @@
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
+## Doc sync — `if let` expression-position limit
+
+> **Note (superseded):** This entry records an earlier README wording
+> fix. The subsequent "Parser/translator/codegen — `if let` as a tail
+> expression" entry changed the behavior: `if let` is now supported as a
+> tail expression in both backends, not just documented as such.
+
+**Symptom:** README said "`if let` is supported as a statement, not as an
+expression", but `if let` works as the tail expression of `main()` in both
+backends. The GUIDE.md example uses exactly this form.
+
+**Cause:** The parser supports `if let` only at the final expression
+position of a block. It rejects `if let` as a sub-expression inside a
+`let` binding or a function argument. README's wording conflated these two
+"expression positions".
+
+**Fix:** README now says "supported as a statement and as the final
+expression of a block, but not as a sub-expression inside a `let` binding
+or a function argument". GUIDE adds a three-line note after the example.
+
+**Lesson:** "Expression position" is not a single concept. Parser support
+must be described by concrete syntactic contexts (statement / tail
+expression / sub-expression), not by a statement-vs-expression dichotomy.
+
 ## N1 complete
 
 Support for free functions, primitive types, vectors, structs with `impl`, and conditional expressions and statements was added in N1.
@@ -904,18 +928,18 @@ Tests: `tests/test_python_module_isolation.py` and the `line_map_nodes` case in 
 
 Each README limitation is pinned by a test or has an explicit out-of-scope rationale:
 
-| Limitation | Coverage |
-|---|---|
-| Result `is_ok`/`is_err`/`map_err`/`ok_or`/`and_then`/`or_else` are Python-only in let-bindings | `tests/test_native_n5.py` predicate/conversion tests; `tests/test_known_limitations.py::test_result_combinators_and_conversions_are_python_only` |
-| `while let Some(x) = iter.next()` | `tests/test_known_limitations.py::test_while_let_next_is_a_parse_error` |
-| Box patterns, enum payload slices, nested Vec slice patterns | Python behavior in `tests/test_known_limitations.py`; native lowering remains out of scope because Rust slice patterns do not apply directly to `Vec`/enum payloads |
-| Async impl methods | `tests/test_known_limitations.py::test_async_impl_method_runs_in_python` and `::test_async_impl_method_native_codegen_is_sync_only` |
-| `PyFuture` is unsendable | `tests/test_known_limitations.py::test_pyfuture_runtime_is_marked_unsendable` |
-| Option `map` collides with Vec `map` | `tests/test_known_limitations.py` rejection tests for both backends plus `test_vec_map_still_lowers` |
-| HashMap entry subset | `tests/test_native_n7_map.py` entry tests |
-| HashMap views allocate and have unspecified order | `tests/test_native_n7_map.py` sorts view results where order is observable |
-| HashMap dispatch requires a known type | `tests/test_native_n7_map.py` receiver tests; unknown receivers remain generic by design |
-| `get_mut`/entry mutation requires an explicit dereference | `tests/test_native_n7_map.py` rejection tests |
+| Limitation                                                                                     | Coverage                                                                                                                                                            |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Result `is_ok`/`is_err`/`map_err`/`ok_or`/`and_then`/`or_else` are Python-only in let-bindings | `tests/test_native_n5.py` predicate/conversion tests; `tests/test_known_limitations.py::test_result_combinators_and_conversions_are_python_only`                    |
+| `while let Some(x) = iter.next()`                                                              | `tests/test_known_limitations.py::test_while_let_next_is_a_parse_error`                                                                                             |
+| Box patterns, enum payload slices, nested Vec slice patterns                                   | Python behavior in `tests/test_known_limitations.py`; native lowering remains out of scope because Rust slice patterns do not apply directly to `Vec`/enum payloads |
+| Async impl methods                                                                             | `tests/test_known_limitations.py::test_async_impl_method_runs_in_python` and `::test_async_impl_method_native_codegen_is_sync_only`                                 |
+| `PyFuture` is unsendable                                                                       | `tests/test_known_limitations.py::test_pyfuture_runtime_is_marked_unsendable`                                                                                       |
+| Option `map` collides with Vec `map`                                                           | `tests/test_known_limitations.py` rejection tests for both backends plus `test_vec_map_still_lowers`                                                                |
+| HashMap entry subset                                                                           | `tests/test_native_n7_map.py` entry tests                                                                                                                           |
+| HashMap views allocate and have unspecified order                                              | `tests/test_native_n7_map.py` sorts view results where order is observable                                                                                          |
+| HashMap dispatch requires a known type                                                         | `tests/test_native_n7_map.py` receiver tests; unknown receivers remain generic by design                                                                            |
+| `get_mut`/entry mutation requires an explicit dereference                                      | `tests/test_native_n7_map.py` rejection tests                                                                                                                       |
 
 ## Milestone status
 
@@ -1015,6 +1039,7 @@ See the README Status table for the authoritative milestone status.
 - Deferred: mutual recursion, loop with break, complex arithmetic, non-recursive calls, async suspension
 
 The checker also conservatively rejects non-recursive calls and async functions because their termination cannot be established by the batch-1 proof subset; both remain within SPEC 10.22.
+
 ## F1 — Deliverable single-file toolchain
 
 - Symptom: The language could be developed and tested from a source checkout, but it was not packaged as an installable tool with a stable CLI, a short Quick Start, or runnable example files for a new user.
@@ -1067,3 +1092,53 @@ The checker also conservatively rejects non-recursive calls and async functions 
 - `pytest -q`: 453 passed, 11 skipped, 7 deselected
 - `pytest -q -m slow`: 7 passed, 464 deselected
 - Blocker: native BTreeMap/HashSet/extended entry and nested collection value support, and full Python parity for all specified M3 cases, were not completed in one pass; recorded as Partial in SPEC 10.27 and 12.2.
+
+## Parser/translator/codegen — `if let` as a tail expression
+
+**Symptom:** A function whose tail expression is `if let Some(x) = v { x }
+else { -1 }` returned `None` in the Python backend and failed with
+`mismatched types` in the native backend. Ten related bugs surfaced:
+
+1. `parse_block` put `For`/`While`/`Loop` into `block.tail`.
+2. `parse_expr` allowed those nodes as binary operands, producing
+   `Binary(For, -, 1)` when `-1` followed a `for` loop.
+3. `parse_block` put `IfExpr` with statements in its body into `tail`.
+4. `translate_expr`'s `IfExpr` branch read only `then_block.tail`,
+   silently dropping `return` statements in `then_block.stmts`.
+5. `translate_expr` had no `IfLet` branch.
+6. `parse_block` put every `IfLet` into `stmts`, so it never reached
+   `translate_expr`.
+7. `opt { x }` in `if let Some(x) = opt { ... }` was misparsed as a
+   struct literal, so `parse_block` saw `else` instead of `{`.
+8. `_iflet_match` was not injected into the compiled namespace.
+9. `_iflet_match` used `runtime._Option` for `isinstance`, but compiled
+   code uses `translator._Option`. Two distinct classes.
+10. `RustCodegen.expr_to_rust` had no `IfLet` branch and fell back to
+    `/* expr IfLet */`, producing an empty `main` body.
+
+**Cause:** Statement-only AST nodes leaked into expression positions at
+multiple points. Runtime helpers were injected into the namespace by
+hand and one was missed. `_Option` exists in both `translator.py` and
+`runtime.py` as separate classes. `RustCodegen` treated `if let` as a
+statement-only node.
+
+**Fix:** Guards at every expression-entry point in `parser.py`
+(`parse_block`, `parse_expr`, `_looks_like_struct_literal`); a
+`_parsing_iflet_value` flag; `_ifexpr_has_stmts` and `_iflet_has_tail`
+helpers; `_translate_iflet_expr` and `_iflet_match`;
+`ns["_iflet_match"]`; duck typing in `_iflet_match`; and
+`generate_block_body` dispatch for `IfLet` tail directly to
+`_emit_if_let`.
+
+**Lesson:** Every statement-only node needs an explicit guard at every
+expression-entry point, in *both* backends. Rust `if let` is an
+expression, so the Rust codegen can emit it directly as a tail — but
+it needs an explicit branch to do so. The cross-backend parity test
+caught bug 10, which the Python-only tests would have missed.
+
+**Test baseline:** 469 passed, 9 skipped, 15 deselected; slow
+15 passed, 478 deselected.
+
+**Technical debt:** `_Option` is defined twice (`translator.py:856`,
+`runtime.py:330`). Long-term this should be unified. The current duck
+typing in `_iflet_match` is a workaround, not a fix.

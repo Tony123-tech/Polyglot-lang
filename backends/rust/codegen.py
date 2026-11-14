@@ -601,6 +601,14 @@ class RustCodegen:
             self.generate_stmt(stmt)
         if block.tail is not None:
             self.set_origin(block.tail)
+            if as_fn_body and isinstance(block.tail, IfLet):
+                self._check_type_boundary(
+                    self._expr_type(block.tail),
+                    self._current_return_type,
+                    block.tail,
+                )
+                self._emit_if_let(block.tail)
+                return
             if as_fn_body:
                 self._check_type_boundary(
                     self._expr_type(block.tail),

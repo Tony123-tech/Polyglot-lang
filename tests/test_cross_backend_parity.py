@@ -43,3 +43,28 @@ def test_cross_backend_parity(example):
         f"{example.name}: Python returned {py_result!r}, "
         f"native returned {native_result!r}"
     )
+
+@pytest.mark.slow
+def test_iflet_tail_expression_parity() -> None:
+    source = """
+fn find_even(xs: Vec<i64>) -> Option<i64> {
+    for x in xs {
+        if x % 2 == 0 {
+            return Some(x);
+        }
+    }
+    None
+}
+
+fn main() -> i64 {
+    if let Some(x) = find_even([1, 3, 4].to_vec()) {
+        x
+    } else {
+        -1
+    }
+}
+"""
+    py_ns = _compile("python", source)
+    native_ns = _compile("native", source)
+    assert py_ns["main"]() == 4
+    assert native_ns["main"]() == 4
