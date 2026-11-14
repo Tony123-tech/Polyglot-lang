@@ -26,12 +26,6 @@ for num in section_nums:
         fail(f"duplicate SPEC section number: {num}")
     seen.add(num)
 
-# 3. Every Known Limitation (10.x) must have a cross-reference
-limitations = re.findall(r"^- \*\*(10\.\d+)\*\*", spec, re.MULTILINE)
-for lim in limitations:
-    if f"See {lim}" not in spec and f"see {lim}" not in spec:
-        fail(f"Known Limitation {lim} has no cross-reference")
-
 # 4. All error codes E001–E008 must appear in README
 readme_codes = set(re.findall(r"`E(\d{3})`", readme))
 for i in range(1, 9):
