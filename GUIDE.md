@@ -177,7 +177,7 @@ fn main() -> i64 {
 }
 ```
 
-`"...".to_string()` creates a string. (`String::from("...")` is parsed but not yet lowered; see SPEC 10.28.)
+`"...".to_string()` creates a string. (`String::from("...")` is parsed but not yet lowered because it requires special handling of the `from` associated function; `to_string` is a method call and its lowering path is simpler. See SPEC 10.28.)
 `split`, `join`, `replace`, `trim`, and `contains` work like Python
 strings, but they return Polyglot types (`Vec<String>`, `Option<usize>`).
 
@@ -299,3 +299,5 @@ in the [README's error code table](README.md#error-codes):
 - Read the [SPECIFICATION](SPECIFICATION.md) if you want to know
   exactly what the language guarantees.
 - Try the [examples](examples/) directory.
+
+Note: `BTreeMap`, `HashSet`, and nested `HashMap` (depth 1) have only basic Python-backend support; native support is deferred. See SPEC 10.25 and 10.27.

@@ -1,5 +1,21 @@
 # NOTES.md
 
+## Quick index
+
+- N1–N2d: Core language (functions, control flow, structs)
+- N3–N4: Vec and String stdlib
+- N5: Option/Result, async, sandbox
+- N6: Remaining Vec/String methods
+- N7: usize/isize distinct types
+- N8: HashMap
+- N9: Result/Option combinators
+- N10: SPEC v0.2.7 conformance
+- M10: Termination checking
+- F1: Deliverable CLI
+- Parser/translator/codegen: `if let` as a tail expression (10 bugs)
+
+**Latest baseline:** 469 passed, 9 skipped, 15 deselected; slow 15 passed, 478 deselected.
+
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
 ## Doc sync — `if let` expression-position limit

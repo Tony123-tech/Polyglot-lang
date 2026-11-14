@@ -291,7 +291,7 @@ rm -rf ~/.cache/polyglot-native
 ## Roadmap
 
 N0 through N10, M10, and F1 are complete. Remaining known limitations are listed under
-[Known limitations](#known-limitations), including the out-of-scope items
+[Known limitations](#known-limitations). The main out-of-scope items are
 `while let Some(x) = iter.next()`, async impl methods, and cross-thread
 `PyFuture` use.
 
