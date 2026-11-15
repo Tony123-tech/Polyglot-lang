@@ -1389,6 +1389,12 @@ class RustCodegen:
                 and self._option_result_type(e.receiver) == "Option"
             ):
                 return f"{recv}.iter().cloned().collect::<Vec<_>>()"
+            if (
+                e.method in ("and", "or", "xor")
+                and len(e.args) == 1
+                and self._option_result_type(e.receiver) == "Option"
+            ):
+                return f"{recv}.{e.method}({self.expr_to_rust(e.args[0])})"
             if e.method == "chars" and not e.args:
                 return f"{recv}.chars().collect::<Vec<char>>()"
             if e.method == "char_indices" and not e.args:

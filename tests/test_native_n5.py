@@ -74,6 +74,13 @@ fn n5_option_iter_none() -> Vec<i64> {
     value.iter()
 }
 """,
+    "option_and": """
+fn n5_option_and_some() -> Option<i64> { Some(1).and(Some(2)) }
+fn n5_option_and_none() -> Option<i64> {
+    let value: Option<i64> = None;
+    value.and(Some(2))
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -905,6 +912,19 @@ def test_python_option_iter():
 
     assert ns["n5_option_iter_some"]() == [5]
     assert ns["n5_option_iter_none"]() == []
+
+
+@pytest.mark.native
+def test_native_option_and(native_ns):
+    assert native_ns["n5_option_and_some"]() == 2
+    assert native_ns["n5_option_and_none"]() is None
+
+
+def test_python_option_and():
+    ns = _run_python(SOURCES["option_and"])
+
+    assert ns["n5_option_and_some"]() == ns["_Option"].some(2)
+    assert ns["n5_option_and_none"]() == ns["_Option"].none()
 
 
 @pytest.mark.native

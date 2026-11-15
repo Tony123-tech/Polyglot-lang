@@ -624,6 +624,20 @@ def _runtime_vec_split_last(values: list):
     return _Option.some((values[-1], list(values[:-1])))
 
 
+def _runtime_option_and(option, other):
+    return other if option.is_some() else _Option.none()
+
+
+def _runtime_option_or(option, other):
+    return option if option.is_some() else other
+
+
+def _runtime_option_xor(option, other):
+    if option.is_some() == other.is_some():
+        return _Option.none()
+    return option if option.is_some() else other
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1573,6 +1587,9 @@ class Translator:
         ns["_vec_skip"] = _runtime_vec_skip
         ns["_vec_enumerate"] = _runtime_vec_enumerate
         ns["_vec_zip"] = _runtime_vec_zip
+        ns["_option_and"] = _runtime_option_and
+        ns["_option_or"] = _runtime_option_or
+        ns["_option_xor"] = _runtime_option_xor
         ns["_vec_flatten"] = _runtime_vec_flatten
         ns["_vec_chain"] = _runtime_vec_chain
         ns["_vec_step_by"] = _runtime_vec_step_by
@@ -3757,6 +3774,15 @@ class Translator:
                         ctx=ast.Load(),
                     ),
                     args=[self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method in ("and", "or", "xor") and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(
+                        id=f"_option_{e.method}",
+                        ctx=ast.Load(),
+                    ),
+                    args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
             if e.method in ("windows", "chunks") and len(e.args) == 1:
