@@ -1,8 +1,7 @@
-# Commit Rules (Mandatory)
+# Commit Rules
 
-These rules are mandatory for any AI agent or tool (including OpenCode)
-working in this repository. If an agent cannot follow them, it must not
-be used on this repository.
+These rules apply to all contributors and automated tooling working in
+this repository.
 
 ## 1. One commit = one logical change
 
@@ -11,8 +10,9 @@ be used on this repository.
 - If a change touches multiple subsystems, split it by subsystem:
   frontend, Python backend, Rust backend, API/CLI, tests, docs, build/CI.
 
-## 2. Never use `git add -A` or `git add .`
+## 2. Stage explicitly
 
+- Do not use `git add -A` or `git add .`
 - Stage files explicitly by path or by subsystem directory.
 - Do not stage unrelated working-tree changes.
 - Do not stage untracked files unless they are part of the current task.
@@ -70,5 +70,5 @@ reported and the working tree is clean for that scope.
 
 ## 8. If rules cannot be followed
 
-Stop and ask the user. Do not silently fall back to a single large
-commit.
+Stop and ask the maintainers. Do not silently fall back to a single
+large commit.
