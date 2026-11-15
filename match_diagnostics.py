@@ -24,7 +24,9 @@ from ast_nodes import (
 
 
 def warn_match_issues(
-    match: MatchExpr, *, scrutinee_type: str | None = None,
+    match: MatchExpr,
+    *,
+    scrutinee_type: str | None = None,
 ) -> None:
     seen_literals: set[tuple[str, object]] = set()
     unreachable_warned = False
@@ -85,7 +87,8 @@ def warn_match_issues(
 
 
 def missing_match_variants(
-    match: MatchExpr, scrutinee_type: str | None,
+    match: MatchExpr,
+    scrutinee_type: str | None,
 ) -> tuple[str, ...]:
     variants = set().union(
         *(_pattern_variants(arm.pattern) for arm in match.arms),

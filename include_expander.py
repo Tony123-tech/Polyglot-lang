@@ -23,6 +23,7 @@ class IncludeError(Exception):
         line: int,
         col: int,
         source_path: Path | None = None,
+        span: tuple[int, int] | None = None,
     ) -> None:
         self.message = message
         self.reason = reason
@@ -31,11 +32,14 @@ class IncludeError(Exception):
         self.line = line
         self.col = col
         self.source_path = source_path
+        self.span = span
         super().__init__(self.format())
 
     def format(self) -> str:
         prefix = f"error[{self.code}]: " if self.code else "error: "
         loc = f"at: line {self.line}, column {self.col}"
+        if self.span is not None:
+            loc += f" (span {self.span[0]}..{self.span[1]})"
         if self.source_path is not None:
             loc += f" in {self.source_path}"
         return (
@@ -107,7 +111,11 @@ def load_program(path: str | Path, *, _stack: list[Path] | None = None) -> Progr
                 included = load_program(include_path, _stack=next_stack)
             except IncludeCycleError as e:
                 # Ensure location/chain includes the include site if needed.
-                if e.line == 1 and e.col == 1 and e.source_path in (None, abs_path, Path(include_path).resolve()):
+                if (
+                    e.line == 1
+                    and e.col == 1
+                    and e.source_path in (None, abs_path, Path(include_path).resolve())
+                ):
                     raise IncludeCycleError(
                         e.message,
                         e.reason,
@@ -116,6 +124,7 @@ def load_program(path: str | Path, *, _stack: list[Path] | None = None) -> Progr
                         item.line,
                         item.col,
                         abs_path,
+                        span=getattr(item, "span", None),
                     ) from e
                 raise
             except IncludeNotFoundError as e:
@@ -127,13 +136,16 @@ def load_program(path: str | Path, *, _stack: list[Path] | None = None) -> Progr
                     item.line,
                     item.col,
                     abs_path,
+                    span=getattr(item, "span", None),
                 ) from e
             expanded_items.extend(included.items)
             merged_lines.update(included.source_lines)
         else:
             expanded_items.append(item)
 
-    return Program(program.line, program.col, expanded_items, merged_lines, span=program.span)
+    return Program(
+        program.line, program.col, expanded_items, merged_lines, span=program.span
+    )
 
 
 def expand_includes(program: Program, source_path: str | Path) -> Program:
@@ -158,6 +170,7 @@ def expand_includes(program: Program, source_path: str | Path) -> Program:
                     item.line,
                     item.col,
                     abs_path,
+                    span=getattr(item, "span", None),
                 ) from e
             except IncludeNotFoundError as e:
                 raise IncludeNotFoundError(
@@ -168,9 +181,12 @@ def expand_includes(program: Program, source_path: str | Path) -> Program:
                     item.line,
                     item.col,
                     abs_path,
+                    span=getattr(item, "span", None),
                 ) from e
             expanded_items.extend(included.items)
             merged_lines.update(included.source_lines)
         else:
             expanded_items.append(item)
-    return Program(program.line, program.col, expanded_items, merged_lines, span=program.span)
+    return Program(
+        program.line, program.col, expanded_items, merged_lines, span=program.span
+    )

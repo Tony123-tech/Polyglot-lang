@@ -172,8 +172,7 @@ def _while_variant(loop: While) -> str | None:
     shadowed_names = {
         node.pattern.name
         for node in _walk(body)
-        if isinstance(node, LetStmt)
-        and isinstance(node.pattern, PatIdent)
+        if isinstance(node, LetStmt) and isinstance(node.pattern, PatIdent)
     }
     for stmt in body.stmts:
         if not isinstance(stmt, ExprStmt):
@@ -189,9 +188,7 @@ def _while_variant(loop: While) -> str | None:
             name = _assignment_target_name(expr.target)
             if name is not None:
                 positive = _positive_integer(expr.value) is not None
-                direct_updates.setdefault(name, []).append(
-                    expr.op == "-=" and positive
-                )
+                direct_updates.setdefault(name, []).append(expr.op == "-=" and positive)
     for name, bound in lower_bounds.items():
         if bound < 0 or name in shadowed_names:
             continue
@@ -201,20 +198,22 @@ def _while_variant(loop: While) -> str | None:
             if isinstance(node, Assign):
                 target_name = _assignment_target_name(node.target)
                 if target_name == name:
-                    all_updates.append(
-                        _decreasing_integer_assignment(node.value, name)
-                    )
+                    all_updates.append(_decreasing_integer_assignment(node.value, name))
             elif isinstance(node, CompoundAssign):
                 target_name = _assignment_target_name(node.target)
                 if target_name == name:
                     all_updates.append(
-                        node.op == "-="
-                        and _positive_integer(node.value) is not None
+                        node.op == "-=" and _positive_integer(node.value) is not None
                     )
-        if updates and all(updates) and all(all_updates) and not any(
-            isinstance(node, Continue)
-            for stmt in body.stmts
-            for node in _walk(stmt)
+        if (
+            updates
+            and all(updates)
+            and all(all_updates)
+            and not any(
+                isinstance(node, Continue)
+                for stmt in body.stmts
+                for node in _walk(stmt)
+            )
         ):
             return name
     return None
@@ -277,8 +276,7 @@ def _recursive_call_decreases(
             return False
         if parameter_type in {"Vec", "String"}:
             positive_names = {
-                name for name, lower_bound in lower_bounds.items()
-                if lower_bound > 0
+                name for name, lower_bound in lower_bounds.items() if lower_bound > 0
             }
             if _slice_decreases(argument, parameter_name, positive_names):
                 decreasing = True
@@ -312,13 +310,12 @@ def check_function(fn: FnDecl) -> None:
         )
 
     parameters = _parameter_info(fn)
-    parameter_types = {
-        name: ty for name, ty in parameters if name is not None
-    }
+    parameter_types = {name: ty for name, ty in parameters if name is not None}
     parameter_names = set(parameter_types)
     body_nodes = list(_walk(fn.body))
     recursive_calls = [
-        node for node in body_nodes
+        node
+        for node in body_nodes
         if isinstance(node, Call)
         and isinstance(node.func, Ident)
         and node.func.name == fn.name
@@ -332,21 +329,19 @@ def check_function(fn: FnDecl) -> None:
         shadowed = {
             node.pattern.name
             for node in body_nodes
-            if isinstance(node, LetStmt)
-            and isinstance(node.pattern, PatIdent)
+            if isinstance(node, LetStmt) and isinstance(node.pattern, PatIdent)
         } & parameter_names
         shadows_function = (
             fn.name in parameter_names
             or any(
-                isinstance(node, FnDecl) and node is not fn
-                and node.name == fn.name
+                isinstance(node, FnDecl) and node is not fn and node.name == fn.name
                 for node in body_nodes
             )
-            or fn.name in {
+            or fn.name
+            in {
                 node.pattern.name
                 for node in body_nodes
-                if isinstance(node, LetStmt)
-                and isinstance(node.pattern, PatIdent)
+                if isinstance(node, LetStmt) and isinstance(node.pattern, PatIdent)
             }
         )
         if mutated or shadowed or shadows_function:
@@ -363,7 +358,11 @@ def check_function(fn: FnDecl) -> None:
 
     def fail(reason: str, suggestion: str, node: Node) -> None:
         raise TerminationError(
-            fn.name, reason, suggestion, node.line, node.col,
+            fn.name,
+            reason,
+            suggestion,
+            node.line,
+            node.col,
             getattr(fn, "span", None),
         )
 
@@ -433,11 +432,13 @@ def check_function(fn: FnDecl) -> None:
         if isinstance(value, Call):
             if isinstance(value.func, Ident) and value.func.name == fn.name:
                 if not _recursive_call_decreases(
-                    fn, value, lower_bounds, parameters,
+                    fn,
+                    value,
+                    lower_bounds,
+                    parameters,
                 ):
                     fail(
-                        "a recursive call has no provably decreasing "
-                        "argument",
+                        "a recursive call has no provably decreasing argument",
                         "recurse with a smaller argument under a matching "
                         "lower-bound guard",
                         value,
@@ -465,16 +466,15 @@ def check_function(fn: FnDecl) -> None:
                 and isinstance(receiver, Index)
                 and isinstance(_unwrap(receiver.index), Range)
             )
-            is_known_length = (
-                value.method in {"len", "is_empty"}
-                and receiver_type in {"Vec", "String"}
-            )
+            is_known_length = value.method in {"len", "is_empty"} and receiver_type in {
+                "Vec",
+                "String",
+            }
             if not (is_slice_to_vec or is_known_length):
                 fail(
                     f"method call `{value.method}` is outside the supported "
                     "proof subset",
-                    "use only a known finite operation in an annotated "
-                    "function",
+                    "use only a known finite operation in an annotated function",
                     value,
                 )
             for child in _children(value):
@@ -484,8 +484,7 @@ def check_function(fn: FnDecl) -> None:
         if isinstance(value, MacroCall):
             if value.path not in {"panic", "assert", "assert_eq", "assert_ne"}:
                 fail(
-                    f"macro call `{value.path}!` is outside the supported "
-                    "proof subset",
+                    f"macro call `{value.path}!` is outside the supported proof subset",
                     "remove the macro or use a known terminating operation",
                     value,
                 )

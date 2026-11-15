@@ -35,6 +35,9 @@ Type layer:
 
 from __future__ import annotations
 
+from dataclasses import fields as dataclass_fields
+from dataclasses import is_dataclass
+
 from ast_nodes import (
     ArrayExpr,
     Assign,
@@ -132,6 +135,7 @@ from lexer import Token, TokenType
 # Errors
 # ---------------------------------------------------------------------------
 
+
 class ParseError(Exception):
     def __init__(self, msg: str, line: int, col: int):
         super().__init__(f"{msg} at {line}:{col}")
@@ -171,6 +175,7 @@ CAST_PREC = 9
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
+
 
 class Parser:
     def __init__(self, tokens: list[Token]):
@@ -252,7 +257,7 @@ class Parser:
                             self.advance()
                             break
                     self.advance()
-                args = "".join(t.value for t in self.tokens[start:self.i - 1])
+                args = "".join(t.value for t in self.tokens[start : self.i - 1])
             self.expect(TokenType.RBRACKET)
             attrs.append(Attr(tok.line, tok.col, name_tok.value, args))
         return attrs
@@ -284,7 +289,10 @@ class Parser:
 
         if tok.type == TokenType.FN:
             return self.parse_fn(
-                is_pub, is_async, is_unsafe, terminates=terminates,
+                is_pub,
+                is_async,
+                is_unsafe,
+                terminates=terminates,
             )
         if tok.type == TokenType.STRUCT:
             return self.parse_struct(is_pub)
@@ -304,7 +312,11 @@ class Parser:
             return self.parse_const(is_static=True, is_pub=is_pub)
         if tok.type == TokenType.TYPE:
             return self.parse_type_alias(is_pub)
-        if tok.type == TokenType.IDENT and tok.value == "include" and self.peek(1).type == TokenType.BANG:
+        if (
+            tok.type == TokenType.IDENT
+            and tok.value == "include"
+            and self.peek(1).type == TokenType.BANG
+        ):
             return self.parse_include_item()
 
         self.error(f"expected item, got {tok.type.name} {tok.value!r}")
@@ -341,8 +353,17 @@ class Parser:
         end_tok = self.tokens[self.i - 1] if self.i > 0 else tok
         span = (tok.pos, end_tok.pos + len(end_tok.value))
         return FnDecl(
-            tok.line, tok.col, name, params, ret, body,
-            generics, is_pub, is_async, is_unsafe, terminates,
+            tok.line,
+            tok.col,
+            name,
+            params,
+            ret,
+            body,
+            generics,
+            is_pub,
+            is_async,
+            is_unsafe,
+            terminates,
             span=span,
         )
 
@@ -365,6 +386,7 @@ class Parser:
         if isinstance(pattern, PatRef):
             return self._is_self_pattern(pattern.inner)
         return False
+
     def parse_generics(self) -> list[GenericParam]:
         params: list[GenericParam] = []
         if not self.eat(TokenType.LT):
@@ -473,9 +495,7 @@ class Parser:
                     False,
                     False,
                     False,
-                    terminates=any(
-                        attr.name == "terminates" for attr in attrs
-                    ),
+                    terminates=any(attr.name == "terminates" for attr in attrs),
                 )
                 items.append(TraitItem(fn.line, fn.col, fn, None))
             elif self.check(TokenType.TYPE):
@@ -677,7 +697,9 @@ class Parser:
                     name += "::" + self.expect(TokenType.IDENT).value
                 if name_tok.value == "box" and "::" not in name:
                     return PatBox(
-                        tok.line, tok.col, self.parse_pattern_atom(),
+                        tok.line,
+                        tok.col,
+                        self.parse_pattern_atom(),
                     )
                 if self.check(TokenType.AT):
                     self.advance()
@@ -718,7 +740,11 @@ class Parser:
                     if closing_stack:
                         self.error("unterminated pattern macro invocation", tok)
                     return PatMacro(
-                        tok.line, tok.col, name, "".join(token_parts), delimiter,
+                        tok.line,
+                        tok.col,
+                        name,
+                        "".join(token_parts),
+                        delimiter,
                     )
                 if self.check(TokenType.LBRACE):
                     self.advance()
@@ -742,7 +768,9 @@ class Parser:
                             field_pattern = self.parse_pattern()
                         else:
                             field_pattern = PatIdent(
-                                field_tok.line, field_tok.col, field_tok.value,
+                                field_tok.line,
+                                field_tok.col,
+                                field_tok.value,
                             )
                         fields.append((field_tok.value, field_pattern))
                         if not self.eat(TokenType.COMMA):
@@ -760,15 +788,22 @@ class Parser:
                     return PatEnum(tok.line, tok.col, name, args)
                 if name == "box":
                     return PatBox(
-                        tok.line, tok.col, self.parse_pattern_atom(),
+                        tok.line,
+                        tok.col,
+                        self.parse_pattern_atom(),
                     )
                 if "::" in name or name[0].isupper():
                     return PatPath(tok.line, tok.col, name)
                 return PatIdent(tok.line, tok.col, name, mutable)
 
-        if self.check(TokenType.NUMBER) or self.check(TokenType.STRING) \
-                or self.check(TokenType.CHAR) or self.check(TokenType.TRUE) \
-                or self.check(TokenType.FALSE) or self.check(TokenType.MINUS):
+        if (
+            self.check(TokenType.NUMBER)
+            or self.check(TokenType.STRING)
+            or self.check(TokenType.CHAR)
+            or self.check(TokenType.TRUE)
+            or self.check(TokenType.FALSE)
+            or self.check(TokenType.MINUS)
+        ):
             start = self.parse_prefix()
             if self.check(TokenType.DOTDOT) or self.check(TokenType.DOTDOTEQ):
                 inclusive = self.advance().type == TokenType.DOTDOTEQ
@@ -805,8 +840,7 @@ class Parser:
             while not self.check(TokenType.RBRACKET):
                 elem = self.parse_pattern()
                 if isinstance(elem, PatRest) or (
-                    isinstance(elem, PatBinding)
-                    and isinstance(elem.inner, PatRest)
+                    isinstance(elem, PatBinding) and isinstance(elem.inner, PatRest)
                 ):
                     rest_count += 1
                     if rest_count > 1:
@@ -832,9 +866,14 @@ class Parser:
 
     def _pattern_ends_here(self) -> bool:
         return self.peek().type in {
-            TokenType.COMMA, TokenType.FATARROW, TokenType.RPAREN,
-            TokenType.RBRACKET, TokenType.RBRACE, TokenType.PIPE,
-            TokenType.IF, TokenType.EOF,
+            TokenType.COMMA,
+            TokenType.FATARROW,
+            TokenType.RPAREN,
+            TokenType.RBRACKET,
+            TokenType.RBRACE,
+            TokenType.PIPE,
+            TokenType.IF,
+            TokenType.EOF,
         }
 
     # ---- statements --------------------------------------------------------
@@ -845,10 +884,18 @@ class Parser:
         tail: Expr | None = None
         while not self.check(TokenType.RBRACE) and not self.at_end():
             if self.peek().type in {
-                TokenType.FN, TokenType.STRUCT, TokenType.ENUM,
-                TokenType.IMPL, TokenType.TRAIT, TokenType.USE,
-                TokenType.MOD, TokenType.CONST, TokenType.STATIC,
-                TokenType.TYPE, TokenType.PUB, TokenType.HASH,
+                TokenType.FN,
+                TokenType.STRUCT,
+                TokenType.ENUM,
+                TokenType.IMPL,
+                TokenType.TRAIT,
+                TokenType.USE,
+                TokenType.MOD,
+                TokenType.CONST,
+                TokenType.STATIC,
+                TokenType.TYPE,
+                TokenType.PUB,
+                TokenType.HASH,
             }:
                 item = self.parse_item()
                 stmts.append(ItemStmt(item.line, item.col, item))
@@ -859,9 +906,17 @@ class Parser:
                 continue
 
             e = self.parse_expr()
-            if self.eat(TokenType.SEMI) or isinstance(e, IfLet) and not self._iflet_has_tail(e):
+            if (
+                self.eat(TokenType.SEMI)
+                or isinstance(e, IfLet)
+                and not self._iflet_has_tail(e)
+            ):
                 stmts.append(ExprStmt(e.line, e.col, e))
-            elif self.check(TokenType.RBRACE) and not isinstance(e, (For, While, Loop)) and not self._ifexpr_has_stmts(e):
+            elif (
+                self.check(TokenType.RBRACE)
+                and not isinstance(e, (For, While, Loop))
+                and not self._ifexpr_has_stmts(e)
+            ):
                 tail = e
                 break
             else:
@@ -869,16 +924,12 @@ class Parser:
         self.expect(TokenType.RBRACE)
         return Block(tok.line, tok.col, stmts, tail)
 
-
     def _iflet_has_tail(self, e) -> bool:
         if not isinstance(e, IfLet):
             return False
         if e.then_block.tail is not None:
             return True
-        return bool(
-            isinstance(e.else_branch, Block)
-            and e.else_branch.tail is not None
-        )
+        return bool(isinstance(e.else_branch, Block) and e.else_branch.tail is not None)
 
     def _ifexpr_has_stmts(self, e) -> bool:
         if not isinstance(e, IfExpr):
@@ -888,7 +939,9 @@ class Parser:
         if e.else_branch is not None:
             if isinstance(e.else_branch, Block) and e.else_branch.stmts:
                 return True
-            if isinstance(e.else_branch, IfExpr) and self._ifexpr_has_stmts(e.else_branch):
+            if isinstance(e.else_branch, IfExpr) and self._ifexpr_has_stmts(
+                e.else_branch
+            ):
                 return True
         return False
 
@@ -915,15 +968,23 @@ class Parser:
 
             # Statement-only nodes (For/While/Loop) cannot be a binary operand.
             if isinstance(left, (For, While, Loop)) and tok.type not in (
-                TokenType.SEMI, TokenType.RBRACE,
+                TokenType.SEMI,
+                TokenType.RBRACE,
             ):
                 break
 
             # Assignment (right-associative, lowest precedence)
-            if tok.type in (
-                TokenType.EQ, TokenType.PLUSEQ,
-                TokenType.MINUSEQ, TokenType.STAREQ, TokenType.SLASHEQ,
-            ) and min_prec <= ASSIGN_PREC:
+            if (
+                tok.type
+                in (
+                    TokenType.EQ,
+                    TokenType.PLUSEQ,
+                    TokenType.MINUSEQ,
+                    TokenType.STAREQ,
+                    TokenType.SLASHEQ,
+                )
+                and min_prec <= ASSIGN_PREC
+            ):
                 op = tok.value
                 self.advance()
                 right = self.parse_expr(ASSIGN_PREC)
@@ -990,7 +1051,12 @@ class Parser:
                             break
                     self.expect(TokenType.RPAREN)
                     left = MethodCall(
-                        tok.line, tok.col, left, m.value, args, generic_args,
+                        tok.line,
+                        tok.col,
+                        left,
+                        m.value,
+                        args,
+                        generic_args,
                     )
                 else:
                     left = Field(tok.line, tok.col, left, m.value)
@@ -1020,7 +1086,11 @@ class Parser:
             node = Binary(op_tok.line, op_tok.col, op, left, right)
             start = left.span[0] if getattr(left, "span", None) else op_tok.pos
             end_tok = self.tokens[self.i - 1] if self.i > 0 else op_tok
-            end = right.span[1] if getattr(right, "span", None) else (end_tok.pos + len(end_tok.value))
+            end = (
+                right.span[1]
+                if getattr(right, "span", None)
+                else (end_tok.pos + len(end_tok.value))
+            )
             node.span = (start, end)
             left = node
 
@@ -1028,20 +1098,31 @@ class Parser:
 
     def _infix_op(self, ttype: TokenType) -> str:
         return {
-            TokenType.PLUS: "+", TokenType.MINUS: "-",
-            TokenType.STAR: "*", TokenType.SLASH: "/",
+            TokenType.PLUS: "+",
+            TokenType.MINUS: "-",
+            TokenType.STAR: "*",
+            TokenType.SLASH: "/",
             TokenType.PERCENT: "%",
-            TokenType.EQEQ: "==", TokenType.NEQ: "!=",
-            TokenType.LT: "<", TokenType.GT: ">",
-            TokenType.LE: "<=", TokenType.GE: ">=",
-            TokenType.ANDAND: "&&", TokenType.OROR: "||",
-            TokenType.AMP: "&", TokenType.PIPE: "|",
+            TokenType.EQEQ: "==",
+            TokenType.NEQ: "!=",
+            TokenType.LT: "<",
+            TokenType.GT: ">",
+            TokenType.LE: "<=",
+            TokenType.GE: ">=",
+            TokenType.ANDAND: "&&",
+            TokenType.OROR: "||",
+            TokenType.AMP: "&",
+            TokenType.PIPE: "|",
         }[ttype]
 
     def _at_expr_end(self) -> bool:
         return self.peek().type in {
-            TokenType.SEMI, TokenType.RPAREN, TokenType.RBRACKET,
-            TokenType.RBRACE, TokenType.COMMA, TokenType.EOF,
+            TokenType.SEMI,
+            TokenType.RPAREN,
+            TokenType.RBRACKET,
+            TokenType.RBRACE,
+            TokenType.COMMA,
+            TokenType.EOF,
         }
 
     # ---- prefix ------------------------------------------------------------
@@ -1066,22 +1147,38 @@ class Parser:
             self.advance()
             mutable = bool(self.eat(TokenType.MUT))
             operand = self.parse_expr(PREFIX_PREC)
-            return Unary(tok.line, tok.col, "&mut" if mutable else "&", operand, mutable)
+            return Unary(
+                tok.line, tok.col, "&mut" if mutable else "&", operand, mutable
+            )
 
         # return / break / continue
         if tok.type == TokenType.RETURN:
             self.advance()
             value = None if self._at_expr_end() else self.parse_expr()
-            return Return(tok.line, tok.col, value)
+            end = (
+                value.span[1]
+                if value is not None and getattr(value, "span", None)
+                else tok.pos + len(tok.value)
+            )
+            return Return(tok.line, tok.col, value, span=(tok.pos, end))
 
         if tok.type == TokenType.BREAK:
             self.advance()
             value = None if self._at_expr_end() else self.parse_expr()
-            return Break(tok.line, tok.col, value)
+            end = (
+                value.span[1]
+                if value is not None and getattr(value, "span", None)
+                else tok.pos + len(tok.value)
+            )
+            return Break(tok.line, tok.col, value, span=(tok.pos, end))
 
         if tok.type == TokenType.CONTINUE:
             self.advance()
-            return Continue(tok.line, tok.col)
+            return Continue(
+                tok.line,
+                tok.col,
+                span=(tok.pos, tok.pos + len(tok.value)),
+            )
 
         # if
         if tok.type == TokenType.IF:
@@ -1140,7 +1237,11 @@ class Parser:
             return Await(tok.line, tok.col, operand)
 
         # Option / Result constructors
-        if tok.type == TokenType.IDENT and tok.value in ("Some", "Ok", "Err") and self.peek(1).type == TokenType.LPAREN:
+        if (
+            tok.type == TokenType.IDENT
+            and tok.value in ("Some", "Ok", "Err")
+            and self.peek(1).type == TokenType.LPAREN
+        ):
             self.advance()
             self.expect(TokenType.LPAREN)
             value = self.parse_expr()
@@ -1158,6 +1259,11 @@ class Parser:
         # macro: name ! ( ... ) / [ ... ] / { ... }
         if tok.type == TokenType.IDENT and self.peek(1).type == TokenType.BANG:
             name = tok.value
+            if name == "include":
+                self.error(
+                    "include! is only allowed at item position, not inside a block",
+                    tok,
+                )
             self.advance()
             self.advance()  # '!'
             if self.check(TokenType.LPAREN):
@@ -1174,7 +1280,7 @@ class Parser:
                 start = self.i
                 while not self.check(TokenType.RBRACKET) and not self.at_end():
                     self.advance()
-                raw = "".join(t.value for t in self.tokens[start:self.i])
+                raw = "".join(t.value for t in self.tokens[start : self.i])
                 self.expect(TokenType.RBRACKET)
                 return MacroCall(tok.line, tok.col, name, raw)
             if self.check(TokenType.LBRACE):
@@ -1182,7 +1288,7 @@ class Parser:
                 start = self.i
                 while not self.check(TokenType.RBRACE) and not self.at_end():
                     self.advance()
-                raw = "".join(t.value for t in self.tokens[start:self.i])
+                raw = "".join(t.value for t in self.tokens[start : self.i])
                 self.expect(TokenType.RBRACE)
                 return MacroCall(tok.line, tok.col, name, raw)
             self.error("expected ( [ or { after macro name")
@@ -1198,8 +1304,18 @@ class Parser:
             self.advance()
             suffix = None
             if self.check(TokenType.IDENT) and self.peek().value in {
-                "i8", "i16", "i32", "i64", "i128",
-                "u8", "u16", "u32", "u64", "u128", "isize", "usize",
+                "i8",
+                "i16",
+                "i32",
+                "i64",
+                "i128",
+                "u8",
+                "u16",
+                "u32",
+                "u64",
+                "u128",
+                "isize",
+                "usize",
             }:
                 suffix = self.advance().value
             return self._make_number(tok, suffix=suffix)
@@ -1266,7 +1382,10 @@ class Parser:
             self.advance()
             segments = [tok.value]
             end_tok = tok
-            while self.check(TokenType.COLONCOLON) and self.peek(1).type == TokenType.IDENT:
+            while (
+                self.check(TokenType.COLONCOLON)
+                and self.peek(1).type == TokenType.IDENT
+            ):
                 self.advance()
                 end_tok = self.advance()
                 segments.append(end_tok.value)
@@ -1362,7 +1481,12 @@ class Parser:
                 else:
                     else_branch = self.parse_block()
             return IfLet(
-                tok.line, tok.col, pattern, value, then_block, else_branch,
+                tok.line,
+                tok.col,
+                pattern,
+                value,
+                then_block,
+                else_branch,
             )
         cond = self.parse_expr()
         then_block = self.parse_block()
@@ -1400,7 +1524,10 @@ class Parser:
         return MatchExpr(tok.line, tok.col, scrutinee, arms)
 
     def _validate_rest_pattern(
-        self, pattern: Pattern, *, allowed: bool = False,
+        self,
+        pattern: Pattern,
+        *,
+        allowed: bool = False,
     ) -> None:
         if isinstance(pattern, PatRest):
             if not allowed:
@@ -1419,8 +1546,10 @@ class Parser:
             return
         if isinstance(pattern, (PatTuple, PatOr, PatEnum)):
             children = (
-                pattern.elems if isinstance(pattern, PatTuple)
-                else pattern.alts if isinstance(pattern, PatOr)
+                pattern.elems
+                if isinstance(pattern, PatTuple)
+                else pattern.alts
+                if isinstance(pattern, PatOr)
                 else pattern.args
             )
             for child in children:
@@ -1429,8 +1558,6 @@ class Parser:
         if isinstance(pattern, PatStruct):
             for _name, child in pattern.fields:
                 self._validate_rest_pattern(child)
-
-
 
     def parse_closure(self) -> Closure:
         tok = self.peek()
@@ -1451,7 +1578,9 @@ class Parser:
         ret = None
         if self.eat(TokenType.ARROW):
             ret = self.parse_type()
-        body: Expr = self.parse_block() if self.check(TokenType.LBRACE) else self.parse_expr()
+        body: Expr = (
+            self.parse_block() if self.check(TokenType.LBRACE) else self.parse_expr()
+        )
         return Closure(tok.line, tok.col, params, body, ret)
 
 
@@ -1459,5 +1588,39 @@ class Parser:
 # Convenience
 # ---------------------------------------------------------------------------
 
+
+def _is_ast_node(value: object) -> bool:
+    return is_dataclass(value) and hasattr(value, "span") and hasattr(value, "line")
+
+
+def _child_nodes(value: object):
+    if _is_ast_node(value):
+        yield value
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _child_nodes(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _child_nodes(item)
+
+
+def _fill_node_spans(node) -> None:
+    """Populate missing spans bottom-up from already-spanned children."""
+    children: list[object] = []
+    for field in dataclass_fields(node):
+        if field.name in {"line", "col", "span"}:
+            continue
+        children.extend(_child_nodes(getattr(node, field.name)))
+    for child in children:
+        _fill_node_spans(child)
+    if node.span is not None:
+        return
+    spans = [child.span for child in children if child.span is not None]
+    if spans:
+        node.span = (min(span[0] for span in spans), max(span[1] for span in spans))
+
+
 def parse(tokens: list[Token]) -> Program:
-    return Parser(tokens).parse_program()
+    program = Parser(tokens).parse_program()
+    _fill_node_spans(program)
+    return program

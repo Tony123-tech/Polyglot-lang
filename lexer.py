@@ -34,6 +34,7 @@ from enum import Enum, auto
 # Token types
 # ---------------------------------------------------------------------------
 
+
 class TokenType(Enum):
     # literals
     IDENT = auto()
@@ -135,6 +136,7 @@ class TokenType(Enum):
 # Token
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Token:
     type: TokenType
@@ -151,6 +153,7 @@ class Token:
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
+
 
 class LexError(Exception):
     def __init__(self, msg: str, line: int, col: int):
@@ -273,6 +276,7 @@ SIMPLE_ESCAPES: dict[str, str] = {
 # Lexer
 # ---------------------------------------------------------------------------
 
+
 class Lexer:
     def __init__(self, source: str):
         self.src = source
@@ -307,13 +311,9 @@ class Lexer:
 
     def emit(self, ttype: TokenType, value: str, line: int, col: int, pos: int) -> None:
         source_line = (
-            self.source_lines[line - 1]
-            if 0 < line <= len(self.source_lines)
-            else None
+            self.source_lines[line - 1] if 0 < line <= len(self.source_lines) else None
         )
-        self.tokens.append(
-            Token(ttype, value, line, col, pos, source_line)
-        )
+        self.tokens.append(Token(ttype, value, line, col, pos, source_line))
 
     def error(self, msg: str, line: int | None = None, col: int | None = None):
         raise LexError(msg, line or self.line, col or self.col)
@@ -412,7 +412,7 @@ class Lexer:
             return
         while not self.at_end() and (self.peek().isalnum() or self.peek() == "_"):
             self.advance()
-        text = self.src[start:self.i]
+        text = self.src[start : self.i]
         ttype = KEYWORDS.get(text, TokenType.IDENT)
         self.emit(ttype, text, line, col, pos)
 
@@ -428,7 +428,7 @@ class Lexer:
             digits = self._consume_digits(base_ch)
             if not digits:
                 self.error(f"expected digits after 0{base_ch}", line, col)
-            self.emit(TokenType.NUMBER, self.src[start:self.i], line, col, pos)
+            self.emit(TokenType.NUMBER, self.src[start : self.i], line, col, pos)
             return
 
         # Integer part (with _ separators)
@@ -452,7 +452,7 @@ class Lexer:
                 # Not actually an exponent, roll back
                 self.i, self.line, self.col = save_i, save_line, save_col
 
-        self.emit(TokenType.NUMBER, self.src[start:self.i], line, col, pos)
+        self.emit(TokenType.NUMBER, self.src[start : self.i], line, col, pos)
 
     def _consume_digits(self, base: str) -> str:
         """Consume digits of the given base, allowing '_' separators.
@@ -476,7 +476,7 @@ class Lexer:
                 self.advance()
             else:
                 break
-        return self.src[start:self.i]
+        return self.src[start : self.i]
 
     # ---- strings -----------------------------------------------------------
 
@@ -532,7 +532,7 @@ class Lexer:
         start = self.i
         while not self.at_end():
             if self.src.startswith(closing, self.i):
-                value = self.src[start:self.i]
+                value = self.src[start : self.i]
                 self.advance_n(len(closing))
                 self.emit(TokenType.STRING, value, line, col, pos)
                 return
@@ -556,7 +556,7 @@ class Lexer:
                     self.advance()
                 if self.at_end():
                     self.error("unterminated unicode escape", str_line, str_col)
-                hex_digits = self.src[start:self.i]
+                hex_digits = self.src[start : self.i]
                 self.advance()  # consume '}'
                 return chr(int(hex_digits, 16))
             return self._read_hex_escape(4)
@@ -593,7 +593,7 @@ class Lexer:
         start = self.i
         while not self.at_end() and (self.peek().isalnum() or self.peek() == "_"):
             self.advance()
-        self.emit(TokenType.LIFETIME, "'" + self.src[start:self.i], line, col, pos)
+        self.emit(TokenType.LIFETIME, "'" + self.src[start : self.i], line, col, pos)
 
     def lex_char(self, line: int, col: int, pos: int) -> None:
         self.advance()  # consume opening '
@@ -622,6 +622,7 @@ class Lexer:
 # ---------------------------------------------------------------------------
 # Convenience
 # ---------------------------------------------------------------------------
+
 
 def lex(source: str) -> list[Token]:
     return Lexer(source).lex()

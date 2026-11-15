@@ -110,6 +110,7 @@ __all__ = [
 # Base
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Node:
     line: int
@@ -121,6 +122,7 @@ class Node:
 # Program
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Program(Node):
     items: list[Item]
@@ -131,9 +133,11 @@ class Program(Node):
 # Types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TypeName(Node):
     """A named type, possibly with generic arguments: i64, Vec<T>, HashMap<K, V>."""
+
     name: str
     args: list[Type] = field(default_factory=list)
 
@@ -141,6 +145,7 @@ class TypeName(Node):
 @dataclass
 class TypeRef(Node):
     """Reference type: &T or &mut T."""
+
     inner: Type
     mutable: bool = False
 
@@ -148,12 +153,14 @@ class TypeRef(Node):
 @dataclass
 class TypeSlice(Node):
     """Slice type: [T]."""
+
     inner: Type
 
 
 @dataclass
 class TypeArray(Node):
     """Array type: [T; N]."""
+
     inner: Type
     size: Expr
 
@@ -161,12 +168,14 @@ class TypeArray(Node):
 @dataclass
 class TypeTuple(Node):
     """Tuple type: (A, B)."""
+
     elems: list[Type]
 
 
 @dataclass
 class TypeFn(Node):
     """Function pointer type: fn(A, B) -> C."""
+
     params: list[Type]
     ret: Type | None
 
@@ -174,12 +183,14 @@ class TypeFn(Node):
 @dataclass
 class TypeImplTrait(Node):
     """impl Trait."""
+
     bounds: list[TypeName]
 
 
 @dataclass
 class TypeDynTrait(Node):
     """dyn Trait."""
+
     bounds: list[TypeName]
 
 
@@ -189,8 +200,15 @@ class TypeUnit(Node):
 
 
 Type = (
-    TypeName | TypeRef | TypeSlice | TypeArray
-    | TypeTuple | TypeFn | TypeImplTrait | TypeDynTrait | TypeUnit
+    TypeName
+    | TypeRef
+    | TypeSlice
+    | TypeArray
+    | TypeTuple
+    | TypeFn
+    | TypeImplTrait
+    | TypeDynTrait
+    | TypeUnit
 )
 
 
@@ -220,8 +238,10 @@ def type_display_name(ty: Type | None) -> str:
         return f"[{type_display_name(ty.inner)}]"
     if isinstance(ty, TypeArray):
         size = (
-            ty.size.raw if isinstance(ty.size, LitInt)
-            else ty.size.name if isinstance(ty.size, Ident)
+            ty.size.raw
+            if isinstance(ty.size, LitInt)
+            else ty.size.name
+            if isinstance(ty.size, Ident)
             else "..."
         )
         return f"[{type_display_name(ty.inner)}; {size}]"
@@ -247,6 +267,7 @@ def type_display_name(ty: Type | None) -> str:
 # Patterns (for match, let, fn params)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PatWildcard(Node):
     """_"""
@@ -255,6 +276,7 @@ class PatWildcard(Node):
 @dataclass
 class PatIdent(Node):
     """x or mut x"""
+
     name: str
     mutable: bool = False
 
@@ -262,6 +284,7 @@ class PatIdent(Node):
 @dataclass
 class PatLiteral(Node):
     """Numeric / string / char / bool literal pattern."""
+
     value: Any
 
 
@@ -298,6 +321,7 @@ class PatRange(Node):
 @dataclass
 class PatBinding(Node):
     """x @ pat"""
+
     name: str
     inner: Pattern
 
@@ -305,6 +329,7 @@ class PatBinding(Node):
 @dataclass
 class PatRef(Node):
     """&pat or &mut pat"""
+
     inner: Pattern
     mutable: bool = False
 
@@ -342,15 +367,29 @@ class PatSlice(Node):
 
 
 Pattern = (
-    PatWildcard | PatIdent | PatLiteral | PatTuple | PatStruct
-    | PatEnum | PatOr | PatRange | PatBinding | PatRef | PatSlice | PatRest
-    | PatBox | PatConst | PatMacro | PatPath
+    PatWildcard
+    | PatIdent
+    | PatLiteral
+    | PatTuple
+    | PatStruct
+    | PatEnum
+    | PatOr
+    | PatRange
+    | PatBinding
+    | PatRef
+    | PatSlice
+    | PatRest
+    | PatBox
+    | PatConst
+    | PatMacro
+    | PatPath
 )
 
 
 # ---------------------------------------------------------------------------
 # Expressions
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class LitInt(Node):
@@ -387,6 +426,7 @@ class Ident(Node):
 @dataclass
 class Path(Node):
     """A::B::C"""
+
     segments: list[str]
 
 
@@ -456,6 +496,7 @@ class ArrayExpr(Node):
 @dataclass
 class RepeatArray(Node):
     """[expr; n]"""
+
     elem: Expr
     count: Expr
 
@@ -569,6 +610,7 @@ class Await(Node):
 @dataclass
 class Try(Node):
     """The ? operator."""
+
     expr: Expr
 
 
@@ -576,36 +618,75 @@ class Try(Node):
 class Paren(Node):
     inner: Expr
 
+
 @dataclass
 class OptionSome(Node):
     value: Expr
+
 
 @dataclass
 class OptionNone(Node):
     pass
 
+
 @dataclass
 class ResultOk(Node):
     value: Expr
+
 
 @dataclass
 class ResultErr(Node):
     value: Expr
 
+
 Expr = (
-    LitInt | LitFloat | LitStr | LitChar | LitBool
-    | Ident | Path | Unary | Binary | Assign | CompoundAssign
-    | Call | MethodCall | Field | Index | TupleExpr | ArrayExpr
-    | RepeatArray | StructLiteral | IfExpr | IfLet | MatchExpr | Block
-    | Loop | While | For | Closure | Range | Cast
-    | Return | Break | Continue | MacroCall | Await | Try | Paren
-    | OptionSome | OptionNone | ResultOk | ResultErr
+    LitInt
+    | LitFloat
+    | LitStr
+    | LitChar
+    | LitBool
+    | Ident
+    | Path
+    | Unary
+    | Binary
+    | Assign
+    | CompoundAssign
+    | Call
+    | MethodCall
+    | Field
+    | Index
+    | TupleExpr
+    | ArrayExpr
+    | RepeatArray
+    | StructLiteral
+    | IfExpr
+    | IfLet
+    | MatchExpr
+    | Block
+    | Loop
+    | While
+    | For
+    | Closure
+    | Range
+    | Cast
+    | Return
+    | Break
+    | Continue
+    | MacroCall
+    | Await
+    | Try
+    | Paren
+    | OptionSome
+    | OptionNone
+    | ResultOk
+    | ResultErr
 )
 
 
 # ---------------------------------------------------------------------------
 # Statements
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class LetStmt(Node):
@@ -631,6 +712,7 @@ Stmt = LetStmt | ExprStmt | ItemStmt
 # ---------------------------------------------------------------------------
 # Items (top-level declarations)
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class FnParam(Node):
@@ -684,6 +766,7 @@ class ImplBlock(Node):
 @dataclass
 class TraitItem(Node):
     """A signature or default method inside a trait."""
+
     fn: FnDecl | None
     ty: Type | None
 
@@ -738,11 +821,20 @@ class GenericParam(Node):
 @dataclass
 class Attr(Node):
     """#[derive(...)] or #[cfg(...)]"""
+
     name: str
     args: str | None
 
 
 Item = (
-    FnDecl | StructDecl | EnumDecl | ImplBlock | TraitDecl
-    | UseDecl | ModDecl | ConstDecl | TypeAlias | IncludeDecl
+    FnDecl
+    | StructDecl
+    | EnumDecl
+    | ImplBlock
+    | TraitDecl
+    | UseDecl
+    | ModDecl
+    | ConstDecl
+    | TypeAlias
+    | IncludeDecl
 )
