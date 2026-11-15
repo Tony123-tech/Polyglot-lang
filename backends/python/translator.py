@@ -512,6 +512,16 @@ def _runtime_vec_concat(values: list):
     return values
 
 
+def _runtime_vec_swap_remove(values: list, index: int):
+    if index < 0 or index >= len(values):
+        raise IndexError("swap_remove index out of bounds")
+    value = values[index]
+    last = values.pop()
+    if index < len(values):
+        values[index] = last
+    return value
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1370,6 +1380,7 @@ class Translator:
         ns["_vec_rchunks"] = _runtime_vec_rchunks
         ns["_vec_rchunks_exact"] = _runtime_vec_rchunks_exact
         ns["_vec_concat"] = _runtime_vec_concat
+        ns["_vec_swap_remove"] = _runtime_vec_swap_remove
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3535,6 +3546,12 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_vec_concat", ctx=ast.Load()),
                     args=[recv],
+                    keywords=[],
+                )
+            if e.method == "swap_remove" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_swap_remove", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
             if e.method == "retain" and len(e.args) == 1:

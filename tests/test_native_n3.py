@@ -147,6 +147,12 @@ fn vec_concat_ints(values: Vec<Vec<i64>>) -> Vec<i64> {
     values.concat()
 }
 """,
+    "vec_swap_remove": """
+fn vec_swap_remove(mut values: Vec<i64>, index: i64) -> Vec<i64> {
+    values.swap_remove(index as usize);
+    values
+}
+""",
 }
 
 
@@ -267,6 +273,21 @@ def test_python_vec_concat_parity():
 
     assert namespace["vec_concat_strings"](["ab", "cd", "e"]) == "abcde"
     assert namespace["vec_concat_ints"]([[1, 2], [3], []]) == [1, 2, 3]
+
+
+@pytest.mark.native
+def test_native_vec_swap_remove(native_ns):
+    assert native_ns["vec_swap_remove"]([1, 2, 3, 4], 1) == [1, 4, 3]
+    assert native_ns["vec_swap_remove"]([1, 2, 3], 2) == [1, 2]
+    assert native_ns["vec_swap_remove"]([1], 0) == []
+
+
+def test_python_vec_swap_remove_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_swap_remove"])))
+
+    assert namespace["vec_swap_remove"]([1, 2, 3, 4], 1) == [1, 4, 3]
+    assert namespace["vec_swap_remove"]([1, 2, 3], 2) == [1, 2]
+    assert namespace["vec_swap_remove"]([1], 0) == []
 
 
 @pytest.mark.native
