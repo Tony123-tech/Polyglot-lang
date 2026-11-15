@@ -157,6 +157,12 @@ fn n6_map_retain_keys(
     keys
 }
 """,
+    "map_clear": """
+fn n6_map_clear(mut values: HashMap<String, i64>) -> i64 {
+    values.clear();
+    values.len() as i64
+}
+""",
 }
 
 
@@ -267,6 +273,18 @@ def test_native_map_retain(native_ns):
     ]
     assert native_ns["n6_map_retain_keys"]({"a": 1}) == []
     assert native_ns["n6_map_retain_keys"]({}) == []
+
+
+@pytest.mark.native
+def test_native_map_clear(native_ns):
+    assert native_ns["n6_map_clear"]({"a": 1, "b": 2}) == 0
+    assert native_ns["n6_map_clear"]({}) == 0
+
+
+def test_python_map_clear():
+    ns = _run_python(SOURCES["map_clear"])
+    assert ns["n6_map_clear"]({"a": 1, "b": 2}) == 0
+    assert ns["n6_map_clear"]({}) == 0
 
 
 def test_python_map_retain():
