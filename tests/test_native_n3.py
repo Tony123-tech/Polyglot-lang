@@ -134,6 +134,11 @@ fn vec_rchunks(values: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
     values.rchunks(size as usize)
 }
 """,
+    "vec_rchunks_exact": """
+fn vec_rchunks_exact(values: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
+    values.rchunks_exact(size as usize)
+}
+""",
 }
 
 
@@ -226,6 +231,21 @@ def test_python_vec_rchunks_parity():
     assert namespace["vec_rchunks"]([1, 2, 3, 4, 5], 2) == [[4, 5], [2, 3], [1]]
     assert namespace["vec_rchunks"]([1, 2, 3], 2) == [[2, 3], [1]]
     assert namespace["vec_rchunks"]([], 2) == []
+
+
+@pytest.mark.native
+def test_native_vec_rchunks_exact(native_ns):
+    assert native_ns["vec_rchunks_exact"]([1, 2, 3, 4, 5], 2) == [[4, 5], [2, 3]]
+    assert native_ns["vec_rchunks_exact"]([1, 2, 3], 2) == [[2, 3]]
+    assert native_ns["vec_rchunks_exact"]([1], 2) == []
+
+
+def test_python_vec_rchunks_exact_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_rchunks_exact"])))
+
+    assert namespace["vec_rchunks_exact"]([1, 2, 3, 4, 5], 2) == [[4, 5], [2, 3]]
+    assert namespace["vec_rchunks_exact"]([1, 2, 3], 2) == [[2, 3]]
+    assert namespace["vec_rchunks_exact"]([1], 2) == []
 
 
 @pytest.mark.native
