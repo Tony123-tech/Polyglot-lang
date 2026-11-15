@@ -138,6 +138,15 @@ fn n5_option_map_or_none() -> i64 {
     value.map_or(7, |x| x * 2)
 }
 """,
+    "option_map_or_else": """
+fn n5_option_map_or_else_some() -> i64 {
+    Some(5).map_or_else(|| 0, |x| x + 1)
+}
+fn n5_option_map_or_else_none() -> i64 {
+    let value: Option<i64> = None;
+    value.map_or_else(|| 7, |x| x + 1)
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -1060,6 +1069,19 @@ def test_python_option_map_or():
 
     assert ns["n5_option_map_or_some"]() == 10
     assert ns["n5_option_map_or_none"]() == 7
+
+
+@pytest.mark.native
+def test_native_option_map_or_else(native_ns):
+    assert native_ns["n5_option_map_or_else_some"]() == 6
+    assert native_ns["n5_option_map_or_else_none"]() == 7
+
+
+def test_python_option_map_or_else():
+    ns = _run_python(SOURCES["option_map_or_else"])
+
+    assert ns["n5_option_map_or_else_some"]() == 6
+    assert ns["n5_option_map_or_else_none"]() == 7
 
 
 @pytest.mark.native
