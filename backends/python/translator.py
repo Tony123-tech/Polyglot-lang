@@ -712,6 +712,12 @@ def _runtime_map_remove(mapping, key):
     return _Option.none()
 
 
+def _runtime_map_retain(mapping, predicate):
+    for key in list(mapping.keys()):
+        if not predicate(key, mapping[key]):
+            del mapping[key]
+
+
 def _runtime_map_keys(mapping):
     return list(mapping.keys())
 
@@ -1303,6 +1309,7 @@ class Translator:
         ns["_map_get"] = _runtime_map_get
         ns["_map_get_mut"] = _runtime_map_get_mut
         ns["_map_remove"] = _runtime_map_remove
+        ns["_map_retain"] = _runtime_map_retain
         ns["_map_keys"] = _runtime_map_keys
         ns["_map_values"] = _runtime_map_values
         ns["_map_iter"] = _runtime_map_iter
@@ -3218,6 +3225,12 @@ class Translator:
                         args=[recv, self.translate_expr(e.args[0])],
                         keywords=[],
                     )
+                if e.method == "retain" and len(e.args) == 1:
+                    return ast.Call(
+                        func=ast.Name(id="_map_retain", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
                 if e.method == "contains_key" and len(e.args) == 1:
                     return ast.Compare(
                         left=self.translate_expr(e.args[0]),
@@ -4419,7 +4432,10 @@ class Translator:
     def _translate_closure(self, c: Closure) -> ast.Lambda:
         args: list[ast.arg] = []
         param_names: list[str] = []
-        for pat, _ty in c.params:
+        for index, (pat, _ty) in enumerate(c.params):
+            if isinstance(pat, PatWildcard):
+                args.append(ast.arg(arg=f"_unused{index}", annotation=None))
+                continue
             if not isinstance(pat, PatIdent):
                 raise TranslateError(
                     f"unsupported closure param {type(pat).__name__}",

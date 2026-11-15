@@ -147,6 +147,16 @@ fn n6_map_and_modify(
     values.get(&key).unwrap_or(-1)
 }
 """,
+    "map_retain": """
+fn n6_map_retain_keys(
+    mut values: HashMap<String, i64>,
+) -> Vec<String> {
+    values.retain(|_, value| *value % 2 == 0);
+    let mut keys = values.keys();
+    keys.sort();
+    keys
+}
+""",
 }
 
 
@@ -247,6 +257,24 @@ def test_python_map_insert_and_remove():
 @pytest.mark.native
 def test_native_map_local_binding(native_ns):
     assert native_ns["n6_map_local"]() == 5
+
+
+@pytest.mark.native
+def test_native_map_retain(native_ns):
+    assert native_ns["n6_map_retain_keys"]({"a": 1, "b": 2, "c": 3, "d": 4}) == [
+        "b",
+        "d",
+    ]
+    assert native_ns["n6_map_retain_keys"]({"a": 1}) == []
+    assert native_ns["n6_map_retain_keys"]({}) == []
+
+
+def test_python_map_retain():
+    ns = _run_python(SOURCES["map_retain"])
+    values = {"a": 1, "b": 2, "c": 3, "d": 4}
+    assert ns["n6_map_retain_keys"](values) == ["b", "d"]
+    assert ns["n6_map_retain_keys"]({"a": 1}) == []
+    assert ns["n6_map_retain_keys"]({}) == []
 
 
 def test_python_map_local_binding():
