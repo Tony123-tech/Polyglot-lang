@@ -1261,6 +1261,35 @@ class _Option:
     def iter(self):
         return [self._value] if self._is_some else []
 
+    def insert(self, value):
+        self._is_some = True
+        self._value = value
+        return self._value
+
+    def get_or_insert(self, value):
+        if not self._is_some:
+            self._is_some = True
+            self._value = value
+        return self._value
+
+    def get_or_insert_with(self, factory):
+        if not self._is_some:
+            self._is_some = True
+            self._value = factory()
+        return self._value
+
+    def map_or(self, default, f):
+        return f(self._value) if self._is_some else default
+
+    def map_or_else(self, default_factory, f):
+        return f(self._value) if self._is_some else default_factory()
+
+    def is_some_and(self, predicate):
+        return self._is_some and predicate(self._value)
+
+    def is_none_or(self, predicate):
+        return (not self._is_some) or predicate(self._value)
+
     def replace(self, value):
         previous = _Option(self._is_some, self._value)
         self._is_some = True

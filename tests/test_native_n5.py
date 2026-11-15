@@ -95,6 +95,18 @@ fn n5_option_xor_none() -> Option<i64> {
     value.xor(Some(2))
 }
 """,
+    "option_insert": """
+fn n5_option_insert_none() -> i64 {
+    let mut value: Option<i64> = None;
+    value.insert(7);
+    value.unwrap()
+}
+fn n5_option_insert_some() -> i64 {
+    let mut value: Option<i64> = Some(3);
+    value.insert(9);
+    value.unwrap()
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -965,6 +977,19 @@ def test_python_option_xor():
 
     assert ns["n5_option_xor_some"]() == ns["_Option"].none()
     assert ns["n5_option_xor_none"]() == ns["_Option"].some(2)
+
+
+@pytest.mark.native
+def test_native_option_insert(native_ns):
+    assert native_ns["n5_option_insert_none"]() == 7
+    assert native_ns["n5_option_insert_some"]() == 9
+
+
+def test_python_option_insert():
+    ns = _run_python(SOURCES["option_insert"])
+
+    assert ns["n5_option_insert_none"]() == 7
+    assert ns["n5_option_insert_some"]() == 9
 
 
 @pytest.mark.native

@@ -1395,6 +1395,27 @@ class RustCodegen:
                 and self._option_result_type(e.receiver) == "Option"
             ):
                 return f"{recv}.{e.method}({self.expr_to_rust(e.args[0])})"
+            if (
+                e.method
+                in (
+                    "insert",
+                    "get_or_insert",
+                    "get_or_insert_with",
+                    "is_some_and",
+                    "is_none_or",
+                )
+                and len(e.args) == 1
+                and self._option_result_type(e.receiver) == "Option"
+            ):
+                return f"{recv}.{e.method}({self.expr_to_rust(e.args[0])})"
+            if (
+                e.method in ("map_or", "map_or_else")
+                and len(e.args) == 2
+                and self._option_result_type(e.receiver) == "Option"
+            ):
+                first = self.expr_to_rust(e.args[0])
+                second = self.expr_to_rust(e.args[1])
+                return f"{recv}.{e.method}({first}, {second})"
             if e.method == "chars" and not e.args:
                 return f"{recv}.chars().collect::<Vec<char>>()"
             if e.method == "char_indices" and not e.args:
