@@ -1096,6 +1096,10 @@ def _runtime_string_split_terminator(value, separator):
     return parts
 
 
+def _runtime_string_rsplit_terminator(value, separator):
+    return list(reversed(_runtime_string_split_terminator(value, separator)))
+
+
 def _runtime_string_lines(value):
     if not value:
         return []
@@ -1568,6 +1572,7 @@ class Translator:
         ns["_string_matches"] = _runtime_string_matches
         ns["_string_replacen"] = _runtime_string_replacen
         ns["_string_split_terminator"] = _runtime_string_split_terminator
+        ns["_string_rsplit_terminator"] = _runtime_string_rsplit_terminator
         ns["_string_lines"] = _runtime_string_lines
         ns["_string_is_char_boundary"] = _runtime_string_is_char_boundary
         ns["_string_char_indices"] = _runtime_string_char_indices
@@ -4449,6 +4454,12 @@ class Translator:
             ):
                 return ast.Call(
                     func=ast.Name(id="_string_split_terminator", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "rsplit_terminator" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_string_rsplit_terminator", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )

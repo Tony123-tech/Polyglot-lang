@@ -86,6 +86,11 @@ fn string_split_terminator(value: String) -> Vec<String> {
     value.split_terminator(",")
 }
 """,
+    "string_rsplit_terminator": """
+fn string_rsplit_terminator(value: String) -> Vec<String> {
+    value.rsplit_terminator(",")
+}
+""",
     "string_join": """
 fn string_join(values: Vec<String>, separator: String) -> String {
     values.join(separator)
@@ -340,6 +345,19 @@ def test_python_string_split_terminator_parity():
 
     assert namespace["string_split_terminator"]("a,b,") == ["a", "b"]
     assert namespace["string_split_terminator"]("a,b") == ["a", "b"]
+
+
+@pytest.mark.native
+def test_native_string_rsplit_terminator(native_ns):
+    assert native_ns["string_rsplit_terminator"]("a,b,") == ["b", "a"]
+    assert native_ns["string_rsplit_terminator"]("a,b") == ["b", "a"]
+
+
+def test_python_string_rsplit_terminator_parity():
+    namespace = compile_rust(parse(lex(SOURCES["string_rsplit_terminator"])))
+
+    assert namespace["string_rsplit_terminator"]("a,b,") == ["b", "a"]
+    assert namespace["string_rsplit_terminator"]("a,b") == ["b", "a"]
 
 
 @pytest.mark.native
