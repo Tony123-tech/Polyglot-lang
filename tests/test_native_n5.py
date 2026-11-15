@@ -79,6 +79,18 @@ fn n5_option_replace_none() -> i64 {
     if old.is_none() { value.unwrap() } else { -1 }
 }
 """,
+    "option_take": """
+fn n5_option_take_some() -> i64 {
+    let mut value: Option<i64> = Some(4);
+    let old = value.take().unwrap();
+    if value.is_none() { old * 10 } else { -1 }
+}
+fn n5_option_take_none() -> bool {
+    let mut value: Option<i64> = None;
+    let old = value.take();
+    old.is_none() && value.is_none()
+}
+""",
     "nested_option_construction": """
 fn n5_nested_option() -> Option<Option<i64>> {
     Some(Some(1))
@@ -886,6 +898,19 @@ def test_python_option_replace():
 
     assert ns["n5_option_replace_some"]() == 12
     assert ns["n5_option_replace_none"]() == 3
+
+
+@pytest.mark.native
+def test_native_option_take(native_ns):
+    assert native_ns["n5_option_take_some"]() == 40
+    assert native_ns["n5_option_take_none"]() is True
+
+
+def test_python_option_take():
+    ns = _run_python(SOURCES["option_take"])
+
+    assert ns["n5_option_take_some"]() == 40
+    assert ns["n5_option_take_none"]() is True
 
 
 # ---------------------------------------------------------------------------

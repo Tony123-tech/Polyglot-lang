@@ -997,6 +997,12 @@ class _Option:
         self._value = value
         return previous
 
+    def take(self):
+        previous = _Option(self._is_some, self._value)
+        self._is_some = False
+        self._value = None
+        return previous
+
     def ok_or(self, error):
         return (
             _Result.from_ok(self._value) if self._is_some else _Result.from_err(error)
