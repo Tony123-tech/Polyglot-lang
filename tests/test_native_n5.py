@@ -362,6 +362,19 @@ def test_native_vec_clear_empty_reverse_and_string_repeat(native_ns):
     assert native_ns["n5_string_repeat"]("ab", 3) == "ababab"
 
 
+def test_python_vec_dedup_by():
+    ns = _run_python(
+        """
+fn dedup_by_modulo(mut values: Vec<i64>) -> Vec<i64> {
+    values.dedup_by(|a, b| a % 10 == b % 10);
+    values
+}
+"""
+    )
+    assert ns["dedup_by_modulo"]([1, 11, 2, 22, 3]) == [1, 2, 3]
+    assert ns["dedup_by_modulo"]([]) == []
+
+
 @pytest.mark.native
 def test_native_vec_first_last_get_and_string_search(native_ns):
     assert native_ns["n5_vec_first"]([8, 9]) == 8
