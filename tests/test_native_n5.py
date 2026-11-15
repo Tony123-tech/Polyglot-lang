@@ -131,6 +131,13 @@ fn n5_option_get_or_insert_with_some() -> i64 {
     value.unwrap()
 }
 """,
+    "option_map_or": """
+fn n5_option_map_or_some() -> i64 { Some(5).map_or(0, |x| x * 2) }
+fn n5_option_map_or_none() -> i64 {
+    let value: Option<i64> = None;
+    value.map_or(7, |x| x * 2)
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -1040,6 +1047,19 @@ def test_python_option_get_or_insert_with():
 
     assert ns["n5_option_get_or_insert_with_none"]() == 11
     assert ns["n5_option_get_or_insert_with_some"]() == 3
+
+
+@pytest.mark.native
+def test_native_option_map_or(native_ns):
+    assert native_ns["n5_option_map_or_some"]() == 10
+    assert native_ns["n5_option_map_or_none"]() == 7
+
+
+def test_python_option_map_or():
+    ns = _run_python(SOURCES["option_map_or"])
+
+    assert ns["n5_option_map_or_some"]() == 10
+    assert ns["n5_option_map_or_none"]() == 7
 
 
 @pytest.mark.native
