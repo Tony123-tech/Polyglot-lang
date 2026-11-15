@@ -945,6 +945,13 @@ class _Option:
     def filter(self, predicate):
         return self if self._is_some and predicate(self._value) else _Option.none()
 
+    def zip(self, other):
+        if not isinstance(other, _Option):
+            raise TypeError("Option::zip expects an Option argument")
+        if self._is_some and other._is_some:
+            return _Option.some((self._value, other._value))
+        return _Option.none()
+
     def ok_or(self, error):
         return (
             _Result.from_ok(self._value) if self._is_some else _Result.from_err(error)

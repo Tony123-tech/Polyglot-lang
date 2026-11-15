@@ -63,6 +63,10 @@ fn n5_option_is_some_false() -> bool {
     "option_unwrap_or_else_called_on_none": """
 fn n5_option_unwrap_or_else_on_none() -> i64 { None.unwrap_or_else(|| 99) }
 """,
+    "option_zip": """
+fn n5_option_zip_some() -> Option<(i64, i64)> { Some(1).zip(Some(2)) }
+fn n5_option_zip_none() -> Option<(i64, i64)> { Some(1).zip(None) }
+""",
     "nested_option_construction": """
 fn n5_nested_option() -> Option<Option<i64>> {
     Some(Some(1))
@@ -844,6 +848,19 @@ def test_python_option_predicates_parity():
     assert ns["b"]() is False
     assert ns["c"]() is True
     assert ns["d"]() is False
+
+
+@pytest.mark.native
+def test_native_option_zip(native_ns):
+    assert native_ns["n5_option_zip_some"]() == (1, 2)
+    assert native_ns["n5_option_zip_none"]() is None
+
+
+def test_python_option_zip():
+    ns = _run_python(SOURCES["option_zip"])
+
+    assert ns["n5_option_zip_some"]() == ns["_Option"].some((1, 2))
+    assert ns["n5_option_zip_none"]() == ns["_Option"].none()
 
 
 # ---------------------------------------------------------------------------
