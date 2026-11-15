@@ -193,6 +193,11 @@ fn char_to_uppercase(value: char) -> String {
     value.to_uppercase().to_string()
 }
 """,
+    "char_to_lowercase": """
+fn char_to_lowercase(value: char) -> String {
+    value.to_lowercase().to_string()
+}
+""",
 }
 
 
@@ -618,3 +623,18 @@ def test_python_char_to_uppercase_parity():
     assert namespace["char_to_uppercase"]("a") == "A"
     assert namespace["char_to_uppercase"]("ß") == "SS"
     assert namespace["char_to_uppercase"]("1") == "1"
+
+
+@pytest.mark.native
+def test_native_char_to_lowercase(native_ns):
+    assert native_ns["char_to_lowercase"]("A") == "a"
+    assert native_ns["char_to_lowercase"]("É") == "é"
+    assert native_ns["char_to_lowercase"]("1") == "1"
+
+
+def test_python_char_to_lowercase_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_to_lowercase"])))
+
+    assert namespace["char_to_lowercase"]("A") == "a"
+    assert namespace["char_to_lowercase"]("É") == "é"
+    assert namespace["char_to_lowercase"]("1") == "1"
