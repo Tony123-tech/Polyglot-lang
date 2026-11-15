@@ -8,8 +8,10 @@ version = "0.3.0"
 description = "A Rust-like language with Python and native PyO3 backends."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.14.8"
+dependencies = [
+    "lazyscan>=0.6.4",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -24,6 +26,9 @@ dev = [
 polyglot = "api.cli:main"
 
 [tool.setuptools]
+# Top-level modules shipped in the wheel. Test modules (tests/) and developer
+# tooling (tools/) are intentionally excluded: package discovery below only
+# includes api* and backends*, and pytest collects tests/ from the sdist tree.
 py-modules = [
     "ast_nodes",
     "lexer",

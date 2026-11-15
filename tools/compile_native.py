@@ -28,11 +28,14 @@ def main() -> int:
         description="Pre-compile native test sources.",
     )
     parser.add_argument(
-        "--tests-dir", default=ROOT / "tests", type=Path,
+        "--tests-dir",
+        default=ROOT / "tests",
+        type=Path,
         help="Directory containing test_native_*.py (default: tests/)",
     )
     parser.add_argument(
-        "--check", action="store_true",
+        "--check",
+        action="store_true",
         help="Only collect and report; do not compile.",
     )
     args = parser.parse_args()

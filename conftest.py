@@ -68,4 +68,5 @@ def native_backend():
     if CARGO is None:
         pytest.skip("cargo not found on PATH")
     from backends import get_backend
+
     return get_backend("native", trusted=True)

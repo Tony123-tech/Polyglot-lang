@@ -1,4 +1,5 @@
 """Check documentation consistency."""
+
 import re
 import sys
 from pathlib import Path
@@ -6,8 +7,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 errors = []
 
+
 def fail(msg):
     errors.append(msg)
+
 
 # 1. README and SPEC test baseline must match
 readme = (ROOT / "README.md").read_text()
@@ -16,7 +19,9 @@ pattern = r"(\d+) passed, (\d+) skipped, (\d+) deselected"
 readme_match = re.search(pattern, readme)
 spec_match = re.search(pattern, spec)
 if readme_match and spec_match and readme_match.groups() != spec_match.groups():
-    fail(f"README and SPEC test baseline mismatch: {readme_match.groups()} vs {spec_match.groups()}")
+    fail(
+        f"README and SPEC test baseline mismatch: {readme_match.groups()} vs {spec_match.groups()}"
+    )
 
 # 2. SPEC section numbers must be unique and sequential
 section_nums = re.findall(r"^- \*\*(\d+\.\d+)\*\*", spec, re.MULTILINE)

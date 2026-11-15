@@ -38,6 +38,7 @@ _PREAMBLE_KEY = "__preamble__"
 # Collect
 # ---------------------------------------------------------------------------
 
+
 def collect_sources(tests_dir: Path) -> dict[str, str]:
     """Load every test_native_*.py and merge their SOURCES dicts."""
     sources: dict[str, str] = {}
@@ -73,16 +74,13 @@ def collect_from_modules(modules: list[Any]) -> dict[str, str]:
         for fn_name, src in module_sources.items():
             if fn_name in sources:
                 raise RuntimeError(
-                    f"Duplicate native function {fn_name!r} in "
-                    f"{mod.__name__}"
+                    f"Duplicate native function {fn_name!r} in {mod.__name__}"
                 )
             sources[fn_name] = src
     return _with_preamble(sources, preambles)
 
 
-def _with_preamble(
-    sources: dict[str, str], preambles: list[str]
-) -> dict[str, str]:
+def _with_preamble(sources: dict[str, str], preambles: list[str]) -> dict[str, str]:
     if not preambles:
         return sources
     return {_PREAMBLE_KEY: "\n".join(preambles), **sources}
@@ -91,6 +89,7 @@ def _with_preamble(
 # ---------------------------------------------------------------------------
 # Compile
 # ---------------------------------------------------------------------------
+
 
 def compile_sources(sources: dict[str, str]) -> dict[str, Any]:
     """Merge all sources, parse, compile via native backend, return namespace."""
@@ -114,6 +113,7 @@ def compile_sources(sources: dict[str, str]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _load_module(path: Path):
     spec = importlib.util.spec_from_file_location(path.stem, path)
