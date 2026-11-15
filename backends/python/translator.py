@@ -3525,6 +3525,18 @@ class Translator:
                         args=[recv],
                         keywords=[],
                     )
+                if e.method == "into_keys" and not e.args:
+                    return ast.Call(
+                        func=ast.Name(id="_map_keys", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
+                if e.method == "into_values" and not e.args:
+                    return ast.Call(
+                        func=ast.Name(id="_map_values", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
                 if e.method == "values" and not e.args:
                     return ast.Call(
                         func=ast.Name(id="_map_values", ctx=ast.Load()),

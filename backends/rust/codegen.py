@@ -1303,6 +1303,16 @@ class RustCodegen:
                     return f"{recv}.entry({self._owned_arg_to_rust(e.args[0])})"
                 if e.method == "keys" and not e.args:
                     return f"{recv}.keys().cloned().collect::<Vec<_>>()"
+                if e.method == "into_keys" and not e.args:
+                    return (
+                        f"{recv}.into_iter().map(|(key, _)| key)"
+                        ".collect::<Vec<_>>()"
+                    )
+                if e.method == "into_values" and not e.args:
+                    return (
+                        f"{recv}.into_iter().map(|(_, value)| value)"
+                        ".collect::<Vec<_>>()"
+                    )
                 if e.method == "values" and not e.args:
                     return f"{recv}.values().cloned().collect::<Vec<_>>()"
                 if e.method == "iter" and not e.args:

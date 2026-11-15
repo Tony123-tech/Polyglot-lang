@@ -163,6 +163,14 @@ fn n6_map_clear(mut values: HashMap<String, i64>) -> i64 {
     values.len() as i64
 }
 """,
+    "map_into": """
+fn n6_map_into_keys(values: HashMap<String, i64>) -> Vec<String> {
+    values.into_keys()
+}
+fn n6_map_into_values(values: HashMap<String, i64>) -> Vec<i64> {
+    values.into_values()
+}
+""",
 }
 
 
@@ -285,6 +293,20 @@ def test_python_map_clear():
     ns = _run_python(SOURCES["map_clear"])
     assert ns["n6_map_clear"]({"a": 1, "b": 2}) == 0
     assert ns["n6_map_clear"]({}) == 0
+
+
+@pytest.mark.native
+def test_native_map_into_keys_values(native_ns):
+    values = {"b": 2, "a": 1}
+    assert sorted(native_ns["n6_map_into_keys"](values)) == ["a", "b"]
+    assert sorted(native_ns["n6_map_into_values"](values)) == [1, 2]
+
+
+def test_python_map_into_keys_values():
+    ns = _run_python(SOURCES["map_into"])
+    values = {"b": 2, "a": 1}
+    assert sorted(ns["n6_map_into_keys"](values)) == ["a", "b"]
+    assert sorted(ns["n6_map_into_values"](values)) == [1, 2]
 
 
 def test_python_map_retain():
