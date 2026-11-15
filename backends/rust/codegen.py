@@ -1526,6 +1526,8 @@ class RustCodegen:
                     f"{recv}.clone().into_iter().all("
                     f"{self.expr_to_rust(e.args[0])})"
                 )
+            if e.method == "min" and not e.args:
+                return f"{recv}.iter().min().cloned()"
             if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
                 return (
                     f"{recv}.{e.method}(&{self.expr_to_rust(e.args[0])})"

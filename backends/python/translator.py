@@ -554,6 +554,12 @@ def _runtime_vec_all(values: list, predicate) -> bool:
     return all(predicate(value) for value in values)
 
 
+def _runtime_vec_min(values: list):
+    if not values:
+        return _Option.none()
+    return _Option.some(min(values))
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1418,6 +1424,7 @@ class Translator:
         ns["_vec_position"] = _runtime_vec_position
         ns["_vec_any"] = _runtime_vec_any
         ns["_vec_all"] = _runtime_vec_all
+        ns["_vec_min"] = _runtime_vec_min
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3619,6 +3626,12 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_vec_all", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "min" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_vec_min", ctx=ast.Load()),
+                    args=[recv],
                     keywords=[],
                 )
             if e.method == "retain" and len(e.args) == 1:

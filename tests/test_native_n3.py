@@ -185,6 +185,11 @@ fn vec_all(values: Vec<i64>) -> bool {
     values.all(|value| value > 0)
 }
 """,
+    "vec_min": """
+fn vec_min(values: Vec<i64>) -> Option<i64> {
+    values.min()
+}
+""",
 }
 
 
@@ -404,6 +409,19 @@ def test_python_vec_all_parity():
     assert namespace["vec_all"]([1, 2, 3]) is True
     assert namespace["vec_all"]([1, 0, 3]) is False
     assert namespace["vec_all"]([]) is True
+
+
+@pytest.mark.native
+def test_native_vec_min(native_ns):
+    assert native_ns["vec_min"]([4, 2, 7]) == 2
+    assert native_ns["vec_min"]([]) is None
+
+
+def test_python_vec_min_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_min"])))
+
+    assert namespace["vec_min"]([4, 2, 7]) == namespace["_Option"].some(2)
+    assert namespace["vec_min"]([]) == namespace["_Option"].none()
 
 
 @pytest.mark.native
