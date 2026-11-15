@@ -1205,6 +1205,10 @@ def _runtime_parse(value):
         return _Result.from_err(str(exc))
 
 
+def _runtime_char_is_ascii_uppercase(value):
+    return len(value) == 1 and "A" <= value <= "Z"
+
+
 def _runtime_char_is_ascii_whitespace(value):
     return len(value) == 1 and value in " \t\n\r\x0c"
 
@@ -1725,6 +1729,7 @@ class Translator:
         ns["_char_is_ascii_digit"] = _runtime_char_is_ascii_digit
         ns["_char_is_ascii_alphanumeric"] = _runtime_char_is_ascii_alphanumeric
         ns["_char_is_ascii_whitespace"] = _runtime_char_is_ascii_whitespace
+        ns["_char_is_ascii_uppercase"] = _runtime_char_is_ascii_uppercase
         ns["_map_insert"] = _runtime_map_insert
         ns["_map_get"] = _runtime_map_get
         ns["_map_get_mut"] = _runtime_map_get_mut
@@ -4567,6 +4572,15 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(
                         id="_char_is_ascii_whitespace",
+                        ctx=ast.Load(),
+                    ),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "is_ascii_uppercase" and not e.args:
+                return ast.Call(
+                    func=ast.Name(
+                        id="_char_is_ascii_uppercase",
                         ctx=ast.Load(),
                     ),
                     args=[recv],
