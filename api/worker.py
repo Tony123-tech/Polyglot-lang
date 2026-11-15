@@ -52,7 +52,10 @@ class InProcessQueue:
             self._worker_task = None
 
     async def submit(
-        self, source: str, backend: str, trusted: bool,
+        self,
+        source: str,
+        backend: str,
+        trusted: bool,
     ) -> tuple[int, str, str]:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
@@ -63,9 +66,7 @@ class InProcessQueue:
         while True:
             job = await self._queue.get()
             try:
-                result = await self._executor.run(
-                    job.source, job.backend, job.trusted
-                )
+                result = await self._executor.run(job.source, job.backend, job.trusted)
                 if not job.future.done():
                     job.future.set_result(result)
             except Exception as e:  # noqa: BLE001

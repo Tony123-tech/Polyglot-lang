@@ -87,9 +87,7 @@ def _python_def_to_rust(source: str) -> tuple[str, int]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
     if len(fn_nodes) != 1:
-        raise InlineLangError(
-            "inline_lang requires exactly one function definition"
-        )
+        raise InlineLangError("inline_lang requires exactly one function definition")
     fn = fn_nodes[0]
 
     keyword = "async fn" if isinstance(fn, ast.AsyncFunctionDef) else "fn"
@@ -125,9 +123,7 @@ def _inline_line(exc: Exception, line_offset: int) -> int | None:
     if isinstance(exc, (ParseError, TranslateError)):
         return exc.line + line_offset if exc.line else None
     if isinstance(exc, RustCompileError):
-        return (
-            exc.source_line + line_offset if exc.source_line else None
-        )
+        return exc.source_line + line_offset if exc.source_line else None
     return None
 
 
@@ -179,9 +175,7 @@ def inline_lang(
         try:
             source = inspect.getsource(fn)
         except (OSError, TypeError) as exc:
-            raise InlineLangError(
-                "inline_lang requires inspectable source"
-            ) from exc
+            raise InlineLangError("inline_lang requires inspectable source") from exc
 
         rust_source, def_line = _python_def_to_rust(source)
 
@@ -218,9 +212,7 @@ def inline_lang(
                 extra_globals=captured if backend == "python" else None,
             )
         except InlineLangError as exc:
-            wrapped = InlineLangError(
-                f"inline_lang failed to compile {fn.__name__!r}"
-            )
+            wrapped = InlineLangError(f"inline_lang failed to compile {fn.__name__!r}")
             wrapped.inline_line = getattr(exc, "inline_line", None)
             raise wrapped from exc
 

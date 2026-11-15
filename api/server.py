@@ -73,5 +73,7 @@ async def compile_endpoint(
         names = [line for line in stdout.splitlines() if line]
         return CompileResponse(ok=True, names=names, executor=executor.mode)
     return CompileResponse(
-        ok=False, error=stderr or stdout, executor=executor.mode,
+        ok=False,
+        error=stderr or stdout,
+        executor=executor.mode,
     )

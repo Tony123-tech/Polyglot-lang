@@ -30,11 +30,19 @@ class SubprocessExecutor:
         self.cfg = cfg
 
     async def run(
-        self, source: str, backend: str, trusted: bool,
+        self,
+        source: str,
+        backend: str,
+        trusted: bool,
     ) -> tuple[int, str, str]:
         args = [
-            sys.executable, "-m", "api.cli", "compile",
-            "--backend", backend, "--stdin",
+            sys.executable,
+            "-m",
+            "api.cli",
+            "compile",
+            "--backend",
+            backend,
+            "--stdin",
         ]
         if trusted:
             args.append("--trusted")
@@ -68,18 +76,30 @@ class DockerExecutor:
         self.cfg = cfg
 
     async def run(
-        self, source: str, backend: str, trusted: bool,
+        self,
+        source: str,
+        backend: str,
+        trusted: bool,
     ) -> tuple[int, str, str]:
         args = [
-            "docker", "run", "--rm", "-i",
+            "docker",
+            "run",
+            "--rm",
+            "-i",
             "--network=none",
             "--read-only",
             f"--memory={self.cfg.docker_memory}",
             f"--cpus={self.cfg.docker_cpus}",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=64m",
             self.cfg.docker_image,
-            "python", "-m", "api.cli", "compile",
-            "--backend", backend, "--stdin",
+            "python",
+            "-m",
+            "api.cli",
+            "compile",
+            "--backend",
+            backend,
+            "--stdin",
         ]
         if trusted:
             args.append("--trusted")
@@ -102,6 +122,7 @@ class DockerExecutor:
         if proc.returncode is None:
             return 1, "", "process terminated without return code"
         return proc.returncode, stdout.decode(), stderr.decode()
+
 
 def make_executor(cfg: Config) -> SubprocessExecutor | DockerExecutor:
     if cfg.executor == "docker":

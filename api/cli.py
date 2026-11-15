@@ -11,6 +11,8 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import shutil
 import sys
 import traceback
@@ -80,7 +82,11 @@ def _format_five_line(error: Exception) -> str:
     elif "parse" in note.lower() or "syntax" in note.lower():
         help_text = "check the source syntax near the reported location"
 
-    loc = f"at: line {line}, column {col}" if line is not None and col is not None else "at: <unknown>"
+    loc = (
+        f"at: line {line}, column {col}"
+        if line is not None and col is not None
+        else "at: <unknown>"
+    )
     return (
         f"error: {reason}\n"
         f"  reason: {reason}\n"
@@ -90,9 +96,50 @@ def _format_five_line(error: Exception) -> str:
     )
 
 
-def _print_error(error: Exception, *, verbose: bool) -> None:
+def _error_payload(error: Exception) -> dict[str, Any]:
+    """Build a machine-readable diagnostic payload."""
+    text = str(error).strip()
+    first_line = text.splitlines()[0] if text else error.__class__.__name__
+    code = getattr(error, "code", None)
+    if code is None:
+        match = re.search(r"error\[(E\d+)\]", text)
+        code = match.group(1) if match else None
+    message = re.sub(r"^error(?:\[E\d+\])?:\s*", "", first_line)
+
+    line = getattr(error, "line", None)
+    col = getattr(error, "col", None)
+    if line is None:
+        line = getattr(error, "source_line", None)
+    if col is None:
+        col = getattr(error, "source_col", None)
+    if line is None:
+        line = getattr(error, "rust_line", None)
+    if col is None:
+        col = getattr(error, "rust_col", None)
+
+    span = getattr(error, "span", None)
+    source = getattr(error, "source_path", None)
+    if source is None:
+        source = getattr(error, "source_line_text", None)
+
+    return {
+        "code": code,
+        "message": message,
+        "line": line,
+        "col": col,
+        "span": list(span) if span is not None else None,
+        "source": str(source) if source is not None else None,
+    }
+
+
+def _print_error(
+    error: Exception, *, verbose: bool, error_format: str = "text"
+) -> None:
     if verbose:
         traceback.print_exception(type(error), error, error.__traceback__)
+        return
+    if error_format == "json":
+        print(json.dumps(_error_payload(error)), file=sys.stderr)
         return
     print(_format_five_line(error), file=sys.stderr)
 
@@ -102,18 +149,6 @@ def _run_main(namespace: dict[str, Any]) -> Any:
     if not callable(main):
         return None
     return main()
-
-
-def _artifact_extension() -> str:
-    if sys.platform == "darwin":
-        return ".dylib"
-    if sys.platform == "win32":
-        return ".pyd"
-    return ".so"
-
-
-def _native_artifact_path(source_path: Path) -> Path:
-    return source_path.with_suffix(_artifact_extension())
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -137,7 +172,8 @@ def cmd_build(args: argparse.Namespace) -> int:
         return 0
 
     backend = get_backend("native", trusted=True)
-    backend.compile(program)
+    module_name = source_path.stem
+    backend.compile(program, module_name=module_name)
     # NativeBackend stores the built extension in its cache; copy it out.
     cache_dir = getattr(backend, "cache_dir", None)
     if cache_dir is None:
@@ -145,7 +181,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     # Recompute the cache key the same way NativeBackend does.
     from backends.rust.codegen import RustCodegen
 
-    source_rs = RustCodegen().generate(program)
+    source_rs = RustCodegen(module_name=module_name).generate(program)
     import hashlib
 
     key = hashlib.sha256(source_rs.encode()).hexdigest()[:16]
@@ -153,7 +189,12 @@ def cmd_build(args: argparse.Namespace) -> int:
     ext = backend._find_extension(build_dir)
     out_dir = Path(args.out_dir) if args.out_dir else source_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    dest = out_dir / f"{source_path.stem}{ext.suffix}"
+    # On macOS, Python imports extension modules from ``.so`` files. Cargo
+    # produces a ``.dylib``; the copied artifact gets the importable suffix.
+    suffix = ext.suffix
+    if sys.platform == "darwin" and suffix == ".dylib":
+        suffix = ".so"
+    dest = out_dir / f"{source_path.stem}{suffix}"
     shutil.copy2(ext, dest)
     print(str(dest))
     return 0
@@ -181,6 +222,15 @@ def cmd_compile(args: argparse.Namespace) -> int:
         if not name.startswith("_"):
             print(name)
     return 0
+
+
+def _add_error_format(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--error-format",
+        choices=["text", "json"],
+        default="text",
+        help="Diagnostic format (default: text)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -217,9 +267,23 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     run_p.add_argument("file", help="Path to the .poly file")
-    run_p.add_argument("--backend", choices=["python", "native"], default="python", help="Backend to use (default: python)")
-    run_p.add_argument("--target-width", type=int, dest="target_width", default=None, help="Simulate a 32- or 64-bit usize/isize target (Python backend only)")
-    run_p.add_argument("--verbose", action="store_true", help="Print full tracebacks on error")
+    run_p.add_argument(
+        "--backend",
+        choices=["python", "native"],
+        default="python",
+        help="Backend to use (default: python)",
+    )
+    run_p.add_argument(
+        "--target-width",
+        type=int,
+        dest="target_width",
+        default=None,
+        help="Simulate a 32- or 64-bit usize/isize target (Python backend only)",
+    )
+    run_p.add_argument(
+        "--verbose", action="store_true", help="Print full tracebacks on error"
+    )
+    _add_error_format(run_p)
     run_p.set_defaults(func=cmd_run)
 
     build_p = sub.add_parser(
@@ -237,10 +301,28 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     build_p.add_argument("file", help="Path to the .poly file")
-    build_p.add_argument("--backend", choices=["python", "native"], default="native", help="Backend to use (default: native)")
-    build_p.add_argument("--target", dest="target", default=None, help="Target triple (reserved; not yet implemented)")
-    build_p.add_argument("--out-dir", dest="out_dir", default=None, help="Directory for the built extension (default: source directory)")
-    build_p.add_argument("--verbose", action="store_true", help="Print full tracebacks on error")
+    build_p.add_argument(
+        "--backend",
+        choices=["python", "native"],
+        default="native",
+        help="Backend to use (default: native)",
+    )
+    build_p.add_argument(
+        "--target",
+        dest="target",
+        default=None,
+        help="Target triple (reserved; not yet implemented)",
+    )
+    build_p.add_argument(
+        "--out-dir",
+        dest="out_dir",
+        default=None,
+        help="Directory for the built extension (default: source directory)",
+    )
+    build_p.add_argument(
+        "--verbose", action="store_true", help="Print full tracebacks on error"
+    )
+    _add_error_format(build_p)
     build_p.set_defaults(func=cmd_build)
 
     check_p = sub.add_parser(
@@ -250,14 +332,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Parse a .poly file, translate it to the Python backend, and "
             "run termination checks. Does not execute the program."
         ),
-        epilog=(
-            "Examples:\n"
-            "  polyglot check hello.poly"
-        ),
+        epilog=("Examples:\n  polyglot check hello.poly"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     check_p.add_argument("file", help="Path to the .poly file")
-    check_p.add_argument("--verbose", action="store_true", help="Print full tracebacks on error")
+    check_p.add_argument(
+        "--verbose", action="store_true", help="Print full tracebacks on error"
+    )
+    _add_error_format(check_p)
     check_p.set_defaults(func=cmd_check)
 
     compile_p = sub.add_parser(
@@ -271,6 +353,7 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--file", type=str)
     compile_p.add_argument("--trusted", action="store_true")
     compile_p.add_argument("--verbose", action="store_true")
+    _add_error_format(compile_p)
     compile_p.set_defaults(func=cmd_compile)
 
     return parser
@@ -282,10 +365,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args))
     except UntrustedCompileError as error:
-        _print_error(error, verbose=getattr(args, "verbose", False))
+        _print_error(
+            error,
+            verbose=getattr(args, "verbose", False),
+            error_format=getattr(args, "error_format", "text"),
+        )
         return 2 if args.command == "compile" else 1
     except Exception as error:  # noqa: BLE001
-        _print_error(error, verbose=getattr(args, "verbose", False))
+        _print_error(
+            error,
+            verbose=getattr(args, "verbose", False),
+            error_format=getattr(args, "error_format", "text"),
+        )
         if args.command == "compile" and isinstance(error, UntrustedCompileError):
             return 2
         return 1
