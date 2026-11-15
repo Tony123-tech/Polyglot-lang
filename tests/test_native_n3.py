@@ -175,6 +175,11 @@ fn vec_position(values: Vec<i64>, target: i64) -> Option<i64> {
     values.position(|value| value == target)
 }
 """,
+    "vec_any": """
+fn vec_any(values: Vec<i64>, target: i64) -> bool {
+    values.any(|value| value == target)
+}
+""",
 }
 
 
@@ -364,6 +369,21 @@ def test_python_vec_position_parity():
 
     assert namespace["vec_position"]([4, 2, 7], 7) == namespace["_Option"].some(2)
     assert namespace["vec_position"]([4, 2, 7], 9) == namespace["_Option"].none()
+
+
+@pytest.mark.native
+def test_native_vec_any(native_ns):
+    assert native_ns["vec_any"]([1, 2, 3], 2) is True
+    assert native_ns["vec_any"]([1, 2, 3], 9) is False
+    assert native_ns["vec_any"]([], 1) is False
+
+
+def test_python_vec_any_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_any"])))
+
+    assert namespace["vec_any"]([1, 2, 3], 2) is True
+    assert namespace["vec_any"]([1, 2, 3], 9) is False
+    assert namespace["vec_any"]([], 1) is False
 
 
 @pytest.mark.native
