@@ -1542,6 +1542,13 @@ class RustCodegen:
                     ".map(|window| window.to_vec())"
                     ".collect::<Vec<_>>()"
                 )
+            if e.method == "chunks_exact" and len(e.args) == 1:
+                size = self._emit_usize_arg(e.args[0])
+                return (
+                    f"{recv}.chunks_exact({size})"
+                    ".map(|chunk| chunk.to_vec())"
+                    ".collect::<Vec<_>>()"
+                )
             if (
                 e.method == "sort_by"
                 and len(e.args) == 1

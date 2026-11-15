@@ -472,6 +472,15 @@ def _runtime_vec_chunks(values: list, size: int) -> list[list]:
     return [values[start : start + size] for start in range(0, len(values), size)]
 
 
+def _runtime_vec_chunks_exact(values: list, size: int) -> list[list]:
+    if size <= 0:
+        raise ValueError("chunk size must be positive")
+    return [
+        values[start : start + size]
+        for start in range(0, len(values) - size + 1, size)
+    ]
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1326,6 +1335,7 @@ class Translator:
         ns["_vec_ends_with"] = _runtime_vec_ends_with
         ns["_vec_windows"] = _runtime_vec_windows
         ns["_vec_chunks"] = _runtime_vec_chunks
+        ns["_vec_chunks_exact"] = _runtime_vec_chunks_exact
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3466,6 +3476,12 @@ class Translator:
                         id=f"_vec_{e.method}",
                         ctx=ast.Load(),
                     ),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "chunks_exact" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_chunks_exact", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
