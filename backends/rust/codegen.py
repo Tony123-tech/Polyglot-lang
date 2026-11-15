@@ -1479,6 +1479,11 @@ class RustCodegen:
                     f"{recv}.{e.method}(&{pattern})"
                     ".map(String::from).collect::<Vec<_>>()"
                 )
+            if e.method == "replacen" and len(e.args) == 3:
+                old = self.expr_to_rust(e.args[0])
+                new = self.expr_to_rust(e.args[1])
+                count = self.expr_to_rust(e.args[2])
+                return f"{recv}.replacen(&{old}, &{new}, {count})"
             if e.method == "join" and len(e.args) == 1:
                 separator = self.expr_to_rust(e.args[0])
                 return f"{recv}.join(&{separator})"

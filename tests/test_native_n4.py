@@ -71,6 +71,11 @@ fn string_rmatches(value: String) -> Vec<String> {
     value.rmatches("ab")
 }
 """,
+    "string_replacen": """
+fn string_replacen(value: String) -> String {
+    value.replacen("a", "z", 2)
+}
+""",
     "string_join": """
 fn string_join(values: Vec<String>, separator: String) -> String {
     values.join(separator)
@@ -286,6 +291,19 @@ def test_python_string_matches_parity():
     assert namespace["string_matches"]("abxabab") == ["ab", "ab", "ab"]
     assert namespace["string_matches"]("none") == []
     assert namespace["string_rmatches"]("abxabab") == ["ab", "ab", "ab"]
+
+
+@pytest.mark.native
+def test_native_string_replacen(native_ns):
+    assert native_ns["string_replacen"]("banana") == "bznzna"
+    assert native_ns["string_replacen"]("xyz") == "xyz"
+
+
+def test_python_string_replacen_parity():
+    namespace = compile_rust(parse(lex(SOURCES["string_replacen"])))
+
+    assert namespace["string_replacen"]("banana") == "bznzna"
+    assert namespace["string_replacen"]("xyz") == "xyz"
 
 
 @pytest.mark.native

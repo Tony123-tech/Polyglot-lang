@@ -1085,6 +1085,10 @@ def _runtime_string_matches(value, pattern, *, reverse):
     return matches
 
 
+def _runtime_string_replacen(value, old, new, count):
+    return value.replace(old, new, count)
+
+
 def _runtime_string_lines(value):
     if not value:
         return []
@@ -1555,6 +1559,7 @@ class Translator:
         ns["_string_splitn"] = _runtime_string_splitn
         ns["_string_rsplit"] = _runtime_string_rsplit
         ns["_string_matches"] = _runtime_string_matches
+        ns["_string_replacen"] = _runtime_string_replacen
         ns["_string_lines"] = _runtime_string_lines
         ns["_string_is_char_boundary"] = _runtime_string_is_char_boundary
         ns["_string_char_indices"] = _runtime_string_char_indices
@@ -4418,6 +4423,17 @@ class Translator:
                             value=ast.Constant(value=e.method == "rmatches"),
                         ),
                     ],
+                )
+            if e.method == "replacen" and len(e.args) == 3:
+                return ast.Call(
+                    func=ast.Name(id="_string_replacen", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                        self.translate_expr(e.args[1]),
+                        self.translate_expr(e.args[2]),
+                    ],
+                    keywords=[],
                 )
             if e.method == "join" and len(e.args) == 1:
                 return ast.Call(
