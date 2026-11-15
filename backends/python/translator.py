@@ -771,7 +771,12 @@ def _runtime_cast(value, ty, *, target_width: int | None = None):
         return number
     if ty == "usize":
         width = get_target_width() if target_width is None else target_width
-        return int(value) & ((1 << width) - 1)
+        number = int(value)
+        if number < 0:
+            raise OverflowError(
+                f"value {number} does not fit in usize (target width {width}-bit)"
+            )
+        return number & ((1 << width) - 1)
     if ty == "isize":
         width = get_target_width() if target_width is None else target_width
         number = int(value) & ((1 << width) - 1)

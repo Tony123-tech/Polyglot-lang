@@ -399,3 +399,11 @@ def test_native_i64_as_bool_rejected(tmp_path):
     with pytest.raises(RustCompileError) as exc_info:
         NativeBackend(cache_dir=tmp_path).compile(parse(lex(src)))
     assert "cannot cast `i64` as `bool`" in str(exc_info.value)
+
+
+def test_runtime_cast_negative_usize_raises_overflow():
+    from backends.python.translator import _runtime_cast
+
+    with pytest.raises(OverflowError):
+        _runtime_cast(-1, "usize")
+    assert _runtime_cast(7, "usize") == 7
