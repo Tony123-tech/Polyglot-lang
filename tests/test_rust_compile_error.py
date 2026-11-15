@@ -41,6 +41,18 @@ def test_rust_compile_error_without_source_location():
     assert "error[E004]:" in error.pretty()
 
 
+def test_pretty_without_source_location_limits_raw_stderr_to_ten_lines():
+    stderr = "\n".join(f"stderr line {i}" for i in range(1, 13))
+    error = RustCompileError(message="rust compilation failed", raw_stderr=stderr)
+
+    pretty = error.pretty()
+
+    assert "stderr line 1" in pretty
+    assert "stderr line 10" in pretty
+    assert "stderr line 11" not in pretty
+    assert "stderr line 12" not in pretty
+
+
 def test_rust_compile_error_captures_warnings_without_replacing_error():
     error = _parse_cargo_error(
         "",

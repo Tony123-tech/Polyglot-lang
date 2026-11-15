@@ -113,7 +113,10 @@ class RustCompileError(RuntimeError):
         if self.raw_stderr:
             lines.append("")
             lines.append("Rust stderr:")
-            lines.append(self.rust_message)
+            if self.source_line is None:
+                lines.extend(self.rust_message.splitlines()[:10])
+            else:
+                lines.append(self.rust_message)
         return "\n".join(lines)
 
 
