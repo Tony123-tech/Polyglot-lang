@@ -422,6 +422,19 @@ def _runtime_vec_dedup_by(values: list, same_bucket) -> None:
     values[:] = deduped
 
 
+def _runtime_vec_binary_search(values: list, target) -> "_Result":
+    low, high = 0, len(values)
+    while low < high:
+        middle = (low + high) // 2
+        if values[middle] < target:
+            low = middle + 1
+        else:
+            high = middle
+    if low < len(values) and values[low] == target:
+        return _Result.from_ok(low)
+    return _Result.from_err(low)
+
+
 def _runtime_vec_windows(values: list, size: int) -> list[list]:
     if size <= 0:
         raise ValueError("window size must be positive")
@@ -1241,6 +1254,7 @@ class Translator:
         ns["_vec_retain"] = _runtime_vec_retain
         ns["_vec_dedup"] = _runtime_vec_dedup
         ns["_vec_dedup_by"] = _runtime_vec_dedup_by
+        ns["_vec_binary_search"] = _runtime_vec_binary_search
         ns["_vec_windows"] = _runtime_vec_windows
         ns["_vec_chunks"] = _runtime_vec_chunks
         ns["_filter"] = _runtime_filter
@@ -3392,6 +3406,12 @@ class Translator:
             if e.method == "dedup_by" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(id="_vec_dedup_by", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "binary_search" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_binary_search", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )

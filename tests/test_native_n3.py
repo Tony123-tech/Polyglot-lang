@@ -91,6 +91,11 @@ fn vec_dedup(mut values: Vec<i64>) -> Vec<i64> {
     values
 }
 """,
+    "vec_binary_search": """
+fn vec_binary_search(values: Vec<i64>, target: i64) -> i64 {
+    values.binary_search(&target).unwrap_or(999) as i64
+}
+""",
     "vec_windows": """
 fn vec_windows(values: Vec<i64>) -> Vec<Vec<i64>> {
     values.windows(2)
@@ -165,6 +170,13 @@ def test_native_vec_windows_and_chunks(native_ns):
     assert native_ns["vec_chunks"]([1, 2, 3]) == [[1, 2], [3]]
 
 
+@pytest.mark.native
+def test_native_vec_binary_search(native_ns):
+    assert native_ns["vec_binary_search"]([1, 3, 5, 7], 5) == 2
+    assert native_ns["vec_binary_search"]([1, 3, 5, 7], 4) == 999
+    assert native_ns["vec_binary_search"]([], 4) == 999
+
+
 @pytest.mark.parametrize(
     ("name", "argument", "expected"),
     [
@@ -228,6 +240,15 @@ def test_python_vec_extend_parity():
     namespace = compile_rust(program)
 
     assert namespace["vec_extend"]([1, 2], [3, 4]) == [1, 2, 3, 4]
+
+
+def test_python_vec_binary_search_parity():
+    program = parse(lex(SOURCES["vec_binary_search"]))
+    namespace = compile_rust(program)
+
+    assert namespace["vec_binary_search"]([1, 3, 5, 7], 5) == 2
+    assert namespace["vec_binary_search"]([1, 3, 5, 7], 4) == 999
+    assert namespace["vec_binary_search"]([], 4) == 999
 
 
 @pytest.mark.parametrize(

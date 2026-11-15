@@ -1490,6 +1490,8 @@ class RustCodegen:
                 return f"{recv}.split_off({self._emit_usize_arg(e.args[0])})"
             if e.method == "find" and len(e.args) == 1:
                 return f"{recv}.find(&{self.expr_to_rust(e.args[0])})"
+            if e.method == "binary_search" and len(e.args) == 1:
+                return f"{recv}.binary_search(&{self.expr_to_rust(e.args[0])})"
             if e.method == "rfind" and len(e.args) == 1:
                 return f"{recv}.rfind(&{self.expr_to_rust(e.args[0])})"
             if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
