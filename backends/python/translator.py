@@ -560,6 +560,12 @@ def _runtime_vec_min(values: list):
     return _Option.some(min(values))
 
 
+def _runtime_vec_max(values: list):
+    if not values:
+        return _Option.none()
+    return _Option.some(max(values))
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1425,6 +1431,7 @@ class Translator:
         ns["_vec_any"] = _runtime_vec_any
         ns["_vec_all"] = _runtime_vec_all
         ns["_vec_min"] = _runtime_vec_min
+        ns["_vec_max"] = _runtime_vec_max
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3631,6 +3638,12 @@ class Translator:
             if e.method == "min" and not e.args:
                 return ast.Call(
                     func=ast.Name(id="_vec_min", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "max" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_vec_max", ctx=ast.Load()),
                     args=[recv],
                     keywords=[],
                 )

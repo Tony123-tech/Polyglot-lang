@@ -190,6 +190,11 @@ fn vec_min(values: Vec<i64>) -> Option<i64> {
     values.min()
 }
 """,
+    "vec_max": """
+fn vec_max(values: Vec<i64>) -> Option<i64> {
+    values.max()
+}
+""",
 }
 
 
@@ -422,6 +427,19 @@ def test_python_vec_min_parity():
 
     assert namespace["vec_min"]([4, 2, 7]) == namespace["_Option"].some(2)
     assert namespace["vec_min"]([]) == namespace["_Option"].none()
+
+
+@pytest.mark.native
+def test_native_vec_max(native_ns):
+    assert native_ns["vec_max"]([4, 2, 7]) == 7
+    assert native_ns["vec_max"]([]) is None
+
+
+def test_python_vec_max_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_max"])))
+
+    assert namespace["vec_max"]([4, 2, 7]) == namespace["_Option"].some(7)
+    assert namespace["vec_max"]([]) == namespace["_Option"].none()
 
 
 @pytest.mark.native
