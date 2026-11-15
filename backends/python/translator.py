@@ -1400,6 +1400,9 @@ class _Result:
     def is_err_and(self, predicate):
         return (not self._is_ok) and predicate(self._value)
 
+    def map_or(self, default, f):
+        return f(self._value) if self._is_ok else default
+
     def unwrap_or(self, default):
         return self._value if self._is_ok else default
 
