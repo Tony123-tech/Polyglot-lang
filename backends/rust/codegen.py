@@ -1381,6 +1381,9 @@ class RustCodegen:
                 return f"{recv}.unwrap()"
             if e.method == "unwrap_err" and not e.args:
                 return f"{recv}.unwrap_err()"
+            if e.method == "expect" and len(e.args) == 1:
+                message = self.expr_to_rust(e.args[0])
+                return f"{recv}.expect(&{message})"
             if e.method == "unwrap_or" and len(e.args) == 1:
                 return f"{recv}.unwrap_or({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap_or_else" and len(e.args) == 1:

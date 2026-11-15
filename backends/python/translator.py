@@ -1384,6 +1384,11 @@ class _Result:
             )
         return self._value
 
+    def expect(self, message):
+        if not self._is_ok:
+            raise RuntimeError(f"{message}: {self._value!r}")
+        return self._value
+
     def unwrap_or(self, default):
         return self._value if self._is_ok else default
 
