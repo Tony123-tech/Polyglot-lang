@@ -1655,6 +1655,8 @@ class RustCodegen:
                 return f"{recv}.is_ascii_lowercase()"
             if e.method == "is_ascii_punctuation" and not e.args:
                 return f"{recv}.is_ascii_punctuation()"
+            if e.method == "len_utf8" and not e.args:
+                return f"{recv}.len_utf8()"
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return f"{recv}.{e.method}()"
             if e.method == "replace" and len(e.args) == 2:

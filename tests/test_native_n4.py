@@ -246,6 +246,11 @@ fn char_is_ascii_punctuation(value: char) -> bool {
     value.is_ascii_punctuation()
 }
 """,
+    "char_len_utf8": """
+fn char_len_utf8(value: char) -> usize {
+    value.len_utf8()
+}
+""",
 }
 
 
@@ -847,3 +852,20 @@ def test_python_char_is_ascii_punctuation_parity():
     assert namespace["char_is_ascii_punctuation"]("a") is False
     assert namespace["char_is_ascii_punctuation"](" ") is False
     assert namespace["char_is_ascii_punctuation"]("é") is False
+
+
+@pytest.mark.native
+def test_native_char_len_utf8(native_ns):
+    assert native_ns["char_len_utf8"]("a") == 1
+    assert native_ns["char_len_utf8"]("é") == 2
+    assert native_ns["char_len_utf8"]("€") == 3
+    assert native_ns["char_len_utf8"]("𝄞") == 4
+
+
+def test_python_char_len_utf8_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_len_utf8"])))
+
+    assert namespace["char_len_utf8"]("a") == 1
+    assert namespace["char_len_utf8"]("é") == 2
+    assert namespace["char_len_utf8"]("€") == 3
+    assert namespace["char_len_utf8"]("𝄞") == 4
