@@ -1327,6 +1327,12 @@ class RustCodegen:
                 if e.method == "extend" and len(e.args) == 1:
                     other = self.expr_to_rust(e.args[0])
                     return f"{recv}.extend({other}.into_iter())"
+                if e.method == "get_key_value" and len(e.args) == 1:
+                    key = self._ref_arg_to_rust(e.args[0])
+                    return (
+                        f"{recv}.get_key_value({key})"
+                        ".map(|(key, value)| (key.clone(), value.clone()))"
+                    )
             if kind == "HashSet":
                 if e.method == "insert" and len(e.args) == 1:
                     return f"{recv}.insert({self._owned_arg_to_rust(e.args[0])})"

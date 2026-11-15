@@ -187,6 +187,14 @@ fn n6_map_extend(
     entries
 }
 """,
+    "map_get_key_value": """
+fn n6_map_get_key_value(
+    values: HashMap<String, i64>,
+    key: String,
+) -> Option<(String, i64)> {
+    values.get_key_value(&key)
+}
+""",
 }
 
 
@@ -355,6 +363,21 @@ def test_python_map_extend():
     ns = _run_python(SOURCES["map_extend"])
     assert ns["n6_map_extend"]({"a": 1}, {"b": 2, "a": 3}) == [("a", 3), ("b", 2)]
     assert ns["n6_map_extend"]({}, {}) == []
+
+
+@pytest.mark.native
+def test_native_map_get_key_value(native_ns):
+    values = {"a": 1, "b": 2}
+    assert native_ns["n6_map_get_key_value"](values, "b") == ("b", 2)
+    assert native_ns["n6_map_get_key_value"](values, "z") is None
+
+
+def test_python_map_get_key_value():
+    ns = _run_python(SOURCES["map_get_key_value"])
+    values = {"a": 1, "b": 2}
+    option = ns["_Option"]
+    assert ns["n6_map_get_key_value"](values, "b") == option.some(("b", 2))
+    assert ns["n6_map_get_key_value"](values, "z") == option.none()
 
 
 def test_python_map_retain():
