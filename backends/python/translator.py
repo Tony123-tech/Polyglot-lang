@@ -481,6 +481,18 @@ def _runtime_vec_chunks_exact(values: list, size: int) -> list[list]:
     ]
 
 
+def _runtime_vec_rchunks(values: list, size: int) -> list[list]:
+    if size <= 0:
+        raise ValueError("chunk size must be positive")
+    chunks = []
+    end = len(values)
+    while end > 0:
+        start = max(0, end - size)
+        chunks.append(values[start:end])
+        end = start
+    return chunks
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1336,6 +1348,7 @@ class Translator:
         ns["_vec_windows"] = _runtime_vec_windows
         ns["_vec_chunks"] = _runtime_vec_chunks
         ns["_vec_chunks_exact"] = _runtime_vec_chunks_exact
+        ns["_vec_rchunks"] = _runtime_vec_rchunks
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3482,6 +3495,12 @@ class Translator:
             if e.method == "chunks_exact" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(id="_vec_chunks_exact", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "rchunks" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_rchunks", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
