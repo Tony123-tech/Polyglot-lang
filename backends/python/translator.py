@@ -904,6 +904,15 @@ def _runtime_string_is_char_boundary(value, index):
     )
 
 
+def _runtime_string_char_indices(value):
+    indices = []
+    offset = 0
+    for character in value:
+        indices.append((offset, character))
+        offset += len(character.encode("utf-8"))
+    return indices
+
+
 def _runtime_string_to_ascii_lowercase(value):
     return value.translate(
         str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
@@ -1286,6 +1295,7 @@ class Translator:
         ns["_string_split_once"] = _runtime_string_split_once
         ns["_string_lines"] = _runtime_string_lines
         ns["_string_is_char_boundary"] = _runtime_string_is_char_boundary
+        ns["_string_char_indices"] = _runtime_string_char_indices
         ns["_string_to_ascii_lowercase"] = _runtime_string_to_ascii_lowercase
         ns["_string_to_ascii_uppercase"] = _runtime_string_to_ascii_uppercase
         ns["_result_parse"] = _runtime_parse
@@ -3851,6 +3861,12 @@ class Translator:
             if e.method == "chars" and not e.args:
                 return ast.Call(
                     func=ast.Name(id="list", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "char_indices" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_string_char_indices", ctx=ast.Load()),
                     args=[recv],
                     keywords=[],
                 )

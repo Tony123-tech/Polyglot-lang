@@ -1361,6 +1361,12 @@ class RustCodegen:
                 return f"{recv}.unwrap_or_else({self.expr_to_rust(e.args[0])})"
             if e.method == "chars" and not e.args:
                 return f"{recv}.chars().collect::<Vec<char>>()"
+            if e.method == "char_indices" and not e.args:
+                return (
+                    f"{recv}.char_indices()"
+                    ".map(|(index, character)| (index as i64, character))"
+                    ".collect::<Vec<_>>()"
+                )
             if (
                 e.method == "rev"
                 and not e.args

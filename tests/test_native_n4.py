@@ -22,6 +22,11 @@ fn string_chars_rev(value: String) -> Vec<char> {
     value.chars().rev()
 }
 """,
+    "string_char_indices": """
+fn string_char_indices(value: String) -> Vec<(i64, char)> {
+    value.char_indices()
+}
+""",
     "string_bytes": """
 fn string_bytes(value: String) -> Vec<u8> {
     value.bytes()
@@ -118,6 +123,27 @@ def test_python_string_chars_rev():
     namespace = compile_rust(parse(lex(SOURCES["string_chars_rev"])))
 
     assert namespace["string_chars_rev"]("café") == ["é", "f", "a", "c"]
+
+
+@pytest.mark.native
+def test_native_string_char_indices(native_ns):
+    assert native_ns["string_char_indices"]("café") == [
+        (0, "c"),
+        (1, "a"),
+        (2, "f"),
+        (3, "é"),
+    ]
+
+
+def test_python_string_char_indices():
+    namespace = compile_rust(parse(lex(SOURCES["string_char_indices"])))
+
+    assert namespace["string_char_indices"]("café") == [
+        (0, "c"),
+        (1, "a"),
+        (2, "f"),
+        (3, "é"),
+    ]
 
 
 @pytest.mark.parametrize(
