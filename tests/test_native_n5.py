@@ -100,6 +100,38 @@ impl N5AsyncCounter {
     }
 }
 """,
+    "async_timeout_runtime": """
+use std::sync::atomic::{AtomicI64, Ordering};
+
+static N5_ASYNC_COUNTER: AtomicI64 = AtomicI64::new(0);
+
+fn n5_async_counter_reset() {
+    N5_ASYNC_COUNTER.store(0, Ordering::SeqCst);
+}
+
+fn n5_async_counter_value() -> i64 {
+    N5_ASYNC_COUNTER.load(Ordering::SeqCst)
+}
+
+async fn n5_async_bump_counter() -> i64 {
+    N5_ASYNC_COUNTER.fetch_add(1, Ordering::SeqCst);
+    1
+}
+
+async fn n5_async_timeout_immediate() -> i64 {
+    42
+}
+
+fn n5_await_with_timeout_value() -> PyObject {
+    let future = n5_async_timeout_immediate().unwrap();
+    Python::with_gil(|py| await_with_timeout(py, future, 1.0).unwrap())
+}
+
+fn n5_await_with_timeout_times_out() -> bool {
+    let future = polyglot_pending_future();
+    Python::with_gil(|py| await_with_timeout(py, future, 0.01)).is_err()
+}
+""",
     "vec_is_empty": """
 fn n5_vec_is_empty(values: Vec<i64>) -> bool {
     values.is_empty()
@@ -973,6 +1005,45 @@ def test_native_async_impl_method(native_ns):
         return await counter.double()
 
     assert asyncio.run(_await()) == 42
+
+
+@pytest.mark.native
+def test_native_await_with_timeout_value(native_ns):
+    assert native_ns["n5_await_with_timeout_value"]() == 42
+
+
+@pytest.mark.native
+def test_native_await_with_timeout_times_out(native_ns):
+    assert native_ns["n5_await_with_timeout_times_out"]() is True
+
+
+@pytest.mark.native
+def test_native_dropping_future_iterator_cancels_before_poll(native_ns):
+    import gc
+
+    native_ns["n5_async_counter_reset"]()
+    future = native_ns["n5_async_bump_counter"]()
+    iterator = future.__await__()
+    del iterator
+    del future
+    gc.collect()
+    # The async body was never polled, so cancellation by drop left the
+    # counter untouched.
+    assert native_ns["n5_async_counter_value"]() == 0
+
+
+@pytest.mark.native
+def test_native_awaiting_future_runs_body_once(native_ns):
+    import asyncio
+
+    native_ns["n5_async_counter_reset"]()
+    future = native_ns["n5_async_bump_counter"]()
+
+    async def _await():
+        return await future
+
+    assert asyncio.run(_await()) == 1
+    assert native_ns["n5_async_counter_value"]() == 1
 
 
 # ---------------------------------------------------------------------------

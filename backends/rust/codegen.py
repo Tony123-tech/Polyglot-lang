@@ -185,6 +185,9 @@ impl PyFuture {
     }
 }
 
+/// Cancellation is drop-based: dropping a `PyFuture` before it is awaited, or
+/// dropping the iterator before it is exhausted, drops the boxed future so it
+/// is never polled again.
 #[pyclass]
 pub struct PyFutureIterator {
     future: Mutex<Option<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>>>,
@@ -197,6 +200,9 @@ impl PyFutureIterator {
     }
 
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<PyObject> {
+        // Taking the future out means a `Ready` result drops it immediately,
+        // while a `Pending` result writes it back. Dropping the iterator
+        // between polls therefore cancels the future without another poll.
         let Some(mut fut) = slf.future.lock().unwrap().take() else {
             return Err(pyo3::exceptions::PyStopIteration::new_err(()));
         };
@@ -221,6 +227,60 @@ where
 {
     PyFuture {
         future: Mutex::new(Some(Box::pin(future))),
+    }
+}
+
+pyo3::create_exception!(polyglot_native, PyTimeoutError, pyo3::exceptions::PyException);
+
+/// A future that never becomes ready. Internal helper used to exercise the
+/// timeout path without an event loop or external I/O.
+fn polyglot_pending_future() -> PyFuture {
+    py_future(std::future::pending::<PyResult<PyObject>>())
+}
+
+/// Poll `future` until it is ready or `seconds` elapse.
+///
+/// This is intentionally a polling helper: the runtime has no real waker or
+/// event-loop integration, so each iteration polls and then sleeps briefly
+/// with the GIL released. Dropping the future on timeout or error provides
+/// drop-based cancellation. On timeout it returns `PyTimeoutError`.
+fn await_with_timeout(
+    py: Python<'_>,
+    future: PyFuture,
+    seconds: f64,
+) -> PyResult<PyObject> {
+    let mut fut = match future.future.lock().unwrap().take() {
+        Some(fut) => fut,
+        None => {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "future has already been consumed",
+            ))
+        }
+    };
+    let seconds = if seconds.is_finite() && seconds > 0.0 {
+        seconds
+    } else {
+        0.0
+    };
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs_f64(seconds);
+    let waker = _noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    loop {
+        match fut.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(value)) => return Ok(value),
+            Poll::Ready(Err(e)) => return Err(e),
+            Poll::Pending => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(PyTimeoutError::new_err(format!(
+                        "future did not complete within {seconds} seconds"
+                    )));
+                }
+                py.allow_threads(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(1))
+                });
+            }
+        }
     }
 }
 """
