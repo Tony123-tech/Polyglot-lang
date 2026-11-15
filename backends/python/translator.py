@@ -606,6 +606,12 @@ def _runtime_vec_chain(left: list, right: list) -> list:
     return list(left) + list(right)
 
 
+def _runtime_vec_step_by(values: list, step: int) -> list:
+    if step <= 0:
+        raise ValueError("step_by requires a positive step")
+    return list(values[::step])
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1480,6 +1486,7 @@ class Translator:
         ns["_vec_zip"] = _runtime_vec_zip
         ns["_vec_flatten"] = _runtime_vec_flatten
         ns["_vec_chain"] = _runtime_vec_chain
+        ns["_vec_step_by"] = _runtime_vec_step_by
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3752,6 +3759,16 @@ class Translator:
             if e.method == "chain" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
                 return ast.Call(
                     func=ast.Name(id="_vec_chain", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if (
+                e.method == "step_by"
+                and len(e.args) == 1
+                and self._is_vec_expr(e.receiver)
+            ):
+                return ast.Call(
+                    func=ast.Name(id="_vec_step_by", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )

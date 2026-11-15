@@ -233,6 +233,11 @@ fn vec_chain(left: Vec<i64>, right: Vec<i64>) -> Vec<i64> {
     left.chain(right)
 }
 """,
+    "vec_step_by": """
+fn vec_step_by(values: Vec<i64>) -> Vec<i64> {
+    values.step_by(2)
+}
+""",
 }
 
 
@@ -582,6 +587,21 @@ def test_python_vec_chain_parity():
 
     assert namespace["vec_chain"]([1, 2], [3]) == [1, 2, 3]
     assert namespace["vec_chain"]([], []) == []
+
+
+@pytest.mark.native
+def test_native_vec_step_by(native_ns):
+    assert native_ns["vec_step_by"]([0, 1, 2, 3, 4, 5]) == [0, 2, 4]
+    assert native_ns["vec_step_by"]([7]) == [7]
+    assert native_ns["vec_step_by"]([]) == []
+
+
+def test_python_vec_step_by_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_step_by"])))
+
+    assert namespace["vec_step_by"]([0, 1, 2, 3, 4, 5]) == [0, 2, 4]
+    assert namespace["vec_step_by"]([7]) == [7]
+    assert namespace["vec_step_by"]([]) == []
 
 
 @pytest.mark.native
