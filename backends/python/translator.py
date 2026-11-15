@@ -441,6 +441,13 @@ def _runtime_vec_split_at(values: list, index: int) -> tuple[list, list]:
     return (values[:index], values[index:])
 
 
+def _runtime_vec_is_sorted_by(values: list, compare) -> bool:
+    return all(
+        compare(values[index], values[index + 1])
+        for index in range(len(values) - 1)
+    )
+
+
 def _runtime_vec_windows(values: list, size: int) -> list[list]:
     if size <= 0:
         raise ValueError("window size must be positive")
@@ -1294,6 +1301,7 @@ class Translator:
         ns["_vec_dedup_by"] = _runtime_vec_dedup_by
         ns["_vec_binary_search"] = _runtime_vec_binary_search
         ns["_vec_split_at"] = _runtime_vec_split_at
+        ns["_vec_is_sorted_by"] = _runtime_vec_is_sorted_by
         ns["_vec_windows"] = _runtime_vec_windows
         ns["_vec_chunks"] = _runtime_vec_chunks
         ns["_filter"] = _runtime_filter
@@ -3465,6 +3473,12 @@ class Translator:
             if e.method == "split_at" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(id="_vec_split_at", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "is_sorted_by" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_is_sorted_by", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )

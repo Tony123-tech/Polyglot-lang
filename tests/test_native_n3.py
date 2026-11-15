@@ -101,6 +101,11 @@ fn vec_split_at(values: Vec<i64>, index: i64) -> (Vec<i64>, Vec<i64>) {
     values.split_at(index as usize)
 }
 """,
+    "vec_is_sorted_by": """
+fn vec_is_sorted_by(values: Vec<i64>) -> bool {
+    values.is_sorted_by(|left, right| left <= right)
+}
+""",
     "vec_windows": """
 fn vec_windows(values: Vec<i64>) -> Vec<Vec<i64>> {
     values.windows(2)
@@ -189,6 +194,13 @@ def test_native_vec_split_at(native_ns):
     assert native_ns["vec_split_at"]([1, 2], 2) == ([1, 2], [])
 
 
+@pytest.mark.native
+def test_native_vec_is_sorted_by(native_ns):
+    assert native_ns["vec_is_sorted_by"]([1, 2, 2, 3]) is True
+    assert native_ns["vec_is_sorted_by"]([1, 3, 2]) is False
+    assert native_ns["vec_is_sorted_by"]([]) is True
+
+
 @pytest.mark.parametrize(
     ("name", "argument", "expected"),
     [
@@ -270,6 +282,15 @@ def test_python_vec_split_at_parity():
     assert namespace["vec_split_at"]([1, 2, 3, 4], 2) == ([1, 2], [3, 4])
     assert namespace["vec_split_at"]([1, 2], 0) == ([], [1, 2])
     assert namespace["vec_split_at"]([1, 2], 2) == ([1, 2], [])
+
+
+def test_python_vec_is_sorted_by_parity():
+    program = parse(lex(SOURCES["vec_is_sorted_by"]))
+    namespace = compile_rust(program)
+
+    assert namespace["vec_is_sorted_by"]([1, 2, 2, 3]) is True
+    assert namespace["vec_is_sorted_by"]([1, 3, 2]) is False
+    assert namespace["vec_is_sorted_by"]([]) is True
 
 
 @pytest.mark.parametrize(
