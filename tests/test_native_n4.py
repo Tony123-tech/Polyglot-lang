@@ -178,6 +178,11 @@ fn char_is_whitespace(value: char) -> bool {
     value.is_whitespace()
 }
 """,
+    "char_is_uppercase": """
+fn char_is_uppercase(value: char) -> bool {
+    value.is_uppercase()
+}
+""",
 }
 
 
@@ -554,3 +559,20 @@ def test_python_char_is_whitespace_parity():
     assert namespace["char_is_whitespace"](" ") is True
     assert namespace["char_is_whitespace"]("\t") is True
     assert namespace["char_is_whitespace"]("a") is False
+
+
+@pytest.mark.native
+def test_native_char_is_uppercase(native_ns):
+    assert native_ns["char_is_uppercase"]("A") is True
+    assert native_ns["char_is_uppercase"]("É") is True
+    assert native_ns["char_is_uppercase"]("a") is False
+    assert native_ns["char_is_uppercase"]("1") is False
+
+
+def test_python_char_is_uppercase_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_uppercase"])))
+
+    assert namespace["char_is_uppercase"]("A") is True
+    assert namespace["char_is_uppercase"]("É") is True
+    assert namespace["char_is_uppercase"]("a") is False
+    assert namespace["char_is_uppercase"]("1") is False
