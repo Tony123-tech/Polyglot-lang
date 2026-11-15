@@ -44,6 +44,7 @@ def test_cross_backend_parity(example):
         f"native returned {native_result!r}"
     )
 
+
 @pytest.mark.slow
 def test_iflet_tail_expression_parity() -> None:
     source = """

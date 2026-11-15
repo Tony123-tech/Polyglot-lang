@@ -59,8 +59,12 @@ def test_include_add_native_backend(tmp_path: Path, backend: str):
 
 def test_nested_include(tmp_path: Path):
     (tmp_path / "c.poly").write_text("fn c() -> i64 { 1 }\n", encoding="utf-8")
-    (tmp_path / "b.poly").write_text('include!("c.poly");\nfn b() -> i64 { c() + 1 }\n', encoding="utf-8")
-    (tmp_path / "a.poly").write_text('include!("b.poly");\nfn main() -> i64 { b() + 1 }\n', encoding="utf-8")
+    (tmp_path / "b.poly").write_text(
+        'include!("c.poly");\nfn b() -> i64 { c() + 1 }\n', encoding="utf-8"
+    )
+    (tmp_path / "a.poly").write_text(
+        'include!("b.poly");\nfn main() -> i64 { b() + 1 }\n', encoding="utf-8"
+    )
     run = _run_cli("run", str(tmp_path / "a.poly"))
     assert run.returncode == 0, run.stderr
     assert run.stdout.strip() == "3"
@@ -93,10 +97,100 @@ def test_include_path_relative_to_including_file(tmp_path: Path):
     sub = tmp_path / "sub"
     sub.mkdir()
     (sub / "lib.poly").write_text("fn val() -> i64 { 7 }\n", encoding="utf-8")
-    (tmp_path / "main.poly").write_text('include!("sub/lib.poly");\nfn main() -> i64 { val() }\n', encoding="utf-8")
+    (tmp_path / "main.poly").write_text(
+        'include!("sub/lib.poly");\nfn main() -> i64 { val() }\n', encoding="utf-8"
+    )
     # run from different cwd
     other = tmp_path / "other"
     other.mkdir()
     run = _run_cli("run", str(tmp_path / "main.poly"), cwd=other)
     assert run.returncode == 0, run.stderr
     assert run.stdout.strip() == "7"
+
+
+# ---------------------------------------------------------------------------
+# Include hardening (E33-E37)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_include_is_allowed_and_splices_twice(tmp_path: Path):
+    # Textual include: the same file may be included twice. Items are spliced
+    # twice; there is no de-duplication.
+    from ast_nodes import FnDecl
+    from include_expander import load_program
+
+    (tmp_path / "lib.poly").write_text(
+        "fn add(a: i64, b: i64) -> i64 { a + b }\n", encoding="utf-8"
+    )
+    (tmp_path / "main.poly").write_text(
+        'include!("lib.poly");\n'
+        'include!("lib.poly");\n'
+        "fn main() -> i64 { add(2, 3) }\n",
+        encoding="utf-8",
+    )
+    program = load_program(tmp_path / "main.poly")
+    fn_names = [item.name for item in program.items if isinstance(item, FnDecl)]
+    assert fn_names.count("add") == 2
+
+    run = _run_cli("run", str(tmp_path / "main.poly"))
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == "5"
+
+
+def test_include_with_parent_directory_segments_is_allowed(tmp_path: Path):
+    outer = tmp_path / "outer"
+    inner = tmp_path / "inner"
+    outer.mkdir()
+    inner.mkdir()
+    (outer / "lib.poly").write_text("fn val() -> i64 { 9 }\n", encoding="utf-8")
+    (inner / "main.poly").write_text(
+        'include!("../outer/lib.poly");\nfn main() -> i64 { val() }\n',
+        encoding="utf-8",
+    )
+    run = _run_cli("run", str(inner / "main.poly"))
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == "9"
+
+
+def test_include_with_absolute_path_outside_repo_is_allowed(tmp_path: Path):
+    lib = tmp_path / "abs_lib.poly"
+    lib.write_text("fn val() -> i64 { 11 }\n", encoding="utf-8")
+    main = tmp_path / "abs_main.poly"
+    main.write_text(
+        f'include!("{lib}");\nfn main() -> i64 {{ val() }}\n', encoding="utf-8"
+    )
+    run = _run_cli("run", str(main))
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == "11"
+
+
+def test_include_only_file_produces_empty_program(tmp_path: Path):
+    (tmp_path / "lib.poly").write_text("fn val() -> i64 { 1 }\n", encoding="utf-8")
+    main = tmp_path / "only.poly"
+    main.write_text('include!("lib.poly");\n', encoding="utf-8")
+
+    check = _run_cli("check", str(main))
+    assert check.returncode == 0, check.stderr
+    assert check.stdout.strip() == ""
+
+    run = _run_cli("run", str(main))
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.strip() == ""
+
+
+def test_include_inside_block_is_parse_error(tmp_path: Path):
+    (tmp_path / "lib.poly").write_text("fn val() -> i64 { 1 }\n", encoding="utf-8")
+    main = tmp_path / "block.poly"
+    main.write_text('fn main() -> i64 { include!("lib.poly"); 1 }\n', encoding="utf-8")
+    run = _run_cli("check", str(main))
+    assert run.returncode == 1
+    assert "include! is only allowed at item position" in run.stderr
+
+
+def test_include_with_non_string_argument_is_parse_error(tmp_path: Path):
+    main = tmp_path / "bad.poly"
+    main.write_text("include!(123);\n", encoding="utf-8")
+    run = _run_cli("check", str(main))
+    assert run.returncode == 1
+    assert "include path string" in run.stderr
+    assert "NUMBER" in run.stderr

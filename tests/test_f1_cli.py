@@ -45,10 +45,7 @@ def test_run_hello_exits_zero_and_prints_five():
 def test_run_type_error_exits_one_and_prints_five_line_error(tmp_path: Path):
     source = tmp_path / "bad.poly"
     source.write_text(
-        "fn main() -> i64 {\n"
-        "    let x: i64 = 1 as usize;\n"
-        "    x\n"
-        "}\n",
+        "fn main() -> i64 {\n    let x: i64 = 1 as usize;\n    x\n}\n",
         encoding="utf-8",
     )
     result = _run_cli("run", str(source))
@@ -67,8 +64,7 @@ def test_check_terminates_example_exits_zero():
 def test_check_non_terminating_reports_error(tmp_path: Path):
     source = tmp_path / "nonterm.poly"
     source.write_text(
-        "#[terminates]\n"
-        "fn f(n: i64) -> i64 { f(n) }\n",
+        "#[terminates]\nfn f(n: i64) -> i64 { f(n) }\n",
         encoding="utf-8",
     )
     result = _run_cli("check", str(source))
@@ -113,6 +109,7 @@ def test_cli_entry_point_via_main_import(capsys):
     assert captured.out.strip() == "5"
     assert captured.err == ""
 
+
 def test_console_script_entry_point():
     """Verify the console script is registered and callable."""
     polyglot = shutil.which("polyglot")
@@ -128,6 +125,7 @@ def test_console_script_entry_point():
     assert result.returncode == 0
     assert result.stdout.strip() == "5"
 
+
 @pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo is unavailable")
 @pytest.mark.slow
 def test_built_extension_loads_and_runs(tmp_path):
@@ -139,8 +137,35 @@ def test_built_extension_loads_and_runs(tmp_path):
     # Load it and call add
     from importlib.machinery import ExtensionFileLoader
     from importlib.util import module_from_spec, spec_from_loader
-    loader = ExtensionFileLoader("polyglot_native", str(libs[0]))
-    spec = spec_from_loader("polyglot_native", loader)
+
+    loader = ExtensionFileLoader("hello", str(libs[0]))
+    spec = spec_from_loader("hello", loader)
+    assert spec is not None
+    mod = module_from_spec(spec)
+    loader.exec_module(mod)
+    assert mod.add(2, 3) == 5
+
+
+@pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo is unavailable")
+@pytest.mark.slow
+def test_build_output_importable_by_stem(tmp_path: Path):
+    result = _run_cli("build", "examples/hello.poly", "--out-dir", str(tmp_path))
+    assert result.returncode == 0
+
+    artifacts = (
+        list(tmp_path.glob("*.so"))
+        + list(tmp_path.glob("*.dylib"))
+        + list(tmp_path.glob("*.pyd"))
+    )
+    assert artifacts, "no extension produced"
+    artifact = artifacts[0]
+    assert artifact.stem == "hello"
+
+    from importlib.machinery import ExtensionFileLoader
+    from importlib.util import module_from_spec, spec_from_loader
+
+    loader = ExtensionFileLoader("hello", str(artifact))
+    spec = spec_from_loader("hello", loader)
     assert spec is not None
     mod = module_from_spec(spec)
     loader.exec_module(mod)

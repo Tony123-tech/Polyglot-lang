@@ -15,9 +15,7 @@ def _compile(src: str) -> dict:
 
 def test_consecutive_compilations_use_distinct_modules():
     first = _compile("struct First { value: i64 }\nfn first() -> i64 { 1 }")
-    second = _compile(
-        "struct Second { value: i64 }\nfn second() -> i64 { 2 }"
-    )
+    second = _compile("struct Second { value: i64 }\nfn second() -> i64 { 2 }")
 
     assert first["__name__"] != second["__name__"]
     assert first["First"].__module__ == first["__name__"]

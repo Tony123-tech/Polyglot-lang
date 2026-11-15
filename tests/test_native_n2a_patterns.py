@@ -1,4 +1,5 @@
 """N2a match-pattern expansion tests."""
+
 # pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false
 import warnings
 
@@ -954,9 +955,12 @@ def test_pattern_standalone_rest_rejected():
 
 @pytest.mark.native
 def test_pattern_struct_rest_batch3(native_ns):
-    assert native_ns["pattern_struct_rest_batch3"](
-        native_ns["PatternPair"](11, 12),
-    ) == 11
+    assert (
+        native_ns["pattern_struct_rest_batch3"](
+            native_ns["PatternPair"](11, 12),
+        )
+        == 11
+    )
 
 
 @pytest.mark.native
@@ -980,12 +984,18 @@ def test_pattern_slice_or_inner(native_ns):
 
 @pytest.mark.native
 def test_pattern_struct_or_inner(native_ns):
-    assert native_ns["pattern_struct_or_inner"](
-        native_ns["PatternPair"](2, 0),
-    ) == 1
-    assert native_ns["pattern_struct_or_inner"](
-        native_ns["PatternPair"](3, 0),
-    ) == 0
+    assert (
+        native_ns["pattern_struct_or_inner"](
+            native_ns["PatternPair"](2, 0),
+        )
+        == 1
+    )
+    assert (
+        native_ns["pattern_struct_or_inner"](
+            native_ns["PatternPair"](3, 0),
+        )
+        == 0
+    )
 
 
 @pytest.mark.native
@@ -1014,12 +1024,18 @@ def test_pattern_guard_slice(native_ns):
 
 @pytest.mark.native
 def test_pattern_guard_struct(native_ns):
-    assert native_ns["pattern_guard_struct"](
-        native_ns["PatternPair"](5, 0),
-    ) == 5
-    assert native_ns["pattern_guard_struct"](
-        native_ns["PatternPair"](-5, 0),
-    ) == 0
+    assert (
+        native_ns["pattern_guard_struct"](
+            native_ns["PatternPair"](5, 0),
+        )
+        == 5
+    )
+    assert (
+        native_ns["pattern_guard_struct"](
+            native_ns["PatternPair"](-5, 0),
+        )
+        == 0
+    )
 
 
 @pytest.mark.native
@@ -1241,9 +1257,12 @@ def test_native_pattern_slice_nested():
 def test_pattern_slice_struct_context():
     source = "\n".join(PYTHON_ONLY_SOURCES.values())
     namespace = compile_rust(parse(lex(source)))
-    assert namespace["pattern_slice_struct_context"](
-        namespace["Grid"]([3, 4]),
-    ) == 7
+    assert (
+        namespace["pattern_slice_struct_context"](
+            namespace["Grid"]([3, 4]),
+        )
+        == 7
+    )
 
 
 def test_pattern_slice_nested():
@@ -1457,10 +1476,7 @@ fn unresolved(value: i64) -> i64 {
             "rest pattern",
         ),
         (
-            (
-                "fn invalid(value: (i64, i64)) -> i64 { "
-                "match value { (x, x) => x } }"
-            ),
+            ("fn invalid(value: (i64, i64)) -> i64 { match value { (x, x) => x } }"),
             TranslateError,
             "duplicate binding",
         ),
@@ -1542,9 +1558,12 @@ def test_python_backend_pattern_parity():
     grid_ns = compile_rust(
         parse(lex(PYTHON_ONLY_SOURCES["pattern_slice_struct_context"])),
     )
-    assert grid_ns["pattern_slice_struct_context"](
-        grid_ns["Grid"]([3, 4]),
-    ) == 7
+    assert (
+        grid_ns["pattern_slice_struct_context"](
+            grid_ns["Grid"]([3, 4]),
+        )
+        == 7
+    )
 
     nested_ns = compile_rust(
         parse(lex(PYTHON_ONLY_SOURCES["pattern_slice_nested"])),

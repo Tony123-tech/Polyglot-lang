@@ -94,9 +94,7 @@ def test_python_hashmap_operations_and_option_results():
     ns = _run_python()
     values = {"existing": 4}
     assert ns["n8_insert"](values, "new", 7) is True
-    assert ns["n8_insert_previous"](
-        {"existing": 4}, "existing", 7
-    ).unwrap() == 4
+    assert ns["n8_insert_previous"]({"existing": 4}, "existing", 7).unwrap() == 4
     assert ns["n8_insert_previous"]({}, "new", 7).is_none()
     assert ns["n8_get"](values, "new").unwrap() == 7
     assert ns["n8_get"](values, "missing").is_none()
@@ -112,9 +110,7 @@ def test_python_hashmap_operations_and_option_results():
 @pytest.mark.native
 def test_native_hashmap_operations_and_option_results(native_ns):
     assert native_ns["n8_insert"]({"existing": 4}, "new", 7) is True
-    assert native_ns["n8_insert_previous"](
-        {"existing": 4}, "existing", 7
-    ) == 4
+    assert native_ns["n8_insert_previous"]({"existing": 4}, "existing", 7) == 4
     assert native_ns["n8_insert_previous"]({}, "new", 7) is None
     assert native_ns["n8_get"]({"new": 7}, "new") == 7
     assert native_ns["n8_get"]({}, "missing") is None
@@ -135,10 +131,14 @@ def test_python_hashmap_len_and_boundary_error():
     with pytest.raises(TypeErrorForBoundary) as exc_info:
         from backends.python.translator import compile_rust
 
-        compile_rust(parse(lex(
-            "fn n8_bad_len(values: HashMap<String, i64>) -> i64 "
-            "{ values.len() }"
-        )))
+        compile_rust(
+            parse(
+                lex(
+                    "fn n8_bad_len(values: HashMap<String, i64>) -> i64 "
+                    "{ values.len() }"
+                )
+            )
+        )
     assert "found:    usize" in str(exc_info.value)
     assert "expected: i64" in str(exc_info.value)
 
@@ -146,15 +146,26 @@ def test_python_hashmap_len_and_boundary_error():
 def test_native_hashmap_len_and_boundary_error(native_backend):
     from backends.rust.compiler import TypeErrorForBoundary
 
-    assert native_backend.compile(parse(lex(
-        "fn n8_valid_len(values: HashMap<String, i64>) -> usize "
-        "{ values.len() }"
-    )))["n8_valid_len"]({"a": 1, "b": 2}) == 2
+    assert (
+        native_backend.compile(
+            parse(
+                lex(
+                    "fn n8_valid_len(values: HashMap<String, i64>) -> usize "
+                    "{ values.len() }"
+                )
+            )
+        )["n8_valid_len"]({"a": 1, "b": 2})
+        == 2
+    )
     with pytest.raises(TypeErrorForBoundary) as exc_info:
-        native_backend.compile(parse(lex(
-            "fn n8_bad_len(values: HashMap<String, i64>) -> i64 "
-            "{ values.len() }"
-        )))
+        native_backend.compile(
+            parse(
+                lex(
+                    "fn n8_bad_len(values: HashMap<String, i64>) -> i64 "
+                    "{ values.len() }"
+                )
+            )
+        )
     assert "found:    usize" in str(exc_info.value)
     assert "expected: i64" in str(exc_info.value)
 
@@ -223,7 +234,9 @@ def test_python_hashmap_supported_key_value_types(function_name, values):
     ],
 )
 def test_native_hashmap_supported_key_value_types(
-    native_ns, function_name, values,
+    native_ns,
+    function_name,
+    values,
 ):
     assert native_ns[function_name](values) == values
 
@@ -232,12 +245,8 @@ def test_hashmap_operations_match_across_backends(native_ns):
     python_ns = _run_python()
     values = {"a": 2, "b": 3}
     assert python_ns["n8_len"](values) == native_ns["n8_len"](values)
-    assert sorted(python_ns["n8_keys"](values)) == sorted(
-        native_ns["n8_keys"](values)
-    )
+    assert sorted(python_ns["n8_keys"](values)) == sorted(native_ns["n8_keys"](values))
     assert sorted(python_ns["n8_values"](values)) == sorted(
         native_ns["n8_values"](values)
     )
-    assert python_ns["n8_iter_sum"](values) == native_ns["n8_iter_sum"](
-        values
-    )
+    assert python_ns["n8_iter_sum"](values) == native_ns["n8_iter_sum"](values)

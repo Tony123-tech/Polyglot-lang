@@ -259,12 +259,15 @@ def test_python_vec_windows_and_chunks_parity(name, expected):
 
     assert namespace[name]([1, 2, 3]) == expected
 
+
 def test_python_vec_slice_start_greater_than_end():
-    program = parse(lex("""
+    program = parse(
+        lex("""
 fn vec_slice(values: Vec<i64>) -> Vec<i64> {
     &values[3..1]
 }
-"""))
+""")
+    )
     namespace = compile_rust(program)
     with pytest.raises(ValueError):
         namespace["vec_slice"]([10, 20, 30, 40])

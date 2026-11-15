@@ -12,9 +12,7 @@ from parser import parse
 def test_rust_compile_error_captures_diagnostic_fields():
     error = _parse_cargo_error(
         "",
-        "error[E0308]: mismatched types\n"
-        " --> src/lib.rs:3:7\n"
-        "  |\n",
+        "error[E0308]: mismatched types\n --> src/lib.rs:3:7\n  |\n",
         "fn main() {}\n",
     )
 
@@ -80,8 +78,7 @@ def test_rust_compile_error_deduplicates_identical_diagnostics():
     )
     error = _parse_cargo_error(
         "",
-        duplicate + duplicate
-        + "error[E0425]: cannot find value `missing`\n"
+        duplicate + duplicate + "error[E0425]: cannot find value `missing`\n"
         " --> src/lib.rs:8:1\n",
         "",
     )
@@ -93,8 +90,7 @@ def test_rust_compile_error_deduplicates_identical_diagnostics():
 def test_rust_compile_error_preserves_runtime_error_compatibility():
     error = _parse_cargo_error(
         "",
-        "error[E0308]: mismatched types\n"
-        " --> src/lib.rs:3:7\n",
+        "error[E0308]: mismatched types\n --> src/lib.rs:3:7\n",
         "",
     )
 
@@ -129,7 +125,8 @@ def test_rust_codegen_records_source_origin_for_emitted_lines():
     codegen = RustCodegen()
     generated = codegen.generate(program)
     rust_line = next(
-        index for index, line in enumerate(generated.splitlines(), start=1)
+        index
+        for index, line in enumerate(generated.splitlines(), start=1)
         if "fn origin()" in line
     )
 
@@ -143,7 +140,8 @@ def test_rust_codegen_records_originating_node_for_emitted_lines():
     codegen = RustCodegen()
     generated = codegen.generate(program)
     rust_line = next(
-        index for index, line in enumerate(generated.splitlines(), start=1)
+        index
+        for index, line in enumerate(generated.splitlines(), start=1)
         if "fn origin_node()" in line
     )
 
@@ -155,8 +153,7 @@ def test_rust_codegen_records_originating_node_for_emitted_lines():
 def test_cargo_error_maps_rust_line_to_source_origin():
     error = _parse_cargo_error(
         "",
-        "error[E0308]: mismatched types\n"
-        " --> src/lib.rs:3:7\n",
+        "error[E0308]: mismatched types\n --> src/lib.rs:3:7\n",
         "fn a() {}\nfn b() {}\nfn c() {}\n",
         {3: (17, 9)},
     )
@@ -173,14 +170,14 @@ def test_pretty_includes_original_and_generated_lines():
     rust_line = next(
         line_number
         for line_number, rust_line in enumerate(
-            generated.splitlines(), start=1,
+            generated.splitlines(),
+            start=1,
         )
         if "fn bad()" in rust_line
     )
     error = _parse_cargo_error(
         "",
-        f"error[E0308]: mismatched types\n"
-        f" --> src/lib.rs:{rust_line}:5\n",
+        f"error[E0308]: mismatched types\n --> src/lib.rs:{rust_line}:5\n",
         generated,
         codegen.line_map,
         codegen.source_line_text_map,
@@ -197,7 +194,7 @@ def test_pretty_includes_original_and_generated_lines():
     ("source", "expected_message", "source_line"),
     [
         (
-            "fn type_error() -> i64 {\n    \"wrong\"\n}",
+            'fn type_error() -> i64 {\n    "wrong"\n}',
             "mismatched types",
             2,
         ),
@@ -232,7 +229,9 @@ def test_pretty_includes_original_and_generated_lines():
     ],
 )
 def test_native_errors_map_back_to_polyglot_source(
-    source, expected_message, source_line,
+    source,
+    expected_message,
+    source_line,
 ):
     backend = NativeBackend()
     program = parse(lex(source))

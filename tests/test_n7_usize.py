@@ -187,8 +187,7 @@ def test_python_i64_index_requires_explicit_cast():
     from backends.python.translator import TypeErrorForBoundary
 
     source = (
-        "fn n7_implicit_index(values: Vec<i64>, index: i64) -> i64 { "
-        "values[index] }"
+        "fn n7_implicit_index(values: Vec<i64>, index: i64) -> i64 { values[index] }"
     )
     with pytest.raises(TypeErrorForBoundary) as exc_info:
         _run_python(source)
@@ -204,8 +203,7 @@ def test_native_i64_index_requires_explicit_cast(tmp_path):
     )
 
     source = (
-        "fn n7_implicit_index(values: Vec<i64>, index: i64) -> i64 { "
-        "values[index] }"
+        "fn n7_implicit_index(values: Vec<i64>, index: i64) -> i64 { values[index] }"
     )
     with pytest.raises(NativeTypeErrorForBoundary) as exc_info:
         NativeBackend(cache_dir=tmp_path).compile(parse(lex(source)))
@@ -307,9 +305,7 @@ def test_python_usize_cast_overflow_raises(source: str):
 
 
 def test_python_usize_cast_uses_selectable_target_width():
-    source = (
-        "fn n7_target_width(value: i64) -> usize { value as usize }"
-    )
+    source = "fn n7_target_width(value: i64) -> usize { value as usize }"
     namespace = _run_python(source)
     original_width = get_target_width()
     try:

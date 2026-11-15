@@ -121,7 +121,9 @@ def test_python_string_len_chars_bytes_parity(name, value, expected):
 @pytest.mark.native
 def test_native_string_split_join(native_ns):
     assert native_ns["string_split"]("red,green,blue") == [
-        "red", "green", "blue",
+        "red",
+        "green",
+        "blue",
     ]
     assert native_ns["string_join"](["red", "green"], ",") == "red,green"
 
@@ -157,7 +159,9 @@ def test_native_string_replace_trim_prefix_suffix(native_ns):
     ],
 )
 def test_python_string_replace_trim_prefix_suffix_parity(
-    name, args, expected,
+    name,
+    args,
+    expected,
 ):
     namespace = compile_rust(parse(lex(SOURCES[name])))
 

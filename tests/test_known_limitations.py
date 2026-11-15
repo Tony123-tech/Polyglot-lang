@@ -28,6 +28,7 @@ def _rust_source(src: str) -> str:
 # Option.map collision with Vec.map
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "src",
     [
@@ -63,6 +64,7 @@ def test_vec_map_still_lowers():
 # Result combinators are Python-only inside let-bindings
 # ---------------------------------------------------------------------------
 
+
 def test_result_combinators_and_conversions_are_python_only():
     ns = _run_python(
         """
@@ -86,6 +88,7 @@ fn ok_or() -> Result<i64, String> {
 # ---------------------------------------------------------------------------
 # Async impl methods
 # ---------------------------------------------------------------------------
+
 
 def test_async_impl_method_runs_in_python():
     ns = _run_python(
@@ -121,10 +124,9 @@ def test_async_impl_method_native_codegen_is_sync_only():
 # Box patterns / enum payload slices / nested Vec slices are Python-only
 # ---------------------------------------------------------------------------
 
+
 def test_box_pattern_works_in_python():
-    ns = _run_python(
-        "fn unbox(x: Box<i64>) -> i64 { match x { box v => *v } }"
-    )
+    ns = _run_python("fn unbox(x: Box<i64>) -> i64 { match x { box v => *v } }")
     assert ns["unbox"](5) == 5
 
 
@@ -161,6 +163,7 @@ fn first_inner(xs: Vec<Vec<i64>>) -> i64 {
 # while let with iter.next()
 # ---------------------------------------------------------------------------
 
+
 def test_while_let_next_is_a_parse_error():
     with pytest.raises(ParseError, match="expected expression, got LET"):
         parse(
@@ -177,6 +180,7 @@ def test_while_let_next_is_a_parse_error():
 # ---------------------------------------------------------------------------
 # PyFuture thread affinity
 # ---------------------------------------------------------------------------
+
 
 def test_pyfuture_runtime_is_marked_unsendable():
     generated = _rust_source("fn noop() {}")

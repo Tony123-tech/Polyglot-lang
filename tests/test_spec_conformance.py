@@ -115,10 +115,15 @@ fn spec_parse_success(value: String) -> i64 {
     ],
 )
 def test_native_boundary_errors_are_not_silent(
-    native_ns, function_name, expected_message, args,
+    native_ns,
+    function_name,
+    expected_message,
+    args,
 ):
     _assert_native_panic(
-        native_ns[function_name], expected_message, *args,
+        native_ns[function_name],
+        expected_message,
+        *args,
     )
 
 
@@ -196,12 +201,17 @@ fn spec_non_exhaustive_result(value: Result<i64, String>) -> i64 {
     [(kind, source) for kind, source, _factory in _NON_EXHAUSTIVE_MATCHES],
 )
 def test_native_non_exhaustive_known_match_is_compile_error(
-    native_backend, scrutinee_type, source,
+    native_backend,
+    scrutinee_type,
+    source,
 ):
-    with pytest.warns(
-        UserWarning,
-        match=f"non-exhaustive {scrutinee_type} match",
-    ), pytest.raises(RustCompileError):
+    with (
+        pytest.warns(
+            UserWarning,
+            match=f"non-exhaustive {scrutinee_type} match",
+        ),
+        pytest.raises(RustCompileError),
+    ):
         native_backend.compile(parse(lex(source)))
 
 
@@ -210,7 +220,9 @@ def test_native_non_exhaustive_known_match_is_compile_error(
     _NON_EXHAUSTIVE_MATCHES,
 )
 def test_python_non_exhaustive_known_match_warns_and_raises(
-    scrutinee_type, source, make_missing_value,
+    scrutinee_type,
+    source,
+    make_missing_value,
 ):
     with pytest.warns(
         UserWarning,

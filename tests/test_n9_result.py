@@ -144,9 +144,7 @@ def test_native_option_ok_or_else(native_ns):
 def test_python_result_and_then_and_or_else():
     ns = _run_python()
     assert ns["n9_and_then_success"]() == ns["_Result"].from_ok(6)
-    assert ns["n9_and_then_failure"]() == ns["_Result"].from_err(
-        "and_then error"
-    )
+    assert ns["n9_and_then_failure"]() == ns["_Result"].from_err("and_then error")
     assert ns["n9_or_else_success"]() == ns["_Result"].from_ok(4)
     assert ns["n9_or_else_recovery"]() == ns["_Result"].from_ok(8)
 

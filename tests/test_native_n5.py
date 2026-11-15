@@ -266,6 +266,7 @@ def _run_python_sandboxed(src: str) -> dict:
 # AST parsing
 # ---------------------------------------------------------------------------
 
+
 def test_parse_option_some():
     expr = _parse_expr("Some(1)")
     assert isinstance(expr, OptionSome)
@@ -290,6 +291,7 @@ def test_parse_result_err():
 # ---------------------------------------------------------------------------
 # Construction (native)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.native
 def test_native_option_some_construction(native_ns):
@@ -353,7 +355,9 @@ def test_native_string_lines_whitespace_and_vec_sort_unstable(native_ns):
     assert native_ns["n5_string_lines"]("one\r\ntwo\n") == ["one", "two"]
     assert native_ns["n5_string_lines"]("") == []
     assert native_ns["n5_string_split_whitespace"](" one\t two\nthree ") == [
-        "one", "two", "three",
+        "one",
+        "two",
+        "three",
     ]
     assert native_ns["n5_vec_sort_unstable"]([3, 1, 2, 1]) == [1, 1, 2, 3]
 
@@ -427,6 +431,7 @@ def test_native_result_err_construction(native_ns):
 # ---------------------------------------------------------------------------
 # Construction (Python)
 # ---------------------------------------------------------------------------
+
 
 def test_python_option_result_construction():
     ns = _run_python("""
@@ -559,7 +564,9 @@ def test_python_string_lines_whitespace_and_vec_sort_unstable():
     assert ns["n5_string_lines"]("one\r\ntwo\n") == ["one", "two"]
     assert ns["n5_string_lines"]("") == []
     assert ns["n5_string_split_whitespace"](" one\t two\nthree ") == [
-        "one", "two", "three",
+        "one",
+        "two",
+        "three",
     ]
     assert ns["n5_vec_sort_unstable"]([3, 1, 2, 1]) == [1, 1, 2, 3]
 
@@ -689,9 +696,11 @@ def test_python_vec_partition_sort_by_key_and_is_sorted():
     assert ns["n5_vec_is_sorted"]([1, 1, 2, 3]) is True
     assert ns["n5_vec_is_sorted"]([1, 3, 2]) is False
 
+
 # ---------------------------------------------------------------------------
 # Option unwrap (native)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.native
 def test_native_option_unwrap(native_ns):
@@ -732,6 +741,7 @@ def test_python_unwrap_parity():
 # Option predicates
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.native
 def test_native_option_is_some(native_ns):
     assert native_ns["n5_option_is_some_true"]() is True
@@ -767,6 +777,7 @@ def test_python_option_predicates_parity():
 # Result predicates (Python only)
 # ---------------------------------------------------------------------------
 
+
 def test_python_result_predicates_parity():
     ns = _run_python("""
     fn a() -> bool { Ok(1).is_ok() }
@@ -783,6 +794,7 @@ def test_python_result_predicates_parity():
 # ---------------------------------------------------------------------------
 # ok_or (Python only)
 # ---------------------------------------------------------------------------
+
 
 def test_python_option_ok_or_parity():
     ns = _run_python("""
@@ -802,6 +814,7 @@ def test_python_option_ok_or_parity():
 # map_err (Python only)
 # ---------------------------------------------------------------------------
 
+
 def test_python_result_map_err_parity():
     ns = _run_python("""
     fn ok() -> Result<i64, String> {
@@ -819,6 +832,7 @@ def test_python_result_map_err_parity():
 # unwrap_or_else error branch (Python)
 # ---------------------------------------------------------------------------
 
+
 def test_python_option_unwrap_or_else_called_on_none():
     ns = _run_python("""
     fn a() -> i64 { None.unwrap_or_else(|| 99) }
@@ -829,6 +843,7 @@ def test_python_option_unwrap_or_else_called_on_none():
 # ---------------------------------------------------------------------------
 # Nested Option
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.native
 def test_native_nested_option_construction(native_ns):
@@ -847,6 +862,7 @@ def test_python_nested_option_construction():
 # ---------------------------------------------------------------------------
 # Result with String payload
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.native
 def test_native_result_string_ok(native_ns):
@@ -876,6 +892,7 @@ def test_python_result_string_parity():
 # Async (native)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.native
 def test_native_async_add(native_ns):
     import asyncio
@@ -899,6 +916,7 @@ def test_native_async_identity(native_ns):
 # ---------------------------------------------------------------------------
 # Sandbox
 # ---------------------------------------------------------------------------
+
 
 def test_sandbox_blocks_import():
     with pytest.raises(NameError):

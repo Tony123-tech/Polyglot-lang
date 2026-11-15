@@ -169,7 +169,5 @@ def test_termination_error_message_is_backend_identical():
     assert len(str(native_error.value).splitlines()) == 5
     assert "  reason: " in str(native_error.value)
     assert "  help: " in str(native_error.value)
-    assert "  note: this function is annotated #[terminates]" in str(
-        native_error.value
-    )
+    assert "  note: this function is annotated #[terminates]" in str(native_error.value)
     assert "  at: line " in str(native_error.value)
