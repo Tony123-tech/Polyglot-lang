@@ -111,6 +111,15 @@ from backends.errors import (
 from match_diagnostics import warn_match_issues
 from struct_order import order_struct_declarations
 
+
+class InvalidCastError(RuntimeError):
+    def __init__(self, message, line, col):
+        super().__init__(message)
+        self.message = message
+        self.line = line
+        self.col = col
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -908,7 +917,23 @@ class RustCodegen:
         return emitted
 
     def emit_cast(self, node: Cast) -> str:
-        return f"({self.expr_to_rust(node.expr)} as {self.type_to_rust(node.ty)})"
+        target = self.type_to_rust(node.ty)
+        source = self._expr_type(node.expr)
+        if target == "bool":
+            if source != "bool":
+                raise InvalidCastError(
+                    f"cannot cast `{source or 'unknown'}` as `bool`",
+                    node.line,
+                    node.col,
+                )
+        elif target == "char":
+            if source != "u8":
+                raise InvalidCastError(
+                    f"only `u8` can be cast as `char`, not `{source or 'unknown'}`",
+                    node.line,
+                    node.col,
+                )
+        return f"({self.expr_to_rust(node.expr)} as {target})"
 
     def _emit_usize_arg(self, expr: Expr) -> str:
         self._check_type_boundary(self._expr_type(expr), "usize", expr)

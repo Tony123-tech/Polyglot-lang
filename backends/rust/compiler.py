@@ -28,7 +28,7 @@ from typing import Any
 from ast_nodes import Program
 from backends.base import BackendBase
 from backends.errors import InvalidIntegerParseLiteralError
-from backends.rust.codegen import RustCodegen
+from backends.rust.codegen import InvalidCastError, RustCodegen
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -213,6 +213,14 @@ class NativeBackend(BackendBase):
                 source_line_text=program.source_lines.get(error.line),
                 span=error.span,
                 code="E008",
+            ) from error
+        except InvalidCastError as error:
+            raise RustCompileError(
+                message=error.message,
+                source_line=error.line,
+                source_col=error.col,
+                source_line_text=program.source_lines.get(error.line),
+                code="E009",
             ) from error
         key = hashlib.sha256(source.encode()).hexdigest()[:16]
         build_dir = self.cache_dir / key
