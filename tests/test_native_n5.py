@@ -147,6 +147,14 @@ fn n5_option_map_or_else_none() -> i64 {
     value.map_or_else(|| 7, |x| x + 1)
 }
 """,
+    "option_is_some_and": """
+fn n5_option_is_some_and_true() -> bool { Some(4).is_some_and(|x| x > 2) }
+fn n5_option_is_some_and_false() -> bool { Some(1).is_some_and(|x| x > 2) }
+fn n5_option_is_some_and_none() -> bool {
+    let value: Option<i64> = None;
+    value.is_some_and(|x| x > 2)
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -1082,6 +1090,21 @@ def test_python_option_map_or_else():
 
     assert ns["n5_option_map_or_else_some"]() == 6
     assert ns["n5_option_map_or_else_none"]() == 7
+
+
+@pytest.mark.native
+def test_native_option_is_some_and(native_ns):
+    assert native_ns["n5_option_is_some_and_true"]() is True
+    assert native_ns["n5_option_is_some_and_false"]() is False
+    assert native_ns["n5_option_is_some_and_none"]() is False
+
+
+def test_python_option_is_some_and():
+    ns = _run_python(SOURCES["option_is_some_and"])
+
+    assert ns["n5_option_is_some_and_true"]() is True
+    assert ns["n5_option_is_some_and_false"]() is False
+    assert ns["n5_option_is_some_and_none"]() is False
 
 
 @pytest.mark.native
