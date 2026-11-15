@@ -1109,6 +1109,18 @@ def _runtime_string_trim_matches(value, predicate):
     return value[start:end]
 
 
+def _runtime_string_trim_matches_side(value, predicate, *, start):
+    if start:
+        index = 0
+        while index < len(value) and predicate(value[index]):
+            index += 1
+        return value[index:]
+    index = len(value)
+    while index > 0 and predicate(value[index - 1]):
+        index -= 1
+    return value[:index]
+
+
 def _runtime_string_to_ascii_lowercase(value):
     return value.translate(
         str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
@@ -1533,6 +1545,7 @@ class Translator:
         ns["_string_is_char_boundary"] = _runtime_string_is_char_boundary
         ns["_string_char_indices"] = _runtime_string_char_indices
         ns["_string_trim_matches"] = _runtime_string_trim_matches
+        ns["_string_trim_matches_side"] = _runtime_string_trim_matches_side
         ns["_string_to_ascii_lowercase"] = _runtime_string_to_ascii_lowercase
         ns["_string_to_ascii_uppercase"] = _runtime_string_to_ascii_uppercase
         ns["_result_parse"] = _runtime_parse
@@ -4297,6 +4310,19 @@ class Translator:
                     func=ast.Name(id="_string_trim_matches", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
+                )
+            if e.method in ("trim_start_matches", "trim_end_matches") and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_string_trim_matches_side", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[
+                        ast.keyword(
+                            arg="start",
+                            value=ast.Constant(
+                                value=e.method == "trim_start_matches",
+                            ),
+                        ),
+                    ],
                 )
             if (
                 e.method == "rev"

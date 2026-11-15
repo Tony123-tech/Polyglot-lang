@@ -1484,6 +1484,10 @@ class RustCodegen:
                 return (
                     f"{recv}.trim_matches({self.expr_to_rust(e.args[0])}).to_string()"
                 )
+            if e.method in ("trim_start_matches", "trim_end_matches") and len(e.args) == 1:
+                return (
+                    f"{recv}.{e.method}({self.expr_to_rust(e.args[0])}).to_string()"
+                )
             if e.method == "is_ascii" and not e.args:
                 return f"{recv}.is_ascii()"
             if e.method == "lines" and not e.args:

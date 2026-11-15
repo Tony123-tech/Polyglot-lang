@@ -32,6 +32,14 @@ fn string_trim_matches(value: String) -> String {
     value.trim_matches(|c| c == 'x')
 }
 """,
+    "string_trim_matches_side": """
+fn string_trim_start_matches(value: String) -> String {
+    value.trim_start_matches(|c| c == 'x')
+}
+fn string_trim_end_matches(value: String) -> String {
+    value.trim_end_matches(|c| c == 'x')
+}
+""",
     "string_bytes": """
 fn string_bytes(value: String) -> Vec<u8> {
     value.bytes()
@@ -177,6 +185,21 @@ def test_python_string_trim_matches():
     assert namespace["string_trim_matches"]("xxabcxx") == "abc"
     assert namespace["string_trim_matches"]("abc") == "abc"
     assert namespace["string_trim_matches"]("xxxx") == ""
+
+
+@pytest.mark.native
+def test_native_string_trim_matches_side(native_ns):
+    assert native_ns["string_trim_start_matches"]("xxabcxx") == "abcxx"
+    assert native_ns["string_trim_end_matches"]("xxabcxx") == "xxabc"
+    assert native_ns["string_trim_start_matches"]("abc") == "abc"
+
+
+def test_python_string_trim_matches_side_parity():
+    namespace = compile_rust(parse(lex(SOURCES["string_trim_matches_side"])))
+
+    assert namespace["string_trim_start_matches"]("xxabcxx") == "abcxx"
+    assert namespace["string_trim_end_matches"]("xxabcxx") == "xxabc"
+    assert namespace["string_trim_start_matches"]("abc") == "abc"
 
 
 @pytest.mark.parametrize(
