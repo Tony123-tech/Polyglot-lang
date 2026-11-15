@@ -1651,6 +1651,8 @@ class RustCodegen:
                 return f"{recv}.is_ascii_whitespace()"
             if e.method == "is_ascii_uppercase" and not e.args:
                 return f"{recv}.is_ascii_uppercase()"
+            if e.method == "is_ascii_lowercase" and not e.args:
+                return f"{recv}.is_ascii_lowercase()"
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return f"{recv}.{e.method}()"
             if e.method == "replace" and len(e.args) == 2:

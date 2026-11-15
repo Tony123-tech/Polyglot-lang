@@ -231,6 +231,11 @@ fn char_is_ascii_uppercase(value: char) -> bool {
     value.is_ascii_uppercase()
 }
 """,
+    "char_is_ascii_lowercase": """
+fn char_is_ascii_lowercase(value: char) -> bool {
+    value.is_ascii_lowercase()
+}
+""",
 }
 
 
@@ -779,3 +784,20 @@ def test_python_char_is_ascii_uppercase_parity():
     assert namespace["char_is_ascii_uppercase"]("Z") is True
     assert namespace["char_is_ascii_uppercase"]("a") is False
     assert namespace["char_is_ascii_uppercase"]("É") is False
+
+
+@pytest.mark.native
+def test_native_char_is_ascii_lowercase(native_ns):
+    assert native_ns["char_is_ascii_lowercase"]("a") is True
+    assert native_ns["char_is_ascii_lowercase"]("z") is True
+    assert native_ns["char_is_ascii_lowercase"]("A") is False
+    assert native_ns["char_is_ascii_lowercase"]("é") is False
+
+
+def test_python_char_is_ascii_lowercase_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_ascii_lowercase"])))
+
+    assert namespace["char_is_ascii_lowercase"]("a") is True
+    assert namespace["char_is_ascii_lowercase"]("z") is True
+    assert namespace["char_is_ascii_lowercase"]("A") is False
+    assert namespace["char_is_ascii_lowercase"]("é") is False
