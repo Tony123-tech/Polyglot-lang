@@ -178,11 +178,14 @@ def test_while_let_next_is_a_parse_error():
 
 
 # ---------------------------------------------------------------------------
-# PyFuture thread affinity
+# PyFuture Send awareness
 # ---------------------------------------------------------------------------
 
 
-def test_pyfuture_runtime_is_marked_unsendable():
+def test_pyfuture_runtime_is_send_aware():
     generated = _rust_source("fn noop() {}")
-    assert "#[pyclass(unsendable)]\npub struct PyFuture" in generated
-    assert "#[pyclass(unsendable)]\npub struct PyFutureIterator" in generated
+    assert "#[pyclass(unsendable)]" not in generated
+    assert "pub struct PyFuture {" in generated
+    assert "pub struct PyFutureIterator {" in generated
+    assert "dyn Future<Output = PyResult<PyObject>> + Send" in generated
+    assert "F: Future<Output = PyResult<PyObject>> + Send" in generated
