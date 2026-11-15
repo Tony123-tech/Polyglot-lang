@@ -1089,6 +1089,13 @@ def _runtime_string_replacen(value, old, new, count):
     return value.replace(old, new, count)
 
 
+def _runtime_string_split_terminator(value, separator):
+    parts = value.split(separator)
+    if value and value.endswith(separator) and parts and parts[-1] == "":
+        parts.pop()
+    return parts
+
+
 def _runtime_string_lines(value):
     if not value:
         return []
@@ -1560,6 +1567,7 @@ class Translator:
         ns["_string_rsplit"] = _runtime_string_rsplit
         ns["_string_matches"] = _runtime_string_matches
         ns["_string_replacen"] = _runtime_string_replacen
+        ns["_string_split_terminator"] = _runtime_string_split_terminator
         ns["_string_lines"] = _runtime_string_lines
         ns["_string_is_char_boundary"] = _runtime_string_is_char_boundary
         ns["_string_char_indices"] = _runtime_string_char_indices
@@ -4433,6 +4441,15 @@ class Translator:
                         self.translate_expr(e.args[1]),
                         self.translate_expr(e.args[2]),
                     ],
+                    keywords=[],
+                )
+            if (
+                e.method == "split_terminator"
+                and len(e.args) == 1
+            ):
+                return ast.Call(
+                    func=ast.Name(id="_string_split_terminator", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
             if e.method == "join" and len(e.args) == 1:

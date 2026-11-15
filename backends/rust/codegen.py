@@ -1473,6 +1473,12 @@ class RustCodegen:
                     f"{recv}.rsplit(&{separator})"
                     ".map(String::from).collect::<Vec<_>>()"
                 )
+            if e.method == "split_terminator" and len(e.args) == 1:
+                separator = self.expr_to_rust(e.args[0])
+                return (
+                    f"{recv}.split_terminator(&{separator})"
+                    ".map(String::from).collect::<Vec<_>>()"
+                )
             if e.method in ("matches", "rmatches") and len(e.args) == 1:
                 pattern = self.expr_to_rust(e.args[0])
                 return (

@@ -81,6 +81,11 @@ fn string_split_at(value: String) -> (String, String) {
     value.split_at(2)
 }
 """,
+    "string_split_terminator": """
+fn string_split_terminator(value: String) -> Vec<String> {
+    value.split_terminator(",")
+}
+""",
     "string_join": """
 fn string_join(values: Vec<String>, separator: String) -> String {
     values.join(separator)
@@ -322,6 +327,19 @@ def test_python_string_split_at_parity():
 
     assert namespace["string_split_at"]("banana") == ("ba", "nana")
     assert namespace["string_split_at"]("ab") == ("ab", "")
+
+
+@pytest.mark.native
+def test_native_string_split_terminator(native_ns):
+    assert native_ns["string_split_terminator"]("a,b,") == ["a", "b"]
+    assert native_ns["string_split_terminator"]("a,b") == ["a", "b"]
+
+
+def test_python_string_split_terminator_parity():
+    namespace = compile_rust(parse(lex(SOURCES["string_split_terminator"])))
+
+    assert namespace["string_split_terminator"]("a,b,") == ["a", "b"]
+    assert namespace["string_split_terminator"]("a,b") == ["a", "b"]
 
 
 @pytest.mark.native
