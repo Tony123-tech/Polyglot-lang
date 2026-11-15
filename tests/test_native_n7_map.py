@@ -195,6 +195,14 @@ fn n6_map_get_key_value(
     values.get_key_value(&key)
 }
 """,
+    "map_remove_entry": """
+fn n6_map_remove_entry(
+    mut values: HashMap<String, i64>,
+    key: String,
+) -> Option<(String, i64)> {
+    values.remove_entry(&key)
+}
+""",
 }
 
 
@@ -378,6 +386,21 @@ def test_python_map_get_key_value():
     option = ns["_Option"]
     assert ns["n6_map_get_key_value"](values, "b") == option.some(("b", 2))
     assert ns["n6_map_get_key_value"](values, "z") == option.none()
+
+
+@pytest.mark.native
+def test_native_map_remove_entry(native_ns):
+    assert native_ns["n6_map_remove_entry"]({"a": 1, "b": 2}, "b") == ("b", 2)
+    assert native_ns["n6_map_remove_entry"]({"a": 1}, "z") is None
+
+
+def test_python_map_remove_entry():
+    ns = _run_python(SOURCES["map_remove_entry"])
+    option = ns["_Option"]
+    values = {"a": 1, "b": 2}
+    assert ns["n6_map_remove_entry"](values, "b") == option.some(("b", 2))
+    assert values == {"a": 1}
+    assert ns["n6_map_remove_entry"](values, "z") == option.none()
 
 
 def test_python_map_retain():

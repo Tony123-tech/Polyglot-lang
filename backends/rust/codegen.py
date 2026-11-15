@@ -1333,6 +1333,9 @@ class RustCodegen:
                         f"{recv}.get_key_value({key})"
                         ".map(|(key, value)| (key.clone(), value.clone()))"
                     )
+                if e.method == "remove_entry" and len(e.args) == 1:
+                    key = self._ref_arg_to_rust(e.args[0])
+                    return f"{recv}.remove_entry({key})"
             if kind == "HashSet":
                 if e.method == "insert" and len(e.args) == 1:
                     return f"{recv}.insert({self._owned_arg_to_rust(e.args[0])})"

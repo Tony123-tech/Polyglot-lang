@@ -916,6 +916,12 @@ def _runtime_map_get_key_value(mapping, key):
     return _Option.none()
 
 
+def _runtime_map_remove_entry(mapping, key):
+    if key in mapping:
+        return _Option.some((key, mapping.pop(key)))
+    return _Option.none()
+
+
 def _runtime_map_entry(mapping, key):
     return _MapEntry(mapping, key)
 
@@ -1609,6 +1615,7 @@ class Translator:
         ns["_map_drain"] = _runtime_map_drain
         ns["_map_extend"] = _runtime_map_extend
         ns["_map_get_key_value"] = _runtime_map_get_key_value
+        ns["_map_remove_entry"] = _runtime_map_remove_entry
         ns["_map_entry"] = _runtime_map_entry
         ns["_map_slot_set"] = _runtime_map_slot_set
         ns["_map_slot_aug"] = _runtime_map_slot_aug
@@ -3584,6 +3591,12 @@ class Translator:
                 if e.method == "get_key_value" and len(e.args) == 1:
                     return ast.Call(
                         func=ast.Name(id="_map_get_key_value", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
+                if e.method == "remove_entry" and len(e.args) == 1:
+                    return ast.Call(
+                        func=ast.Name(id="_map_remove_entry", ctx=ast.Load()),
                         args=[recv, self.translate_expr(e.args[0])],
                         keywords=[],
                     )
