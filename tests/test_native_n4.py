@@ -251,6 +251,11 @@ fn char_len_utf8(value: char) -> usize {
     value.len_utf8()
 }
 """,
+    "char_len_utf16": """
+fn char_len_utf16(value: char) -> usize {
+    value.len_utf16()
+}
+""",
 }
 
 
@@ -869,3 +874,18 @@ def test_python_char_len_utf8_parity():
     assert namespace["char_len_utf8"]("é") == 2
     assert namespace["char_len_utf8"]("€") == 3
     assert namespace["char_len_utf8"]("𝄞") == 4
+
+
+@pytest.mark.native
+def test_native_char_len_utf16(native_ns):
+    assert native_ns["char_len_utf16"]("a") == 1
+    assert native_ns["char_len_utf16"]("€") == 1
+    assert native_ns["char_len_utf16"]("𝄞") == 2
+
+
+def test_python_char_len_utf16_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_len_utf16"])))
+
+    assert namespace["char_len_utf16"]("a") == 1
+    assert namespace["char_len_utf16"]("€") == 1
+    assert namespace["char_len_utf16"]("𝄞") == 2

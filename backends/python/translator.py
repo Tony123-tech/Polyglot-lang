@@ -1205,6 +1205,10 @@ def _runtime_parse(value):
         return _Result.from_err(str(exc))
 
 
+def _runtime_char_len_utf16(value):
+    return 2 if ord(value) > 0xFFFF else 1
+
+
 def _runtime_char_len_utf8(value):
     return len(value.encode("utf-8"))
 
@@ -1751,6 +1755,7 @@ class Translator:
         ns["_char_is_ascii_lowercase"] = _runtime_char_is_ascii_lowercase
         ns["_char_is_ascii_punctuation"] = _runtime_char_is_ascii_punctuation
         ns["_char_len_utf8"] = _runtime_char_len_utf8
+        ns["_char_len_utf16"] = _runtime_char_len_utf16
         ns["_map_insert"] = _runtime_map_insert
         ns["_map_get"] = _runtime_map_get
         ns["_map_get_mut"] = _runtime_map_get_mut
@@ -4629,6 +4634,15 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(
                         id="_char_len_utf8",
+                        ctx=ast.Load(),
+                    ),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "len_utf16" and not e.args:
+                return ast.Call(
+                    func=ast.Name(
+                        id="_char_len_utf16",
                         ctx=ast.Load(),
                     ),
                     args=[recv],
