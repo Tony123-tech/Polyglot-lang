@@ -153,6 +153,12 @@ fn vec_swap_remove(mut values: Vec<i64>, index: i64) -> Vec<i64> {
     values
 }
 """,
+    "vec_dedup_by_key": """
+fn vec_dedup_by_key(mut values: Vec<i64>) -> Vec<i64> {
+    values.dedup_by_key(|value| *value % 10);
+    values
+}
+""",
 }
 
 
@@ -288,6 +294,19 @@ def test_python_vec_swap_remove_parity():
     assert namespace["vec_swap_remove"]([1, 2, 3, 4], 1) == [1, 4, 3]
     assert namespace["vec_swap_remove"]([1, 2, 3], 2) == [1, 2]
     assert namespace["vec_swap_remove"]([1], 0) == []
+
+
+@pytest.mark.native
+def test_native_vec_dedup_by_key(native_ns):
+    assert native_ns["vec_dedup_by_key"]([1, 11, 2, 22, 3]) == [1, 2, 3]
+    assert native_ns["vec_dedup_by_key"]([]) == []
+
+
+def test_python_vec_dedup_by_key_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_dedup_by_key"])))
+
+    assert namespace["vec_dedup_by_key"]([1, 11, 2, 22, 3]) == [1, 2, 3]
+    assert namespace["vec_dedup_by_key"]([]) == []
 
 
 @pytest.mark.native

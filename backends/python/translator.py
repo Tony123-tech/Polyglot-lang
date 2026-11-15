@@ -522,6 +522,16 @@ def _runtime_vec_swap_remove(values: list, index: int):
     return value
 
 
+def _runtime_vec_dedup_by_key(values: list, key) -> None:
+    if not values:
+        return
+    deduped = [values[0]]
+    for value in values[1:]:
+        if key(deduped[-1]) != key(value):
+            deduped.append(value)
+    values[:] = deduped
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1381,6 +1391,7 @@ class Translator:
         ns["_vec_rchunks_exact"] = _runtime_vec_rchunks_exact
         ns["_vec_concat"] = _runtime_vec_concat
         ns["_vec_swap_remove"] = _runtime_vec_swap_remove
+        ns["_vec_dedup_by_key"] = _runtime_vec_dedup_by_key
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3551,6 +3562,12 @@ class Translator:
             if e.method == "swap_remove" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(id="_vec_swap_remove", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "dedup_by_key" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_dedup_by_key", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
