@@ -3701,7 +3701,7 @@ class Translator:
                     args=[recv, self._translate_closure(closure)],
                     keywords=[],
                 )
-            if e.method == "sort_by_key" and len(e.args) == 1:
+            if e.method in ("sort_by_key", "sort_unstable_by_key") and len(e.args) == 1:
                 closure = e.args[0]
                 if (
                     not isinstance(closure, Closure)
@@ -3709,7 +3709,7 @@ class Translator:
                     or not isinstance(closure.params[0][0], PatIdent)
                 ):
                     raise TranslateError(
-                        "sort_by_key expects a single identifier parameter",
+                        f"{e.method} expects a single identifier parameter",
                         e.line,
                         e.col,
                     )

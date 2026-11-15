@@ -159,6 +159,12 @@ fn vec_dedup_by_key(mut values: Vec<i64>) -> Vec<i64> {
     values
 }
 """,
+    "vec_sort_unstable_by_key": """
+fn vec_sort_unstable_by_key(mut values: Vec<i64>) -> Vec<i64> {
+    values.sort_unstable_by_key(|value| -*value);
+    values
+}
+""",
 }
 
 
@@ -307,6 +313,19 @@ def test_python_vec_dedup_by_key_parity():
 
     assert namespace["vec_dedup_by_key"]([1, 11, 2, 22, 3]) == [1, 2, 3]
     assert namespace["vec_dedup_by_key"]([]) == []
+
+
+@pytest.mark.native
+def test_native_vec_sort_unstable_by_key(native_ns):
+    assert native_ns["vec_sort_unstable_by_key"]([1, 3, 2, 4]) == [4, 3, 2, 1]
+    assert native_ns["vec_sort_unstable_by_key"]([]) == []
+
+
+def test_python_vec_sort_unstable_by_key_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_sort_unstable_by_key"])))
+
+    assert namespace["vec_sort_unstable_by_key"]([1, 3, 2, 4]) == [4, 3, 2, 1]
+    assert namespace["vec_sort_unstable_by_key"]([]) == []
 
 
 @pytest.mark.native
