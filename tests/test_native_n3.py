@@ -139,6 +139,14 @@ fn vec_rchunks_exact(values: Vec<i64>, size: i64) -> Vec<Vec<i64>> {
     values.rchunks_exact(size as usize)
 }
 """,
+    "vec_concat": """
+fn vec_concat_strings(values: Vec<String>) -> String {
+    values.concat()
+}
+fn vec_concat_ints(values: Vec<Vec<i64>>) -> Vec<i64> {
+    values.concat()
+}
+""",
 }
 
 
@@ -246,6 +254,19 @@ def test_python_vec_rchunks_exact_parity():
     assert namespace["vec_rchunks_exact"]([1, 2, 3, 4, 5], 2) == [[4, 5], [2, 3]]
     assert namespace["vec_rchunks_exact"]([1, 2, 3], 2) == [[2, 3]]
     assert namespace["vec_rchunks_exact"]([1], 2) == []
+
+
+@pytest.mark.native
+def test_native_vec_concat(native_ns):
+    assert native_ns["vec_concat_strings"](["ab", "cd", "e"]) == "abcde"
+    assert native_ns["vec_concat_ints"]([[1, 2], [3], []]) == [1, 2, 3]
+
+
+def test_python_vec_concat_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_concat"])))
+
+    assert namespace["vec_concat_strings"](["ab", "cd", "e"]) == "abcde"
+    assert namespace["vec_concat_ints"]([[1, 2], [3], []]) == [1, 2, 3]
 
 
 @pytest.mark.native

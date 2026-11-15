@@ -504,6 +504,14 @@ def _runtime_vec_rchunks_exact(values: list, size: int) -> list[list]:
     return chunks
 
 
+def _runtime_vec_concat(values: list):
+    if values and isinstance(values[0], str):
+        return "".join(values)
+    if values and isinstance(values[0], list):
+        return [item for group in values for item in group]
+    return values
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1361,6 +1369,7 @@ class Translator:
         ns["_vec_chunks_exact"] = _runtime_vec_chunks_exact
         ns["_vec_rchunks"] = _runtime_vec_rchunks
         ns["_vec_rchunks_exact"] = _runtime_vec_rchunks_exact
+        ns["_vec_concat"] = _runtime_vec_concat
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3520,6 +3529,12 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_vec_rchunks_exact", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "concat" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_vec_concat", ctx=ast.Load()),
+                    args=[recv],
                     keywords=[],
                 )
             if e.method == "retain" and len(e.args) == 1:
