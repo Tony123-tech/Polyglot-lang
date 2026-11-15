@@ -50,7 +50,7 @@ def _validated_width(width: int | None) -> int:
 
 
 def _usize_max(width: int | None = None) -> int:
-    return 2**_validated_width(width) - 1
+    return 2 ** _validated_width(width) - 1
 
 
 def _isize_min(width: int | None = None) -> int:
@@ -72,8 +72,7 @@ def cast_usize(value: int, *, target_width: int | None = None) -> int:
     width = _validated_width(target_width)
     if value < 0 or value > _usize_max(width):
         raise OverflowError(
-            f"value {value} does not fit in usize "
-            f"(target width {width}-bit)"
+            f"value {value} does not fit in usize (target width {width}-bit)"
         )
     return value
 
@@ -85,33 +84,14 @@ def cast_isize(value: int, *, target_width: int | None = None) -> int:
     width = _validated_width(target_width)
     if value < _isize_min(width) or value > _isize_max(width):
         raise OverflowError(
-            f"value {value} does not fit in isize "
-            f"(target width {width}-bit)"
+            f"value {value} does not fit in isize (target width {width}-bit)"
         )
     return value
 
 
-def cast_i64(value) -> int:
+def cast_i64(value, *, literal_out_of_range: bool = False) -> int:
     """`expr as i64`: wrap to signed 64-bit range (matches Rust semantics)."""
-    if isinstance(value, bool):
-        value = int(value)
-    elif isinstance(value, str):
-        if len(value) == 1:
-            value = ord(value)
-        else:
-            raise TypeError("cannot cast str to i64")
-    elif isinstance(value, float):
-        import math
-        if math.isnan(value) or math.isinf(value):
-            return 0
-        value = int(value)
-    if not isinstance(value, int):
-        raise TypeError(f"cannot cast {type(value).__name__} to i64")
-    mask = (1 << 64) - 1
-    v = value & mask
-    if v >= (1 << 63):
-        v -= 1 << 64
-    return v
+    return cast_int(value, "i64", literal_out_of_range=literal_out_of_range)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +125,13 @@ def _int_range(name: str, target_width: int | None = None):
     return 0, (1 << bits) - 1
 
 
-def cast_int(value, ty: str, *, target_width: int | None = None, literal_out_of_range: bool = False) -> int:
+def cast_int(
+    value,
+    ty: str,
+    *,
+    target_width: int | None = None,
+    literal_out_of_range: bool = False,
+) -> int:
     """Cast integer to target type.
 
     For Python backend (M4): if literal_out_of_range is True, raise
@@ -161,6 +147,7 @@ def cast_int(value, ty: str, *, target_width: int | None = None, literal_out_of_
             raise TypeError(f"cannot cast str to {ty}")
     elif isinstance(value, float):
         import math
+
         if math.isnan(value) or math.isinf(value):
             value = 0
         else:
@@ -169,9 +156,7 @@ def cast_int(value, ty: str, *, target_width: int | None = None, literal_out_of_
         raise TypeError(f"cannot cast {type(value).__name__} to {ty}")
     if literal_out_of_range:
         lo, hi = _int_range(ty, target_width)
-        raise OverflowError(
-            f"value {value} does not fit in {ty} (range {lo}..={hi})"
-        )
+        raise OverflowError(f"value {value} does not fit in {ty} (range {lo}..={hi})")
     if ty == "usize":
         # explicit as usize: range check per existing behavior
         return cast_usize(value, target_width=target_width)
@@ -192,26 +177,34 @@ def cast_int(value, ty: str, *, target_width: int | None = None, literal_out_of_
 def cast_i8(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "i8", literal_out_of_range=literal_out_of_range)
 
+
 def cast_i16(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "i16", literal_out_of_range=literal_out_of_range)
+
 
 def cast_i32(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "i32", literal_out_of_range=literal_out_of_range)
 
+
 def cast_i128(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "i128", literal_out_of_range=literal_out_of_range)
+
 
 def cast_u8(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "u8", literal_out_of_range=literal_out_of_range)
 
+
 def cast_u16(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "u16", literal_out_of_range=literal_out_of_range)
+
 
 def cast_u32(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "u32", literal_out_of_range=literal_out_of_range)
 
+
 def cast_u64(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "u64", literal_out_of_range=literal_out_of_range)
+
 
 def cast_u128(value: int, *, literal_out_of_range: bool = False) -> int:
     return cast_int(value, "u128", literal_out_of_range=literal_out_of_range)
@@ -226,6 +219,7 @@ def int_in_range(value: int, ty: str, target_width: int | None = None) -> bool:
 # M3: BTreeMap and HashSet helpers (Python backend)
 # ---------------------------------------------------------------------------
 
+
 class _BTreeMap(dict):
     """BTreeMap representation: dict with sorted iteration semantics."""
 
@@ -238,18 +232,17 @@ def btreemap_new():
 
 
 def btreemap_insert(m, k, v):
+    had = k in m
     prev = m.get(k)
     m[k] = v
-    if prev is None and k not in m:
-        # shouldn't happen
-        return None
-    return prev
+    return _Option.some(prev) if had else _Option.none()
 
 
 def btreemap_insert_with_prev(m, k, v):
+    had = k in m
     prev = m.get(k)
     m[k] = v
-    return prev
+    return _Option.some(prev) if had else _Option.none()
 
 
 def btreemap_get(m, k):
@@ -260,8 +253,8 @@ def btreemap_get(m, k):
 
 def btreemap_remove(m, k):
     if k in m:
-        return m.pop(k)
-    return None
+        return _Option.some(m.pop(k))
+    return _Option.none()
 
 
 def btreemap_contains(m, k):
@@ -399,6 +392,14 @@ def hashset_is_empty(s):
 
 def hashset_iter(s):
     return list(s)
+
+
+def hashset_get_mut(s, v):
+    """Copy-at-Python-boundary `get_mut`: return the present element or None."""
+    if v in s:
+        return _Option.some(v)
+    return _Option.none()
+
 
 def _iflet_match(opt, then_fn, else_fn):
     # Duck typing: accept any Option-like object with is_some()/unwrap().

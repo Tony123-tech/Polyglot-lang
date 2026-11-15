@@ -86,13 +86,13 @@ def get_backend(
         trusted = _trusted_from_env()
     if name == "python":
         from backends.python.translator import PythonBackend
+
         return PythonBackend(trusted=trusted, target_width=target_width)
     if name == "native":
         if target_width is not None:
-            raise ValueError(
-                "target_width is supported only by the Python backend"
-            )
+            raise ValueError("target_width is supported only by the Python backend")
         from backends.rust.compiler import NativeBackend
+
         return NativeBackend(trusted=trusted)
     raise ValueError(f"Unknown backend: {name!r}")
 

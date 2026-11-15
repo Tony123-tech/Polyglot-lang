@@ -162,6 +162,7 @@ from backends.python.runtime import (
     cast_usize,
     get_target_width,
     hashset_contains,
+    hashset_get_mut,
     hashset_insert,
     hashset_is_empty,
     hashset_iter,
@@ -172,18 +173,58 @@ from backends.python.runtime import (
 from match_diagnostics import missing_match_variants, warn_match_issues
 from struct_order import order_struct_declarations
 
-_SAFE_BUILTINS = frozenset({
-    "abs", "all", "any", "bool", "dict", "enumerate", "filter",
-    "float", "format", "frozenset", "int", "isinstance", "issubclass",
-    "iter", "len", "list", "map", "max", "min", "next", "object",
-    "print", "range", "repr", "reversed", "round", "set", "slice",
-    "sorted", "str", "sum", "tuple", "type", "zip",
-    "True", "False", "None",
-    "Exception", "ValueError", "TypeError", "RuntimeError",
-    "AssertionError", "IndexError", "KeyError", "StopIteration",
-    "NotImplementedError", "ZeroDivisionError",
-    "__build_class__",  # required for class definitions
-})
+_SAFE_BUILTINS = frozenset(
+    {
+        "abs",
+        "all",
+        "any",
+        "bool",
+        "dict",
+        "enumerate",
+        "filter",
+        "float",
+        "format",
+        "frozenset",
+        "int",
+        "isinstance",
+        "issubclass",
+        "iter",
+        "len",
+        "list",
+        "map",
+        "max",
+        "min",
+        "next",
+        "object",
+        "print",
+        "range",
+        "repr",
+        "reversed",
+        "round",
+        "set",
+        "slice",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+        "type",
+        "zip",
+        "True",
+        "False",
+        "None",
+        "Exception",
+        "ValueError",
+        "TypeError",
+        "RuntimeError",
+        "AssertionError",
+        "IndexError",
+        "KeyError",
+        "StopIteration",
+        "NotImplementedError",
+        "ZeroDivisionError",
+        "__build_class__",  # required for class definitions
+    }
+)
 
 
 def _sandbox_builtins() -> dict:
@@ -194,9 +235,12 @@ def _sandbox_builtins() -> dict:
         for name in _SAFE_BUILTINS
         if hasattr(builtins, name)
     }
+
+
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
+
 
 class TypeErrorForBoundary(Exception):
     """Raised when an integer crosses a pointer-width boundary implicitly."""
@@ -240,11 +284,20 @@ class TypeErrorForBoundary(Exception):
 # ---------------------------------------------------------------------------
 
 TYPE_MAP: dict[str, str] = {
-    "i8": "int", "i16": "int", "i32": "int", "i64": "int",
-    "i128": "int", "isize": "int",
-    "u8": "int", "u16": "int", "u32": "int", "u64": "int",
-    "u128": "int", "usize": "int",
-    "f32": "float", "f64": "float",
+    "i8": "int",
+    "i16": "int",
+    "i32": "int",
+    "i64": "int",
+    "i128": "int",
+    "isize": "int",
+    "u8": "int",
+    "u16": "int",
+    "u32": "int",
+    "u64": "int",
+    "u128": "int",
+    "usize": "int",
+    "f32": "float",
+    "f64": "float",
     "bool": "bool",
     "char": "str",
     "str": "str",
@@ -272,7 +325,9 @@ _INT_TYPE_BITS: dict[str, tuple[int, bool]] = {
 }
 
 _FLOAT_TYPE_NAMES = frozenset({"f32", "f64"})
-_PRIMITIVE_NUMERIC_TYPES = frozenset(_INT_TYPE_BITS) | _FLOAT_TYPE_NAMES | {"usize", "isize"}
+_PRIMITIVE_NUMERIC_TYPES = (
+    frozenset(_INT_TYPE_BITS) | _FLOAT_TYPE_NAMES | {"usize", "isize"}
+)
 
 # Each compiled program gets a unique module name so consecutive compilations
 # do not clobber one another in ``sys.modules``.
@@ -301,14 +356,13 @@ MACRO_MAP: dict[str, str] = {
 # Runtime helpers
 # ---------------------------------------------------------------------------
 
+
 def _runtime_panic(msg: str = "") -> None:
     raise RuntimeError(msg or "panic")
 
 
 def _runtime_non_exhaustive_match(scrutinee_type: str) -> None:
-    raise RuntimeError(
-        f"non-exhaustive {scrutinee_type} match reached at runtime"
-    )
+    raise RuntimeError(f"non-exhaustive {scrutinee_type} match reached at runtime")
 
 
 def _runtime_assert_eq(a, b) -> None:
@@ -333,16 +387,12 @@ def _runtime_rust_slice(value, start, end):
         start = 0 if start is None else start
         end = len(data) if end is None else end
         if start > end:
-            raise ValueError(
-                f"slice index starts at {start} but ends at {end}"
-            )
+            raise ValueError(f"slice index starts at {start} but ends at {end}")
         return data[start:end].decode("utf-8")
     start = 0 if start is None else start
     end = len(value) if end is None else end
     if start > end:
-        raise ValueError(
-            f"slice index starts at {start} but ends at {end}"
-        )
+        raise ValueError(f"slice index starts at {start} but ends at {end}")
     return value[start:end]
 
 
@@ -354,8 +404,11 @@ def _runtime_vec_dedup(values: list) -> None:
     if values:
         values[:] = [
             values[0],
-            *(value for previous, value in itertools.pairwise(values)
-              if value != previous),
+            *(
+                value
+                for previous, value in itertools.pairwise(values)
+                if value != previous
+            ),
         ]
 
 
@@ -363,18 +416,14 @@ def _runtime_vec_windows(values: list, size: int) -> list[list]:
     if size <= 0:
         raise ValueError("window size must be positive")
     return [
-        values[start:start + size]
-        for start in range(max(0, len(values) - size + 1))
+        values[start : start + size] for start in range(max(0, len(values) - size + 1))
     ]
 
 
 def _runtime_vec_chunks(values: list, size: int) -> list[list]:
     if size <= 0:
         raise ValueError("chunk size must be positive")
-    return [
-        values[start:start + size]
-        for start in range(0, len(values), size)
-    ]
+    return [values[start : start + size] for start in range(0, len(values), size)]
 
 
 def _runtime_filter(values, predicate):
@@ -717,11 +766,7 @@ def _runtime_cast(value, ty, *, target_width: int | None = None):
             number = 0
         elif math.isinf(value):
             if signed:
-                number = (
-                    (1 << (width - 1)) - 1
-                    if value > 0
-                    else -(1 << (width - 1))
-                )
+                number = (1 << (width - 1)) - 1 if value > 0 else -(1 << (width - 1))
             else:
                 number = (1 << width) - 1 if value > 0 else 0
         else:
@@ -789,22 +834,22 @@ def _runtime_string_strip(value, part, *, prefix):
     if prefix:
         if not value.startswith(part):
             return _Option.none()
-        return _Option.some(value[len(part):])
+        return _Option.some(value[len(part) :])
     if not value.endswith(part):
         return _Option.none()
-    return _Option.some(value[:len(value) - len(part)])
+    return _Option.some(value[: len(value) - len(part)])
 
 
 def _runtime_string_split_once(value, separator, *, reverse):
-    position = (
-        value.rfind(separator) if reverse else value.find(separator)
-    )
+    position = value.rfind(separator) if reverse else value.find(separator)
     if position < 0:
         return _Option.none()
-    return _Option.some((
-        value[:position],
-        value[position + len(separator):],
-    ))
+    return _Option.some(
+        (
+            value[:position],
+            value[position + len(separator) :],
+        )
+    )
 
 
 def _runtime_string_lines(value):
@@ -820,12 +865,8 @@ def _runtime_string_lines(value):
 
 def _runtime_string_is_char_boundary(value, index):
     encoded = value.encode("utf-8")
-    return (
-        0 <= index <= len(encoded)
-        and (
-            index == len(encoded)
-            or encoded[index] & 0xC0 != 0x80
-        )
+    return 0 <= index <= len(encoded) and (
+        index == len(encoded) or encoded[index] & 0xC0 != 0x80
     )
 
 
@@ -896,9 +937,7 @@ class _Option:
 
     def ok_or(self, error):
         return (
-            _Result.from_ok(self._value)
-            if self._is_some
-            else _Result.from_err(error)
+            _Result.from_ok(self._value) if self._is_some else _Result.from_err(error)
         )
 
     def ok_or_else(self, error_factory):
@@ -919,6 +958,7 @@ class _Option:
         if self._is_some:
             return f"Some({self._value!r})"
         return "None"
+
 
 class _Result:
     __slots__ = ("_is_ok", "_value")
@@ -957,13 +997,17 @@ class _Result:
         if not self._is_ok:
             raise _ResultErrSentinel(self)
         return self._value
+
     def map_err(self, f):
         if self._is_ok:
             return self
         return _Result.from_err(f(self._value))
+
     def unwrap(self):
         if not self._is_ok:
-            raise RuntimeError(f"called `Result::unwrap()` on an `Err` value: {self._value!r}")
+            raise RuntimeError(
+                f"called `Result::unwrap()` on an `Err` value: {self._value!r}"
+            )
         return self._value
 
     def unwrap_or(self, default):
@@ -971,6 +1015,7 @@ class _Result:
 
     def unwrap_or_else(self, f):
         return self._value if self._is_ok else f(self._value)
+
     def __eq__(self, other):
         if not isinstance(other, _Result):
             return NotImplemented
@@ -996,24 +1041,29 @@ class _PythonEnumVariant:
 # Import helpers
 # ---------------------------------------------------------------------------
 
+
 def _import_dataclass():
     from dataclasses import dataclass
+
     return dataclass
 
 
 def _import_enum():
     from enum import Enum
+
     return Enum
 
 
 def _import_auto():
     from enum import auto
+
     return auto
 
 
 # ---------------------------------------------------------------------------
 # Translator
 # ---------------------------------------------------------------------------
+
 
 class Translator:
     def __init__(self) -> None:
@@ -1085,24 +1135,21 @@ class Translator:
                 self.constant_names.add(item.name)
             elif isinstance(item, FnDecl):
                 self._function_signatures[item.name] = [
-                    self._binding_type_name(param.ty)
-                    for param in item.params
+                    self._binding_type_name(param.ty) for param in item.params
                 ]
             elif isinstance(item, ImplBlock):
                 target = self._type_name_of(item.ty)
                 self.impl_blocks.setdefault(target, []).append(item)
                 for method in item.items:
                     if isinstance(method, FnDecl):
-                        self._method_return_types[
-                            (target, method.name)
-                        ] = self._binding_type_name(method.ret)
+                        self._method_return_types[(target, method.name)] = (
+                            self._binding_type_name(method.ret)
+                        )
 
         # Pass 2: emit statements. impl blocks are consumed here.
         body: list[ast.stmt] = []
         emitted_classes: set[str] = set()
-        struct_items = [
-            item for item in program.items if isinstance(item, StructDecl)
-        ]
+        struct_items = [item for item in program.items if isinstance(item, StructDecl)]
         for item in order_struct_declarations(struct_items):
             body.append(self.translate_struct(item))
             emitted_classes.add(item.name)
@@ -1127,14 +1174,17 @@ class Translator:
                 methods.extend(self._impl_methods(impl))
             if not methods:
                 methods = [ast.Pass()]
-            body.append(ast.ClassDef(
-                name=target, bases=[], keywords=[], body=methods,
-                decorator_list=[],
-            ))
+            body.append(
+                ast.ClassDef(
+                    name=target,
+                    bases=[],
+                    keywords=[],
+                    body=methods,
+                    decorator_list=[],
+                )
+            )
 
-        return ast.fix_missing_locations(
-            ast.Module(body=body, type_ignores=[])
-        )
+        return ast.fix_missing_locations(ast.Module(body=body, type_ignores=[]))
 
     def compile_rust(
         self,
@@ -1146,9 +1196,7 @@ class Translator:
         import types
 
         if target_width is not None and target_width not in (32, 64):
-            raise ValueError(
-                f"target width must be 32 or 64, got {target_width}"
-            )
+            raise ValueError(f"target width must be 32 or 64, got {target_width}")
         self.target_width = HOST_TARGET_WIDTH if target_width is None else target_width
         module = self.translate_program(program)
         code = compile(module, "<polyglot>", "exec")
@@ -1223,6 +1271,7 @@ class Translator:
         ns["_hashset_new"] = hashset_new
         ns["_hashset_insert"] = hashset_insert
         ns["_hashset_contains"] = hashset_contains
+        ns["_hashset_get_mut"] = hashset_get_mut
         ns["_hashset_remove"] = hashset_remove
         ns["_hashset_len"] = hashset_len
         ns["_hashset_is_empty"] = hashset_is_empty
@@ -1233,17 +1282,29 @@ class Translator:
             ns["_cast_usize"] = cast_usize
         else:
             ns["_cast"] = lambda value, ty: _runtime_cast(
-                value, ty, target_width=target_width,
+                value,
+                ty,
+                target_width=target_width,
             )
             ns["_cast_isize"] = lambda value: cast_isize(
-                value, target_width=target_width,
+                value,
+                target_width=target_width,
             )
             ns["_cast_usize"] = lambda value: cast_usize(
-                value, target_width=target_width,
+                value,
+                target_width=target_width,
             )
         for _name, _fn in {
-            "i8": cast_i8, "i16": cast_i16, "i32": cast_i32, "i64": cast_i64, "i128": cast_i128,
-            "u8": cast_u8, "u16": cast_u16, "u32": cast_u32, "u64": cast_u64, "u128": cast_u128,
+            "i8": cast_i8,
+            "i16": cast_i16,
+            "i32": cast_i32,
+            "i64": cast_i64,
+            "i128": cast_i128,
+            "u8": cast_u8,
+            "u16": cast_u16,
+            "u32": cast_u32,
+            "u64": cast_u64,
+            "u128": cast_u128,
         }.items():
             ns[f"_cast_{_name}"] = _fn
         ns["_div"] = _runtime_int_div
@@ -1277,7 +1338,10 @@ class Translator:
             if not methods:
                 methods = [ast.Pass()]
             cls = ast.ClassDef(
-                name=target, bases=[], keywords=[], body=methods,
+                name=target,
+                bases=[],
+                keywords=[],
+                body=methods,
                 decorator_list=[],
             )
             out: list[ast.stmt] = [cls]
@@ -1297,13 +1361,17 @@ class Translator:
             return [self.translate_trait(item)]
         raise TranslateError(
             f"unsupported item {type(item).__name__}",
-            getattr(item, "line", 0), getattr(item, "col", 0),
+            getattr(item, "line", 0),
+            getattr(item, "col", 0),
         )
 
     # ---- fn ----------------------------------------------------------------
 
     def translate_fn(
-        self, fn: FnDecl, *, is_method: bool = False,
+        self,
+        fn: FnDecl,
+        *,
+        is_method: bool = False,
     ) -> ast.FunctionDef | ast.AsyncFunctionDef:
         from termination import check_function
 
@@ -1313,8 +1381,13 @@ class Translator:
         if is_method and not has_self:
             params.insert(0, ast.arg(arg="self", annotation=None))
         args = ast.arguments(
-            posonlyargs=[], args=params, vararg=None,
-            kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[],
+            posonlyargs=[],
+            args=params,
+            vararg=None,
+            kwonlyargs=[],
+            kw_defaults=[],
+            kwarg=None,
+            defaults=[],
         )
         body: list[ast.stmt] = []
         previous_binding_types = self._binding_types
@@ -1355,24 +1428,34 @@ class Translator:
             and fn.ret.name == "Result"
             and len(fn.ret.args) == 2
         ):
-            body = [ast.Try(
-                body=body,
-                handlers=[ast.ExceptHandler(
-                    type=ast.Name(
-                        id="_ResultErrSentinel", ctx=ast.Load(),
-                    ),
-                    name="_polyglot_result_error",
-                    body=[ast.Return(value=ast.Attribute(
-                        value=ast.Name(
-                            id="_polyglot_result_error", ctx=ast.Load(),
-                        ),
-                        attr="result",
-                        ctx=ast.Load(),
-                    ))],
-                )],
-                orelse=[],
-                finalbody=[],
-            )]
+            body = [
+                ast.Try(
+                    body=body,
+                    handlers=[
+                        ast.ExceptHandler(
+                            type=ast.Name(
+                                id="_ResultErrSentinel",
+                                ctx=ast.Load(),
+                            ),
+                            name="_polyglot_result_error",
+                            body=[
+                                ast.Return(
+                                    value=ast.Attribute(
+                                        value=ast.Name(
+                                            id="_polyglot_result_error",
+                                            ctx=ast.Load(),
+                                        ),
+                                        attr="result",
+                                        ctx=ast.Load(),
+                                    )
+                                )
+                            ],
+                        )
+                    ],
+                    orelse=[],
+                    finalbody=[],
+                )
+            ]
         ret: ast.expr | None = (
             self.translate_type(fn.ret) if fn.ret is not None else None
         )
@@ -1380,18 +1463,22 @@ class Translator:
         # impl method without self -> associated function, expose as
         # @staticmethod so `Point.new(x, y)` binds correctly.
         if is_method and not has_self:
-            decorators.append(
-                ast.Name(id="staticmethod", ctx=ast.Load())
-            )
+            decorators.append(ast.Name(id="staticmethod", ctx=ast.Load()))
         if fn.is_async:
             return ast.AsyncFunctionDef(
-                name=fn.name, args=args, body=body,
-                decorator_list=decorators, returns=ret,
+                name=fn.name,
+                args=args,
+                body=body,
+                decorator_list=decorators,
+                returns=ret,
                 type_comment=None,
             )
         return ast.FunctionDef(
-            name=fn.name, args=args, body=body,
-            decorator_list=decorators, returns=ret,
+            name=fn.name,
+            args=args,
+            body=body,
+            decorator_list=decorators,
+            returns=ret,
             type_comment=None,
         )
 
@@ -1406,7 +1493,8 @@ class Translator:
         else:
             raise TranslateError(
                 f"unsupported fn parameter pattern {type(pat).__name__}",
-                p.line, p.col,
+                p.line,
+                p.col,
             )
         if name == "self":
             return ast.arg(arg="self", annotation=None)
@@ -1422,12 +1510,15 @@ class Translator:
                 self._return_type_name,
                 block.tail.line,
                 block.tail.col,
+                getattr(block.tail, "span", None),
             )
-            body.append(ast.Return(
-                value=self._coerce_return_value(
-                    self.translate_expr(block.tail),
-                ),
-            ))
+            body.append(
+                ast.Return(
+                    value=self._coerce_return_value(
+                        self.translate_expr(block.tail),
+                    ),
+                )
+            )
         return body
 
     # ---- struct ------------------------------------------------------------
@@ -1436,18 +1527,23 @@ class Translator:
         decorators: list[ast.expr] = [ast.Name(id="dataclass", ctx=ast.Load())]
         body: list[ast.stmt] = []
         for fname, fty, _pub in s.fields:
-            body.append(ast.AnnAssign(
-                target=ast.Name(id=fname, ctx=ast.Store()),
-                annotation=self._type_or_object(fty),
-                value=None,
-                simple=1,
-            ))
+            body.append(
+                ast.AnnAssign(
+                    target=ast.Name(id=fname, ctx=ast.Store()),
+                    annotation=self._type_or_object(fty),
+                    value=None,
+                    simple=1,
+                )
+            )
         for impl in self.impl_blocks.get(s.name, []):
             body.extend(self._impl_methods(impl))
         if not body:
             body = [ast.Pass()]
         return ast.ClassDef(
-            name=s.name, bases=[], keywords=[], body=body,
+            name=s.name,
+            bases=[],
+            keywords=[],
+            body=body,
             decorator_list=decorators,
         )
 
@@ -1460,7 +1556,8 @@ class Translator:
                 if isinstance(sub, FnDecl):
                     methods.append(
                         self.translate_fn(
-                            sub, is_method=self._fn_is_method(sub),
+                            sub,
+                            is_method=self._fn_is_method(sub),
                         )
                     )
             return methods
@@ -1481,28 +1578,32 @@ class Translator:
         body: list[ast.stmt] = []
         has_payloads = any(v.fields is not None for v in e.variants)
         for v in e.variants:
-            body.append(ast.Assign(
-                targets=[
-                    ast.Name(
-                        id=self._python_identifier(v.name),
-                        ctx=ast.Store(),
-                    ),
-                ],
-                value=(
-                    ast.Call(
-                        func=ast.Name(
-                            id="_PythonEnumVariant", ctx=ast.Load(),
+            body.append(
+                ast.Assign(
+                    targets=[
+                        ast.Name(
+                            id=self._python_identifier(v.name),
+                            ctx=ast.Store(),
                         ),
-                        args=[ast.Constant(value=v.name)],
-                        keywords=[],
-                    )
-                    if has_payloads
-                    else ast.Call(
-                        func=ast.Name(id="auto", ctx=ast.Load()),
-                        args=[], keywords=[],
-                    )
-                ),
-            ))
+                    ],
+                    value=(
+                        ast.Call(
+                            func=ast.Name(
+                                id="_PythonEnumVariant",
+                                ctx=ast.Load(),
+                            ),
+                            args=[ast.Constant(value=v.name)],
+                            keywords=[],
+                        )
+                        if has_payloads
+                        else ast.Call(
+                            func=ast.Name(id="auto", ctx=ast.Load()),
+                            args=[],
+                            keywords=[],
+                        )
+                    ),
+                )
+            )
         for impl in self.impl_blocks.get(e.name, []):
             body.extend(self._impl_methods(impl))
         if not body:
@@ -1511,7 +1612,10 @@ class Translator:
             [] if has_payloads else [ast.Name(id="Enum", ctx=ast.Load())]
         )
         return ast.ClassDef(
-            name=e.name, bases=bases, keywords=[], body=body,
+            name=e.name,
+            bases=bases,
+            keywords=[],
+            body=body,
             decorator_list=[],
         )
 
@@ -1523,7 +1627,10 @@ class Translator:
         if not methods:
             methods = [ast.Pass()]
         cls = ast.ClassDef(
-            name=target, bases=[], keywords=[], body=methods,
+            name=target,
+            bases=[],
+            keywords=[],
+            body=methods,
             decorator_list=[],
         )
         out: list[ast.stmt] = [cls]
@@ -1536,7 +1643,8 @@ class Translator:
             return self._type_name_of(ty.inner)
         raise TranslateError(
             f"cannot get type name from {type(ty).__name__}",
-            getattr(ty, "line", 0), getattr(ty, "col", 0),
+            getattr(ty, "line", 0),
+            getattr(ty, "col", 0),
         )
 
     def _numeric_type_name(self, ty: Type | None) -> str | None:
@@ -1563,7 +1671,10 @@ class Translator:
         )
 
     def _binary_with_op(
-        self, op: str, left: ast.expr, right: ast.expr,
+        self,
+        op: str,
+        left: ast.expr,
+        right: ast.expr,
     ) -> ast.expr:
         builtin: dict[str, type[ast.operator]] = {
             "+": ast.Add,
@@ -1588,18 +1699,24 @@ class Translator:
         for item in t.items:
             if item.fn is not None:
                 fn = self.translate_fn(item.fn, is_method=True)
-                fn.body = [ast.Raise(
-                    exc=ast.Call(
-                        func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
-                        args=[], keywords=[],
-                    ),
-                    cause=None,
-                )]
+                fn.body = [
+                    ast.Raise(
+                        exc=ast.Call(
+                            func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
+                            args=[],
+                            keywords=[],
+                        ),
+                        cause=None,
+                    )
+                ]
                 body.append(fn)
         if not body:
             body = [ast.Pass()]
         return ast.ClassDef(
-            name=t.name, bases=[], keywords=[], body=body,
+            name=t.name,
+            bases=[],
+            keywords=[],
+            body=body,
             decorator_list=[],
         )
 
@@ -1644,12 +1761,15 @@ class Translator:
                         self._return_type_name,
                         expr.line,
                         expr.col,
+                        getattr(expr.value, "span", None),
                     )
-                return [ast.Return(
-                    value=self._coerce_return_value(
-                        self.translate_opt_expr(expr.value),
-                    ),
-                )]
+                return [
+                    ast.Return(
+                        value=self._coerce_return_value(
+                            self.translate_opt_expr(expr.value),
+                        ),
+                    )
+                ]
             if isinstance(expr, Break):
                 return [ast.Break()]
             if isinstance(expr, Continue):
@@ -1661,14 +1781,16 @@ class Translator:
             return self.translate_item(s.item)
         raise TranslateError(
             f"unsupported statement {type(s).__name__}",
-            getattr(s, "line", 0), getattr(s, "col", 0),
+            getattr(s, "line", 0),
+            getattr(s, "col", 0),
         )
 
     def _translate_write_macro(self, macro: MacroCall) -> ast.AugAssign:
         if not isinstance(macro.args, list) or len(macro.args) < 2:
             raise TranslateError(
                 "write! expects a mutable string and format string",
-                macro.line, macro.col,
+                macro.line,
+                macro.col,
             )
         target_expr = macro.args[0]
         if isinstance(target_expr, Unary) and target_expr.op in ("&", "&mut"):
@@ -1676,14 +1798,17 @@ class Translator:
         if not isinstance(target_expr, Ident):
             raise TranslateError(
                 "write! target must be an identifier",
-                macro.line, macro.col,
+                macro.line,
+                macro.col,
             )
         format_value = self.translate_expr(macro.args[1])
         values = [self.translate_expr(arg) for arg in macro.args[2:]]
         if values:
             format_value = ast.Call(
                 func=ast.Attribute(
-                    value=format_value, attr="format", ctx=ast.Load(),
+                    value=format_value,
+                    attr="format",
+                    ctx=ast.Load(),
                 ),
                 args=values,
                 keywords=[],
@@ -1700,7 +1825,8 @@ class Translator:
             if not self._is_map_slot_expr(e.target.operand):
                 raise TranslateError(
                     "dereference assignment target is not a mutable map slot",
-                    e.line, e.col,
+                    e.line,
+                    e.col,
                 )
             return ast.Expr(
                 value=ast.Call(
@@ -1709,40 +1835,45 @@ class Translator:
                     keywords=[],
                 ),
             )
-        if (
-            isinstance(e.target, Ident)
-            and e.target.name in self._numeric_types
-        ):
+        if isinstance(e.target, Ident) and e.target.name in self._numeric_types:
             self._check_type_boundary(
                 self._known_expr_type(e.value),
                 self._numeric_types[e.target.name],
                 e.line,
                 e.col,
+                getattr(e, "span", None),
             )
             value = self._coerce_numeric(
-                value, self._numeric_types[e.target.name],
+                value,
+                self._numeric_types[e.target.name],
             )
         target = self._translate_lvalue(e.target)
         return ast.Assign(targets=[target], value=value)
 
     def _translate_compound_assign_stmt(
-        self, e: CompoundAssign,
+        self,
+        e: CompoundAssign,
     ) -> ast.stmt:
         value = self.translate_expr(e.value)
         op_map: dict[str, type[ast.operator]] = {
-            "+=": ast.Add, "-=": ast.Sub,
-            "*=": ast.Mult, "/=": ast.Div, "%=": ast.Mod,
+            "+=": ast.Add,
+            "-=": ast.Sub,
+            "*=": ast.Mult,
+            "/=": ast.Div,
+            "%=": ast.Mod,
         }
         if e.op not in op_map:
             raise TranslateError(
                 f"unsupported compound assign op {e.op!r}",
-                e.line, e.col,
+                e.line,
+                e.col,
             )
         if isinstance(e.target, Unary) and e.target.op == "*":
             if not self._is_map_slot_expr(e.target.operand):
                 raise TranslateError(
                     "dereference assignment target is not a mutable map slot",
-                    e.line, e.col,
+                    e.line,
+                    e.col,
                 )
             return ast.Expr(
                 value=ast.Call(
@@ -1755,10 +1886,7 @@ class Translator:
                     keywords=[],
                 ),
             )
-        if (
-            isinstance(e.target, Ident)
-            and e.target.name in self._numeric_types
-        ):
+        if isinstance(e.target, Ident) and e.target.name in self._numeric_types:
             combined = self._binary_with_op(
                 e.op[0],
                 ast.Name(id=e.target.name, ctx=ast.Load()),
@@ -1767,7 +1895,8 @@ class Translator:
             return ast.Assign(
                 targets=[ast.Name(id=e.target.name, ctx=ast.Store())],
                 value=self._coerce_numeric(
-                    combined, self._numeric_types[e.target.name],
+                    combined,
+                    self._numeric_types[e.target.name],
                 ),
             )
         target = self._translate_lvalue(e.target)
@@ -1788,7 +1917,10 @@ class Translator:
         if ty.name in {"HashMap", "BTreeMap"} and len(ty.args) >= 2:
             value_ty = ty.args[1]
             if isinstance(value_ty, TypeName) and value_ty.name in {
-                "HashMap", "BTreeMap", "HashSet", "Vec",
+                "HashMap",
+                "BTreeMap",
+                "HashSet",
+                "Vec",
             }:
                 return f"{ty.name}:{value_ty.name}"
         return ty.name
@@ -1797,13 +1929,12 @@ class Translator:
         if not isinstance(s.pattern, PatIdent):
             raise TranslateError(
                 f"unsupported let pattern {type(s.pattern).__name__}",
-                s.line, s.col,
+                s.line,
+                s.col,
             )
         target = ast.Name(id=s.pattern.name, ctx=ast.Store())
         numeric_type = self._numeric_type_name(s.ty)
-        inferred_type = (
-            self._known_expr_type(s.value) if s.value is not None else None
-        )
+        inferred_type = self._known_expr_type(s.value) if s.value is not None else None
         self._check_type_boundary(
             inferred_type,
             self._binding_type_name(s.ty),
@@ -1821,7 +1952,8 @@ class Translator:
             return ast.AnnAssign(
                 target=target,
                 annotation=self._type_or_object(s.ty),
-                value=None, simple=1,
+                value=None,
+                simple=1,
             )
         value = self.translate_expr(s.value)
         if numeric_type is not None:
@@ -1831,11 +1963,7 @@ class Translator:
             if isinstance(s.ty, TypeName)
             else self._expr_variant_type(s.value)
         )
-        if (
-            binding_type is None
-            and s.value is not None
-            and self._is_vec_expr(s.value)
-        ):
+        if binding_type is None and s.value is not None and self._is_vec_expr(s.value):
             binding_type = "Vec"
         if binding_type in {"Option", "Result", "HashMap"} or binding_type is not None:
             self._binding_types[s.pattern.name] = binding_type
@@ -1853,7 +1981,8 @@ class Translator:
     def translate_for(self, f: For) -> ast.For:
         if isinstance(f.pattern, PatIdent):
             target: ast.expr = ast.Name(
-                id=f.pattern.name, ctx=ast.Store(),
+                id=f.pattern.name,
+                ctx=ast.Store(),
             )
         elif isinstance(f.pattern, PatTuple):
             target = ast.Tuple(
@@ -1863,7 +1992,8 @@ class Translator:
         else:
             raise TranslateError(
                 f"unsupported for pattern {type(f.pattern).__name__}",
-                f.line, f.col,
+                f.line,
+                f.col,
             )
         iter_expr = self.translate_expr(f.iter)
         if isinstance(f.pattern, PatIdent):
@@ -1908,7 +2038,8 @@ class Translator:
             )
         raise TranslateError(
             f"unsupported for pattern {type(pattern).__name__}",
-            pattern.line, pattern.col,
+            pattern.line,
+            pattern.col,
         )
 
     def translate_loop(self, lp: Loop) -> ast.While:
@@ -1934,20 +2065,23 @@ class Translator:
         ):
             raise TranslateError(
                 "if-let expression currently supports `Some(binding)` only",
-                ifx.pattern.line, ifx.pattern.col,
+                ifx.pattern.line,
+                ifx.pattern.col,
             )
         binding = ifx.pattern.args[0]
         if ifx.then_block.tail is None or ifx.then_block.stmts:
             raise TranslateError(
                 "if-let expression requires a single tail expression in the then-branch",
-                ifx.then_block.line, ifx.then_block.col,
+                ifx.then_block.line,
+                ifx.then_block.col,
             )
         if isinstance(ifx.else_branch, Block) and (
             ifx.else_branch.tail is None or ifx.else_branch.stmts
         ):
             raise TranslateError(
                 "if-let expression requires a single tail expression in the else-branch",
-                ifx.else_branch.line, ifx.else_branch.col,
+                ifx.else_branch.line,
+                ifx.else_branch.col,
             )
         then_expr = self.translate_expr(ifx.then_block.tail)
         else_expr = self._translate_else_expr(ifx.else_branch)
@@ -1957,15 +2091,21 @@ class Translator:
                 self.translate_expr(ifx.value),
                 ast.Lambda(
                     args=ast.arguments(
-                        posonlyargs=[], args=[ast.arg(arg=binding.name)],
-                        kwonlyargs=[], kw_defaults=[], defaults=[],
+                        posonlyargs=[],
+                        args=[ast.arg(arg=binding.name)],
+                        kwonlyargs=[],
+                        kw_defaults=[],
+                        defaults=[],
                     ),
                     body=then_expr,
                 ),
                 ast.Lambda(
                     args=ast.arguments(
-                        posonlyargs=[], args=[],
-                        kwonlyargs=[], kw_defaults=[], defaults=[],
+                        posonlyargs=[],
+                        args=[],
+                        kwonlyargs=[],
+                        kw_defaults=[],
+                        defaults=[],
                     ),
                     body=else_expr,
                 ),
@@ -1982,13 +2122,15 @@ class Translator:
             if variant != "Some" or len(ifx.pattern.args) != 1:
                 raise TranslateError(
                     "if let currently supports Some(binding)",
-                    ifx.pattern.line, ifx.pattern.col,
+                    ifx.pattern.line,
+                    ifx.pattern.col,
                 )
             binding = ifx.pattern.args[0]
             if not isinstance(binding, PatIdent):
                 raise TranslateError(
                     "if let Some pattern requires an identifier binding",
-                    binding.line, binding.col,
+                    binding.line,
+                    binding.col,
                 )
             test = ast.BoolOp(
                 op=ast.And(),
@@ -2000,26 +2142,35 @@ class Translator:
                     ),
                     ast.Call(
                         func=ast.Attribute(
-                            value=temp, attr="is_some", ctx=ast.Load(),
+                            value=temp,
+                            attr="is_some",
+                            ctx=ast.Load(),
                         ),
-                        args=[], keywords=[],
+                        args=[],
+                        keywords=[],
                     ),
                 ],
             )
-            body = [ast.Assign(
-                targets=[ast.Name(id=binding.name, ctx=ast.Store())],
-                value=ast.Call(
-                    func=ast.Attribute(
-                        value=temp, attr="unwrap", ctx=ast.Load(),
+            body = [
+                ast.Assign(
+                    targets=[ast.Name(id=binding.name, ctx=ast.Store())],
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=temp,
+                            attr="unwrap",
+                            ctx=ast.Load(),
+                        ),
+                        args=[],
+                        keywords=[],
                     ),
-                    args=[], keywords=[],
-                ),
-            )]
+                )
+            ]
             body.extend(self.translate_block_as_body(ifx.then_block))
         else:
             raise TranslateError(
                 "if let currently supports Some(binding)",
-                ifx.pattern.line, ifx.pattern.col,
+                ifx.pattern.line,
+                ifx.pattern.col,
             )
         if isinstance(ifx.else_branch, Block):
             orelse = self.translate_block_as_body(ifx.else_branch)
@@ -2040,7 +2191,8 @@ class Translator:
     def translate_match_stmt(self, m: MatchExpr) -> ast.If:
         scrutinee_type = self._match_scrutinee_type(m)
         warn_match_issues(
-            m, scrutinee_type=scrutinee_type,
+            m,
+            scrutinee_type=scrutinee_type,
         )
         subject = self.translate_expr(m.scrutinee)
         missing = missing_match_variants(m, scrutinee_type)
@@ -2055,17 +2207,21 @@ class Translator:
                     keywords=[],
                 ),
             )
-            if missing else None
+            if missing
+            else None
         )
         for arm in reversed(m.arms):
             self._validate_pattern_bindings(arm.pattern)
             test, bindings = self._pattern_test_bindings(arm.pattern, subject)
             body: list[ast.stmt] = self._translate_match_body(arm.body)
             for name, value in reversed(list(bindings.items())):
-                body.insert(0, ast.Assign(
-                    targets=[ast.Name(id=name, ctx=ast.Store())],
-                    value=value,
-                ))
+                body.insert(
+                    0,
+                    ast.Assign(
+                        targets=[ast.Name(id=name, ctx=ast.Store())],
+                        value=value,
+                    ),
+                )
             if arm.guard is not None:
                 guarded_body: ast.stmt = ast.If(
                     test=self.translate_expr(arm.guard),
@@ -2075,28 +2231,35 @@ class Translator:
                 body = [guarded_body]
             if test is None:
                 node = ast.If(
-                    test=ast.Constant(value=True), body=body,
+                    test=ast.Constant(value=True),
+                    body=body,
                     orelse=[node] if node is not None else [],
                 )
             else:
                 node = ast.If(
-                    test=test, body=body,
+                    test=test,
+                    body=body,
                     orelse=[node] if node is not None else [],
                 )
         if node is None:
             return ast.If(
                 test=ast.Constant(value=False),
-                body=[ast.Pass()], orelse=[],
+                body=[ast.Pass()],
+                orelse=[],
             )
         return node
 
     def _pattern_test(
-        self, pat: Pattern, subject: ast.expr,
+        self,
+        pat: Pattern,
+        subject: ast.expr,
     ) -> ast.expr | None:
         return self._pattern_test_bindings(pat, subject)[0]
 
     def _pattern_test_bindings(
-        self, pat: Pattern, subject: ast.expr,
+        self,
+        pat: Pattern,
+        subject: ast.expr,
     ) -> tuple[ast.expr, dict[str, ast.expr]]:
         if isinstance(pat, PatWildcard):
             return ast.Constant(value=True), {}
@@ -2104,22 +2267,28 @@ class Translator:
             return ast.Constant(value=True), {pat.name: subject}
         if isinstance(pat, PatLiteral):
             return ast.Compare(
-                left=subject, ops=[ast.Eq()],
+                left=subject,
+                ops=[ast.Eq()],
                 comparators=[self.translate_expr(pat.value)],
             ), {}
         if isinstance(pat, PatRange):
             tests: list[ast.expr] = []
             if pat.start is not None:
-                tests.append(ast.Compare(
-                    left=subject, ops=[ast.GtE()],
-                    comparators=[self.translate_expr(pat.start)],
-                ))
+                tests.append(
+                    ast.Compare(
+                        left=subject,
+                        ops=[ast.GtE()],
+                        comparators=[self.translate_expr(pat.start)],
+                    )
+                )
             if pat.end is not None:
-                tests.append(ast.Compare(
-                    left=subject,
-                    ops=[ast.LtE() if pat.inclusive else ast.Lt()],
-                    comparators=[self.translate_expr(pat.end)],
-                ))
+                tests.append(
+                    ast.Compare(
+                        left=subject,
+                        ops=[ast.LtE() if pat.inclusive else ast.Lt()],
+                        comparators=[self.translate_expr(pat.end)],
+                    )
+                )
             return self._and_pattern_tests(tests), {}
         if isinstance(pat, PatTuple):
             tests: list[ast.expr] = [
@@ -2131,7 +2300,8 @@ class Translator:
                 ast.Compare(
                     left=ast.Call(
                         func=ast.Name(id="len", ctx=ast.Load()),
-                        args=[subject], keywords=[],
+                        args=[subject],
+                        keywords=[],
                     ),
                     ops=[ast.Eq()],
                     comparators=[ast.Constant(value=len(pat.elems))],
@@ -2142,7 +2312,8 @@ class Translator:
                 child_test, child_bindings = self._pattern_test_bindings(
                     child,
                     ast.Subscript(
-                        value=subject, slice=ast.Constant(value=index),
+                        value=subject,
+                        slice=ast.Constant(value=index),
                         ctx=ast.Load(),
                     ),
                 )
@@ -2152,11 +2323,11 @@ class Translator:
         if isinstance(pat, PatSlice):
             rest_index = next(
                 (
-                    index for index, elem in enumerate(pat.elems)
+                    index
+                    for index, elem in enumerate(pat.elems)
                     if isinstance(elem, PatRest)
                     or (
-                        isinstance(elem, PatBinding)
-                        and isinstance(elem.inner, PatRest)
+                        isinstance(elem, PatBinding) and isinstance(elem.inner, PatRest)
                     )
                 ),
                 None,
@@ -2181,7 +2352,8 @@ class Translator:
                 ast.Compare(
                     left=ast.Call(
                         func=ast.Name(id="len", ctx=ast.Load()),
-                        args=[subject], keywords=[],
+                        args=[subject],
+                        keywords=[],
                     ),
                     ops=[ast.GtE() if has_rest else ast.Eq()],
                     comparators=[ast.Constant(value=fixed_count)],
@@ -2189,13 +2361,11 @@ class Translator:
             ]
             bindings: dict[str, ast.expr] = {}
             trailing_count = (
-                len(pat.elems) - rest_index - 1
-                if rest_index is not None else 0
+                len(pat.elems) - rest_index - 1 if rest_index is not None else 0
             )
             for index, child in enumerate(pat.elems):
                 is_rest = isinstance(child, PatRest) or (
-                    isinstance(child, PatBinding)
-                    and isinstance(child.inner, PatRest)
+                    isinstance(child, PatBinding) and isinstance(child.inner, PatRest)
                 )
                 if is_rest:
                     upper = (
@@ -2203,7 +2373,8 @@ class Translator:
                             op=ast.USub(),
                             operand=ast.Constant(value=trailing_count),
                         )
-                        if trailing_count else None
+                        if trailing_count
+                        else None
                     )
                     rest_value = ast.Subscript(
                         value=subject,
@@ -2241,26 +2412,31 @@ class Translator:
                     raise TranslateError(
                         f"struct pattern {pat.path} has unknown fields: "
                         f"{', '.join(sorted(extra_fields))}",
-                        pat.line, pat.col,
+                        pat.line,
+                        pat.col,
                     )
                 missing_fields = declared_fields - used_fields
                 if missing_fields and not pat.rest:
                     raise TranslateError(
-                        f"struct pattern {pat.path} is missing fields; "
-                        "include '..'",
-                        pat.line, pat.col,
+                        f"struct pattern {pat.path} is missing fields; include '..'",
+                        pat.line,
+                        pat.col,
                     )
-            tests = [ast.Call(
-                func=ast.Name(id="isinstance", ctx=ast.Load()),
-                args=[subject, ast.Name(id=class_name, ctx=ast.Load())],
-                keywords=[],
-            )]
+            tests = [
+                ast.Call(
+                    func=ast.Name(id="isinstance", ctx=ast.Load()),
+                    args=[subject, ast.Name(id=class_name, ctx=ast.Load())],
+                    keywords=[],
+                )
+            ]
             bindings = {}
             for name, child in pat.fields:
                 child_test, child_bindings = self._pattern_test_bindings(
                     child,
                     ast.Attribute(
-                        value=subject, attr=name, ctx=ast.Load(),
+                        value=subject,
+                        attr=name,
+                        ctx=ast.Load(),
                     ),
                 )
                 tests.append(child_test)
@@ -2272,7 +2448,8 @@ class Translator:
             if not pat.name.isidentifier():
                 raise TranslateError(
                     f"invalid binding name {pat.name!r}",
-                    pat.line, pat.col,
+                    pat.line,
+                    pat.col,
                 )
             test, bindings = self._pattern_test_bindings(pat.inner, subject)
             bindings[pat.name] = subject
@@ -2292,7 +2469,8 @@ class Translator:
             if not resolved:
                 raise TranslateError(
                     f"unresolved constant pattern {pat.path!r}",
-                    pat.line, pat.col,
+                    pat.line,
+                    pat.col,
                 )
             return ast.Compare(
                 left=subject,
@@ -2308,24 +2486,23 @@ class Translator:
         if isinstance(pat, PatMacro):
             raise TranslateError(
                 f"pattern macro {pat.path}! is not supported",
-                pat.line, pat.col,
+                pat.line,
+                pat.col,
             )
         if isinstance(pat, PatRef):
             return self._pattern_test_bindings(pat.inner, subject)
         if isinstance(pat, PatOr):
             alternatives = [
-                self._pattern_test_bindings(alt, subject)
-                for alt in pat.alts
+                self._pattern_test_bindings(alt, subject) for alt in pat.alts
             ]
-            binding_sets = [
-                frozenset(bindings) for _test, bindings in alternatives
-            ]
+            binding_sets = [frozenset(bindings) for _test, bindings in alternatives]
             if binding_sets and any(
                 names != binding_sets[0] for names in binding_sets[1:]
             ):
                 raise TranslateError(
                     "or-pattern alternatives must bind the same names",
-                    pat.line, pat.col,
+                    pat.line,
+                    pat.col,
                 )
             tests = [test for test, _bindings in alternatives]
             names = set().union(*(bindings for _test, bindings in alternatives))
@@ -2334,7 +2511,9 @@ class Translator:
                 value = alternatives[-1][1][name]
                 for test, bindings in reversed(alternatives[:-1]):
                     value = ast.IfExp(
-                        test=test, body=bindings[name], orelse=value,
+                        test=test,
+                        body=bindings[name],
+                        orelse=value,
                     )
                 merged[name] = value
             return ast.BoolOp(op=ast.Or(), values=tests), merged
@@ -2362,7 +2541,8 @@ class Translator:
                     ast.Compare(
                         left=ast.Call(
                             func=ast.Name(id="len", ctx=ast.Load()),
-                            args=[subject], keywords=[],
+                            args=[subject],
+                            keywords=[],
                         ),
                         ops=[ast.Eq()],
                         comparators=[
@@ -2371,7 +2551,8 @@ class Translator:
                     ),
                     ast.Compare(
                         left=ast.Subscript(
-                            value=subject, slice=ast.Constant(value=0),
+                            value=subject,
+                            slice=ast.Constant(value=0),
                             ctx=ast.Load(),
                         ),
                         ops=[ast.Eq()],
@@ -2383,7 +2564,8 @@ class Translator:
                     child_test, child_bindings = self._pattern_test_bindings(
                         child,
                         ast.Subscript(
-                            value=subject, slice=ast.Constant(value=index),
+                            value=subject,
+                            slice=ast.Constant(value=index),
                             ctx=ast.Load(),
                         ),
                     )
@@ -2391,11 +2573,14 @@ class Translator:
                     bindings.update(child_bindings)
                 return self._and_pattern_tests(tests), bindings
             return ast.Compare(
-                left=subject, ops=[ast.Eq()], comparators=[comparator],
+                left=subject,
+                ops=[ast.Eq()],
+                comparators=[comparator],
             ), {}
         raise TranslateError(
             f"unsupported match pattern {type(pat).__name__}",
-            getattr(pat, "line", 0), getattr(pat, "col", 0),
+            getattr(pat, "line", 0),
+            getattr(pat, "col", 0),
         )
 
     def _validate_pattern_bindings(self, pattern: Pattern) -> set[str]:
@@ -2408,8 +2593,7 @@ class Translator:
             return names | {pattern.name}
         if isinstance(pattern, PatOr):
             alternatives = [
-                self._validate_pattern_bindings(alt)
-                for alt in pattern.alts
+                self._validate_pattern_bindings(alt) for alt in pattern.alts
             ]
             if alternatives and any(
                 names != alternatives[0] for names in alternatives[1:]
@@ -2417,7 +2601,8 @@ class Translator:
                 raise TranslateError(
                     "or-pattern alternatives must bind the same names in "
                     f"{self._pattern_text(pattern)}",
-                    pattern.line, pattern.col,
+                    pattern.line,
+                    pattern.col,
                 )
             return alternatives[0] if alternatives else set()
         if isinstance(pattern, PatRef | PatBox):
@@ -2436,16 +2621,17 @@ class Translator:
             duplicates = names & child_names
             if duplicates:
                 self._duplicate_binding_error(
-                    pattern, min(duplicates),
+                    pattern,
+                    min(duplicates),
                 )
             names.update(child_names)
         return names
 
     def _duplicate_binding_error(self, pattern: Pattern, name: str) -> None:
         raise TranslateError(
-            f"duplicate binding {name!r} in pattern "
-            f"{self._pattern_text(pattern)}",
-            pattern.line, pattern.col,
+            f"duplicate binding {name!r} in pattern {self._pattern_text(pattern)}",
+            pattern.line,
+            pattern.col,
         )
 
     def _pattern_text(self, pattern: Pattern) -> str:
@@ -2478,8 +2664,7 @@ class Translator:
             return f"{pattern.path}({args})"
         if isinstance(pattern, PatStruct):
             fields = ", ".join(
-                f"{name}: {self._pattern_text(child)}"
-                for name, child in pattern.fields
+                f"{name}: {self._pattern_text(child)}" for name, child in pattern.fields
             )
             return f"{pattern.path} {{ {fields} }}"
         return type(pattern).__name__
@@ -2500,7 +2685,8 @@ class Translator:
     def _path_to_expr(self, path: str) -> ast.expr:
         parts = path.split("::")
         expr: ast.expr = ast.Name(
-            id=self._python_identifier(parts[0]), ctx=ast.Load(),
+            id=self._python_identifier(parts[0]),
+            ctx=ast.Load(),
         )
         for part in parts[1:]:
             expr = ast.Attribute(
@@ -2528,7 +2714,8 @@ class Translator:
         return self.translate_expr(e)
 
     def _coerce_return_value(
-        self, value: ast.expr | None,
+        self,
+        value: ast.expr | None,
     ) -> ast.expr | None:
         if (
             value is None
@@ -2548,7 +2735,10 @@ class Translator:
                     (receiver_type, expr.method),
                 )
             # M3: nested collection method return types
-            if receiver_type and receiver_type.split(":", 1)[0] in {"HashMap", "BTreeMap"}:
+            if receiver_type and receiver_type.split(":", 1)[0] in {
+                "HashMap",
+                "BTreeMap",
+            }:
                 if expr.method == "get":
                     return self._nested_get_value_type(expr.receiver)
                 if expr.method == "get_mut":
@@ -2564,20 +2754,18 @@ class Translator:
             return expr.ty.name
         if isinstance(expr, Range):
             return (
-                self._known_expr_type(expr.end)
-                if expr.end is not None
-                else None
-            ) or (
-                self._known_expr_type(expr.start)
-                if expr.start is not None
-                else None
-            )
+                self._known_expr_type(expr.end) if expr.end is not None else None
+            ) or (self._known_expr_type(expr.start) if expr.start is not None else None)
         if isinstance(expr, Binary):
             left_type = self._known_expr_type(expr.left)
             right_type = self._known_expr_type(expr.right)
             if left_type is not None and right_type is not None:
                 self._check_type_boundary(
-                    right_type, left_type, expr.line, expr.col,
+                    right_type,
+                    left_type,
+                    expr.line,
+                    expr.col,
+                    getattr(expr, "span", None),
                 )
             return left_type or right_type
         return None
@@ -2642,6 +2830,7 @@ class Translator:
                 expected_type,
                 argument.line,
                 argument.col,
+                getattr(argument, "span", None),
             )
 
     def _is_integer_type_name(self, ty: str | None) -> bool:
@@ -2660,20 +2849,24 @@ class Translator:
         if source_type is None or expected_type is None:
             return
         # M4: implicit conversion between different integer types requires `as`
-        if self._is_integer_type_name(source_type) and self._is_integer_type_name(expected_type):
+        if self._is_integer_type_name(source_type) and self._is_integer_type_name(
+            expected_type
+        ):
             if source_type != expected_type:
                 raise TypeErrorForBoundary(
-                    source_type, expected_type, line, col, span,
+                    source_type,
+                    expected_type,
+                    line,
+                    col,
+                    span,
                 )
             return
         # fallback for pointer-sized cases
         source_ty = TypeName(line, col, source_type)
         expected_ty = TypeName(line, col, expected_type)
-        source_is_pointer_sized = (
-            is_usize_type(source_ty) or is_isize_type(source_ty)
-        )
-        expected_is_pointer_sized = (
-            is_usize_type(expected_ty) or is_isize_type(expected_ty)
+        source_is_pointer_sized = is_usize_type(source_ty) or is_isize_type(source_ty)
+        expected_is_pointer_sized = is_usize_type(expected_ty) or is_isize_type(
+            expected_ty
         )
         if (
             (source_is_pointer_sized and is_i64_type(expected_ty))
@@ -2685,7 +2878,11 @@ class Translator:
             )
         ):
             raise TypeErrorForBoundary(
-                source_type, expected_type, line, col, span,
+                source_type,
+                expected_type,
+                line,
+                col,
+                span,
             )
 
     def _check_usize_method_args(self, expr: MethodCall) -> None:
@@ -2711,7 +2908,11 @@ class Translator:
             if index < len(expr.args):
                 arg = expr.args[index]
                 self._check_type_boundary(
-                    self._known_expr_type(arg), "usize", arg.line, arg.col,
+                    self._known_expr_type(arg),
+                    "usize",
+                    arg.line,
+                    arg.col,
+                    getattr(arg, "span", None),
                 )
 
     def _is_vec_expr(self, expr: Expr) -> bool:
@@ -2780,7 +2981,9 @@ class Translator:
                 )
                 if literal_oob:
                     call.keywords.append(
-                        ast.keyword(arg="literal_out_of_range", value=ast.Constant(value=True))
+                        ast.keyword(
+                            arg="literal_out_of_range", value=ast.Constant(value=True)
+                        )
                     )
                 return call
             return self._coerce_numeric(inner, target)
@@ -2866,24 +3069,27 @@ class Translator:
                 and isinstance(e.operand.ty, TypeName)
                 and e.operand.ty.name in {"isize", "usize"}
             ):
-                return self.translate_cast(Cast(
-                    e.operand.line,
-                    e.operand.col,
-                    Unary(
-                        e.line,
-                        e.col,
-                        "-",
-                        e.operand.expr,
-                    ),
-                    e.operand.ty,
-                ))
+                return self.translate_cast(
+                    Cast(
+                        e.operand.line,
+                        e.operand.col,
+                        Unary(
+                            e.line,
+                            e.col,
+                            "-",
+                            e.operand.expr,
+                        ),
+                        e.operand.ty,
+                    )
+                )
             return self._translate_unary(e)
         if isinstance(e, Binary):
             return self._translate_binary(e)
         if isinstance(e, (Assign, CompoundAssign)):
             raise TranslateError(
                 "Assign cannot appear in expression position",
-                e.line, e.col,
+                e.line,
+                e.col,
             )
         if isinstance(e, Call):
             if (
@@ -2907,13 +3113,19 @@ class Translator:
                 and e.func.segments == ["HashSet", "new"]
                 and not e.args
             ):
-                return ast.Call(func=ast.Name(id="set", ctx=ast.Load()), args=[], keywords=[])
+                return ast.Call(
+                    func=ast.Name(id="set", ctx=ast.Load()), args=[], keywords=[]
+                )
             if (
                 isinstance(e.func, Path)
                 and e.func.segments == ["BTreeMap", "new"]
                 and not e.args
             ):
-                return ast.Call(func=ast.Name(id="_btreemap_new", ctx=ast.Load()), args=[], keywords=[])
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_new", ctx=ast.Load()),
+                    args=[],
+                    keywords=[],
+                )
             self._check_call_arguments(e)
             func = self.translate_expr(e.func)
             args = [self.translate_expr(a) for a in e.args]
@@ -2984,46 +3196,126 @@ class Translator:
                     )
             if self._is_hashset_expr(e.receiver):
                 if e.method == "insert" and len(e.args) == 1:
-                    return ast.Call(func=ast.Name(id="_hashset_insert", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_hashset_insert", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
                 if e.method == "contains" and len(e.args) == 1:
-                    return ast.Call(func=ast.Name(id="_hashset_contains", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_hashset_contains", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
                 if e.method == "remove" and len(e.args) == 1:
-                    return ast.Call(func=ast.Name(id="_hashset_remove", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_hashset_remove", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
+                if e.method == "get_mut" and len(e.args) == 1:
+                    return ast.Call(
+                        func=ast.Name(id="_hashset_get_mut", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
                 if e.method == "len" and not e.args:
-                    return ast.Call(func=ast.Name(id="_hashset_len", ctx=ast.Load()), args=[recv], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_hashset_len", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
                 if e.method == "is_empty" and not e.args:
-                    return ast.Call(func=ast.Name(id="_hashset_is_empty", ctx=ast.Load()), args=[recv], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_hashset_is_empty", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
                 if e.method == "iter" and not e.args:
-                    return ast.Call(func=ast.Name(id="_hashset_iter", ctx=ast.Load()), args=[recv], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_hashset_iter", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
             if self._is_btreemap_expr(e.receiver):
                 if e.method == "insert" and len(e.args) == 2:
-                    return ast.Call(func=ast.Name(id="_btreemap_insert", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0]), self.translate_expr(e.args[1])], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_insert", ctx=ast.Load()),
+                        args=[
+                            recv,
+                            self.translate_expr(e.args[0]),
+                            self.translate_expr(e.args[1]),
+                        ],
+                        keywords=[],
+                    )
                 if e.method == "get" and len(e.args) == 1:
-                    v = ast.Call(func=ast.Name(id="_btreemap_get", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    v = ast.Call(
+                        func=ast.Name(id="_btreemap_get", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
                     # return Option-like for parity? but easier to return value/None; keep simple
                     return v
                 if e.method == "remove" and len(e.args) == 1:
-                    return ast.Call(func=ast.Name(id="_btreemap_remove", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_remove", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
                 if e.method == "contains_key" and len(e.args) == 1:
-                    return ast.Call(func=ast.Name(id="_btreemap_contains", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_contains", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
                 if e.method == "len" and not e.args:
-                    return ast.Call(func=ast.Name(id="_btreemap_len", ctx=ast.Load()), args=[recv], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_len", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
                 if e.method == "is_empty" and not e.args:
-                    return ast.Call(func=ast.Name(id="_btreemap_is_empty", ctx=ast.Load()), args=[recv], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_is_empty", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
                 if e.method == "keys" and not e.args:
-                    return ast.Call(func=ast.Name(id="_btreemap_keys", ctx=ast.Load()), args=[recv], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_keys", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
                 if e.method == "values" and not e.args:
-                    return ast.Call(func=ast.Name(id="_btreemap_values", ctx=ast.Load()), args=[recv], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_values", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
                 if e.method == "iter" and not e.args:
-                    return ast.Call(func=ast.Name(id="_btreemap_iter", ctx=ast.Load()), args=[recv], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_iter", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
                 if e.method == "entry" and len(e.args) == 1:
-                    return ast.Call(func=ast.Name(id="_btreemap_entry", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_entry", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
                 if e.method == "get_mut" and len(e.args) == 1:
-                    return ast.Call(func=ast.Name(id="_btreemap_get_mut", ctx=ast.Load()), args=[recv, self.translate_expr(e.args[0])], keywords=[])
+                    return ast.Call(
+                        func=ast.Name(id="_btreemap_get_mut", ctx=ast.Load()),
+                        args=[recv, self.translate_expr(e.args[0])],
+                        keywords=[],
+                    )
             if e.method == "map_err" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="map_err", ctx=ast.Load(),
+                        value=recv,
+                        attr="map_err",
+                        ctx=ast.Load(),
                     ),
                     args=[self.translate_expr(e.args[0])],
                     keywords=[],
@@ -3031,14 +3323,19 @@ class Translator:
             if e.method == "unwrap" and not e.args:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="unwrap", ctx=ast.Load(),
+                        value=recv,
+                        attr="unwrap",
+                        ctx=ast.Load(),
                     ),
-                    args=[], keywords=[],
+                    args=[],
+                    keywords=[],
                 )
             if e.method == "unwrap_or" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="unwrap_or", ctx=ast.Load(),
+                        value=recv,
+                        attr="unwrap_or",
+                        ctx=ast.Load(),
                     ),
                     args=[self.translate_expr(e.args[0])],
                     keywords=[],
@@ -3046,7 +3343,9 @@ class Translator:
             if e.method == "unwrap_or_else" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="unwrap_or_else", ctx=ast.Load(),
+                        value=recv,
+                        attr="unwrap_or_else",
+                        ctx=ast.Load(),
                     ),
                     args=[self.translate_expr(e.args[0])],
                     keywords=[],
@@ -3054,7 +3353,8 @@ class Translator:
             if e.method in ("windows", "chunks") and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(
-                        id=f"_vec_{e.method}", ctx=ast.Load(),
+                        id=f"_vec_{e.method}",
+                        ctx=ast.Load(),
                     ),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
@@ -3074,7 +3374,9 @@ class Translator:
             if e.method == "remove" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="pop", ctx=ast.Load(),
+                        value=recv,
+                        attr="pop",
+                        ctx=ast.Load(),
                     ),
                     args=[self.translate_expr(e.args[0])],
                     keywords=[],
@@ -3095,7 +3397,8 @@ class Translator:
                     raise TranslateError(
                         f"{option_kind}.map is unsupported; use match or "
                         "if let instead",
-                        e.line, e.col,
+                        e.line,
+                        e.col,
                     )
                 closure = e.args[0]
                 if (
@@ -3105,15 +3408,16 @@ class Translator:
                 ):
                     raise TranslateError(
                         "Vec.map expects a single identifier parameter",
-                        e.line, e.col,
+                        e.line,
+                        e.col,
                     )
                 target = ast.Name(
-                    id=closure.params[0][0].name, ctx=ast.Store(),
+                    id=closure.params[0][0].name,
+                    ctx=ast.Store(),
                 )
                 body = (
                     self.translate_expr(closure.body.tail)
-                    if isinstance(closure.body, Block)
-                    and closure.body.tail is not None
+                    if isinstance(closure.body, Block) and closure.body.tail is not None
                     else self.translate_expr(closure.body)
                 )
                 return ast.ListComp(
@@ -3136,7 +3440,8 @@ class Translator:
                 ):
                     raise TranslateError(
                         "filter expects a single identifier parameter",
-                        e.line, e.col,
+                        e.line,
+                        e.col,
                     )
                 return ast.Call(
                     func=ast.Name(id="_filter", ctx=ast.Load()),
@@ -3152,7 +3457,8 @@ class Translator:
                 ):
                     raise TranslateError(
                         "partition expects a single identifier parameter",
-                        e.line, e.col,
+                        e.line,
+                        e.col,
                     )
                 return ast.Call(
                     func=ast.Name(id="_vec_partition", ctx=ast.Load()),
@@ -3168,7 +3474,8 @@ class Translator:
                 ):
                     raise TranslateError(
                         "sort_by_key expects a single identifier parameter",
-                        e.line, e.col,
+                        e.line,
+                        e.col,
                     )
                 return ast.Call(
                     func=ast.Attribute(value=recv, attr="sort", ctx=ast.Load()),
@@ -3195,7 +3502,9 @@ class Translator:
             if e.method == "sort_by" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="sort", ctx=ast.Load(),
+                        value=recv,
+                        attr="sort",
+                        ctx=ast.Load(),
                     ),
                     args=[],
                     keywords=[
@@ -3203,7 +3512,8 @@ class Translator:
                             arg="key",
                             value=ast.Call(
                                 func=ast.Name(
-                                    id="_cmp_to_key", ctx=ast.Load(),
+                                    id="_cmp_to_key",
+                                    ctx=ast.Load(),
                                 ),
                                 args=[self.translate_expr(e.args[0])],
                                 keywords=[],
@@ -3235,11 +3545,13 @@ class Translator:
                             attr="some",
                             ctx=ast.Load(),
                         ),
-                        args=[ast.Subscript(
-                            value=recv,
-                            slice=index,
-                            ctx=ast.Load(),
-                        )],
+                        args=[
+                            ast.Subscript(
+                                value=recv,
+                                slice=index,
+                                ctx=ast.Load(),
+                            )
+                        ],
                         keywords=[],
                     ),
                     orelse=ast.Call(
@@ -3335,7 +3647,8 @@ class Translator:
             if e.method == "extend_from_slice" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(
-                        id="_vec_extend_from_slice", ctx=ast.Load(),
+                        id="_vec_extend_from_slice",
+                        ctx=ast.Load(),
                     ),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
@@ -3379,7 +3692,9 @@ class Translator:
             if e.method == "is_ascii" and not e.args:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="isascii", ctx=ast.Load(),
+                        value=recv,
+                        attr="isascii",
+                        ctx=ast.Load(),
                     ),
                     args=[],
                     keywords=[],
@@ -3393,7 +3708,9 @@ class Translator:
             if e.method == "split_whitespace" and not e.args:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="split", ctx=ast.Load(),
+                        value=recv,
+                        attr="split",
+                        ctx=ast.Load(),
                     ),
                     args=[],
                     keywords=[],
@@ -3407,7 +3724,9 @@ class Translator:
             if e.method == "as_bytes" and not e.args:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="encode", ctx=ast.Load(),
+                        value=recv,
+                        attr="encode",
+                        ctx=ast.Load(),
                     ),
                     args=[],
                     keywords=[],
@@ -3415,7 +3734,8 @@ class Translator:
             if e.method == "is_char_boundary" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(
-                        id="_string_is_char_boundary", ctx=ast.Load(),
+                        id="_string_is_char_boundary",
+                        ctx=ast.Load(),
                     ),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
@@ -3423,7 +3743,8 @@ class Translator:
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return ast.Call(
                     func=ast.Name(
-                        id=f"_string_{e.method}", ctx=ast.Load(),
+                        id=f"_string_{e.method}",
+                        ctx=ast.Load(),
                     ),
                     args=[recv],
                     keywords=[],
@@ -3474,7 +3795,9 @@ class Translator:
             if e.method == "bytes" and not e.args:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="encode", ctx=ast.Load(),
+                        value=recv,
+                        attr="encode",
+                        ctx=ast.Load(),
                     ),
                     args=[ast.Constant(value="utf-8")],
                     keywords=[],
@@ -3482,7 +3805,8 @@ class Translator:
             if e.method == "to_string" and not e.args:
                 return ast.Call(
                     func=ast.Name(id="str", ctx=ast.Load()),
-                    args=[recv], keywords=[],
+                    args=[recv],
+                    keywords=[],
                 )
             if e.method == "parse" and not e.args:
                 return ast.Call(
@@ -3493,7 +3817,9 @@ class Translator:
             if e.method == "split" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr="split", ctx=ast.Load(),
+                        value=recv,
+                        attr="split",
+                        ctx=ast.Load(),
                     ),
                     args=[self.translate_expr(e.args[0])],
                     keywords=[],
@@ -3529,7 +3855,9 @@ class Translator:
             if method:
                 return ast.Call(
                     func=ast.Attribute(
-                        value=recv, attr=method, ctx=ast.Load(),
+                        value=recv,
+                        attr=method,
+                        ctx=ast.Load(),
                     ),
                     args=args,
                     keywords=[],
@@ -3556,7 +3884,11 @@ class Translator:
                 )
             index_type = self._known_expr_type(e.index)
             self._check_type_boundary(
-                index_type, "usize", e.index.line, e.index.col,
+                index_type,
+                "usize",
+                e.index.line,
+                e.index.col,
+                getattr(e.index, "span", None),
             )
             idx = self.translate_expr(e.index)
             return ast.Subscript(value=recv, slice=idx, ctx=ast.Load())
@@ -3571,7 +3903,8 @@ class Translator:
             count = self.translate_expr(e.count)
             return ast.BinOp(
                 left=ast.List(elts=[elem], ctx=ast.Load()),
-                op=ast.Mult(), right=count,
+                op=ast.Mult(),
+                right=count,
             )
         if isinstance(e, StructLiteral):
             return self._translate_struct_literal(e)
@@ -3584,7 +3917,8 @@ class Translator:
                 raise TranslateError(
                     "if-expression body must be a single expression; "
                     "use an if-statement instead",
-                    e.line, e.col,
+                    e.line,
+                    e.col,
                 )
             return ast.IfExp(
                 test=self.translate_expr(e.cond),
@@ -3607,13 +3941,15 @@ class Translator:
                 end = self.translate_expr(e.end)
                 if e.inclusive:
                     end = ast.BinOp(
-                        left=end, op=ast.Add(),
+                        left=end,
+                        op=ast.Add(),
                         right=ast.Constant(value=1),
                     )
                 args.append(end)
             return ast.Call(
                 func=ast.Name(id="range", ctx=ast.Load()),
-                args=args, keywords=[],
+                args=args,
+                keywords=[],
             )
         if isinstance(e, Cast):
             return self.translate_cast(e)
@@ -3623,7 +3959,9 @@ class Translator:
             return self._translate_macro(e)
         if isinstance(e, Await):
             raise TranslateError(
-                "Await requires async context", e.line, e.col,
+                "Await requires async context",
+                e.line,
+                e.col,
             )
         if isinstance(e, Try):
             if isinstance(e.expr, MethodCall) and e.expr.method == "parse":
@@ -3637,7 +3975,9 @@ class Translator:
                 result = self.translate_expr(e.expr)
             return ast.Call(
                 func=ast.Attribute(
-                    value=result, attr="__try__", ctx=ast.Load(),
+                    value=result,
+                    attr="__try__",
+                    ctx=ast.Load(),
                 ),
                 args=[],
                 keywords=[],
@@ -3648,7 +3988,8 @@ class Translator:
             return ast.Constant(value=None)
         raise TranslateError(
             f"unsupported expression {type(e).__name__}",
-            getattr(e, "line", 0), getattr(e, "col", 0),
+            getattr(e, "line", 0),
+            getattr(e, "col", 0),
         )
 
     def _translate_unary(self, e: Unary) -> ast.expr:
@@ -3673,12 +4014,14 @@ class Translator:
         if e.op == "/":
             return ast.Call(
                 func=ast.Name(id="_div", ctx=ast.Load()),
-                args=[left, right], keywords=[],
+                args=[left, right],
+                keywords=[],
             )
         if e.op == "%":
             return ast.Call(
                 func=ast.Name(id="_mod", ctx=ast.Load()),
-                args=[left, right], keywords=[],
+                args=[left, right],
+                keywords=[],
             )
         if e.op == "==":
             return ast.Compare(left=left, ops=[ast.Eq()], comparators=[right])
@@ -3706,23 +4049,20 @@ class Translator:
         name = e.path.split("::")[-1]
         if name in self.struct_names:
             keywords: list[ast.keyword] = [
-                ast.keyword(arg=k, value=self.translate_expr(v))
-                for k, v in e.fields
+                ast.keyword(arg=k, value=self.translate_expr(v)) for k, v in e.fields
             ]
             return ast.Call(
                 func=ast.Name(id=name, ctx=ast.Load()),
-                args=[], keywords=keywords,
+                args=[],
+                keywords=keywords,
             )
-        keys: list[ast.expr | None] = [
-            ast.Constant(value=k) for k, _ in e.fields
-        ]
-        values: list[ast.expr] = [
-            self.translate_expr(v) for _, v in e.fields
-        ]
+        keys: list[ast.expr | None] = [ast.Constant(value=k) for k, _ in e.fields]
+        values: list[ast.expr] = [self.translate_expr(v) for _, v in e.fields]
         return ast.Dict(keys=keys, values=values)
 
     def _translate_lvalue(
-        self, e: Expr,
+        self,
+        e: Expr,
     ) -> ast.Name | ast.Attribute | ast.Subscript:
         if isinstance(e, Ident):
             return ast.Name(id=e.name, ctx=ast.Store())
@@ -3735,7 +4075,8 @@ class Translator:
             return ast.Subscript(value=recv, slice=idx, ctx=ast.Store())
         raise TranslateError(
             f"unsupported lvalue {type(e).__name__}",
-            getattr(e, "line", 0), getattr(e, "col", 0),
+            getattr(e, "line", 0),
+            getattr(e, "col", 0),
         )
 
     def _translate_else_expr(self, branch) -> ast.expr:
@@ -3752,7 +4093,8 @@ class Translator:
     def _translate_match_expr(self, m: MatchExpr) -> ast.expr:
         scrutinee_type = self._match_scrutinee_type(m)
         warn_match_issues(
-            m, scrutinee_type=scrutinee_type,
+            m,
+            scrutinee_type=scrutinee_type,
         )
         subject = self.translate_expr(m.scrutinee)
         missing = missing_match_variants(m, scrutinee_type)
@@ -3765,7 +4107,8 @@ class Translator:
                 args=[ast.Constant(value=scrutinee_type)],
                 keywords=[],
             )
-            if missing else ast.Constant(value=None)
+            if missing
+            else ast.Constant(value=None)
         )
         for arm in reversed(m.arms):
             self._validate_pattern_bindings(arm.pattern)
@@ -3783,14 +4126,17 @@ class Translator:
                 if arm.guard is not None:
                     guarded = ast.IfExp(
                         test=self.translate_expr(arm.guard),
-                        body=body, orelse=node,
+                        body=body,
+                        orelse=node,
                     )
                 body = ast.Call(
                     func=ast.Lambda(
                         args=ast.arguments(
                             posonlyargs=[],
                             args=[ast.arg(arg=name) for name in bindings],
-                            kwonlyargs=[], kw_defaults=[], defaults=[],
+                            kwonlyargs=[],
+                            kw_defaults=[],
+                            defaults=[],
                         ),
                         body=guarded,
                     ),
@@ -3800,9 +4146,12 @@ class Translator:
                 node = ast.IfExp(test=test, body=body, orelse=node)
             else:
                 if arm.guard is not None:
-                    test = self._and_pattern_tests([
-                        test, self.translate_expr(arm.guard),
-                    ])
+                    test = self._and_pattern_tests(
+                        [
+                            test,
+                            self.translate_expr(arm.guard),
+                        ]
+                    )
                 node = ast.IfExp(test=test, body=body, orelse=node)
         return node
 
@@ -3894,7 +4243,8 @@ class Translator:
 
     def _is_btreemap_expr(self, expr: Expr) -> bool:
         if isinstance(expr, Ident):
-            return self._binding_types.get(expr.name) == "BTreeMap"
+            binding = self._binding_types.get(expr.name)
+            return bool(binding) and binding.split(":", 1)[0] == "BTreeMap"
         if (
             isinstance(expr, Call)
             and isinstance(expr.func, Path)
@@ -3950,12 +4300,14 @@ class Translator:
         if not self._is_map_slot_expr(expr.target.operand):
             raise TranslateError(
                 "dereference assignment target is not a mutable map slot",
-                expr.line, expr.col,
+                expr.line,
+                expr.col,
             )
         if isinstance(expr, CompoundAssign) and expr.op[0] not in "+-*/":
             raise TranslateError(
                 f"unsupported compound assign op {expr.op!r}",
-                expr.line, expr.col,
+                expr.line,
+                expr.col,
             )
         operand = self.translate_expr(expr.target.operand)
         value = self.translate_expr(expr.value)
@@ -3976,7 +4328,8 @@ class Translator:
             if not isinstance(pat, PatIdent):
                 raise TranslateError(
                     f"unsupported closure param {type(pat).__name__}",
-                    c.line, c.col,
+                    c.line,
+                    c.col,
                 )
             args.append(ast.arg(arg=pat.name, annotation=None))
             param_names.append(pat.name)
@@ -3998,25 +4351,26 @@ class Translator:
                         else None
                     )
                     body_expr = (
-                        mutation
-                        if mutation is not None
-                        else ast.Constant(value=None)
+                        mutation if mutation is not None else ast.Constant(value=None)
                     )
                 else:
                     body_expr = ast.Constant(value=None)
             else:
                 mutation = self._slot_mutation_expr(c.body)
                 body_expr = (
-                    mutation
-                    if mutation is not None
-                    else self.translate_expr(c.body)
+                    mutation if mutation is not None else self.translate_expr(c.body)
                 )
         finally:
             self._slot_bindings = previous_slot_bindings
         return ast.Lambda(
             args=ast.arguments(
-                posonlyargs=[], args=args, vararg=None,
-                kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[],
+                posonlyargs=[],
+                args=args,
+                vararg=None,
+                kwonlyargs=[],
+                kw_defaults=[],
+                kwarg=None,
+                defaults=[],
             ),
             body=body_expr,
         )
@@ -4029,6 +4383,7 @@ class Translator:
                 from lexer import TokenType
                 from lexer import lex as _lex
                 from parser import Parser as _Parser
+
                 tokens = _lex(m.args)
                 parser = _Parser(tokens)
                 elems = []
@@ -4047,41 +4402,51 @@ class Translator:
         target = MACRO_MAP.get(m.path)
         if target is None:
             raise TranslateError(
-                f"unknown macro {m.path}!", m.line, m.col,
+                f"unknown macro {m.path}!",
+                m.line,
+                m.col,
             )
         if isinstance(m.args, str):
             raise TranslateError(
                 f"macro {m.path}! with token-stream args not supported",
-                m.line, m.col,
+                m.line,
+                m.col,
             )
         if m.path == "assert":
             return ast.Call(
                 func=ast.Name(id="assert", ctx=ast.Load()),
-                args=[], keywords=[],
+                args=[],
+                keywords=[],
             )
         args: list[ast.expr] = [self.translate_expr(a) for a in m.args]
         if m.path in ("println", "print", "eprintln", "eprint", "format"):
             if not args:
                 return ast.Call(
                     func=ast.Name(id=target, ctx=ast.Load()),
-                    args=[ast.Constant(value="")], keywords=[],
+                    args=[ast.Constant(value="")],
+                    keywords=[],
                 )
             fmt = args[0]
             rest = args[1:]
             if rest:
                 fmt = ast.Call(
                     func=ast.Attribute(
-                        value=fmt, attr="format", ctx=ast.Load(),
+                        value=fmt,
+                        attr="format",
+                        ctx=ast.Load(),
                     ),
-                    args=rest, keywords=[],
+                    args=rest,
+                    keywords=[],
                 )
             return ast.Call(
                 func=ast.Name(id=target, ctx=ast.Load()),
-                args=[fmt], keywords=[],
+                args=[fmt],
+                keywords=[],
             )
         return ast.Call(
             func=ast.Name(id=target, ctx=ast.Load()),
-            args=args, keywords=[],
+            args=args,
+            keywords=[],
         )
 
     # ---- types -------------------------------------------------------------
@@ -4134,9 +4499,7 @@ class Translator:
                 ctx=ast.Load(),
             )
         if isinstance(ty, TypeTuple):
-            elts: list[ast.expr] = [
-                self._type_or_object(x) for x in ty.elems
-            ]
+            elts: list[ast.expr] = [self._type_or_object(x) for x in ty.elems]
             return ast.Tuple(elts=elts, ctx=ast.Load())
         if isinstance(ty, TypeUnit):
             return ast.Constant(value=None)
@@ -4144,7 +4507,8 @@ class Translator:
             return ast.Name(id="object", ctx=ast.Load())
         raise TranslateError(
             f"unsupported type {type(ty).__name__}",
-            getattr(ty, "line", 0), getattr(ty, "col", 0),
+            getattr(ty, "line", 0),
+            getattr(ty, "col", 0),
         )
 
 
@@ -4165,13 +4529,9 @@ class PythonBackend(BackendBase):
     ) -> None:
         super().__init__(trusted=trusted)
         if target_width is not None and target_width not in (32, 64):
-            raise ValueError(
-                f"target width must be 32 or 64, got {target_width}"
-            )
+            raise ValueError(f"target width must be 32 or 64, got {target_width}")
         self.sandbox = sandbox
-        self.target_width = (
-            HOST_TARGET_WIDTH if target_width is None else target_width
-        )
+        self.target_width = HOST_TARGET_WIDTH if target_width is None else target_width
         self.translator = Translator()
 
     def compile(self, program: Program) -> dict:
@@ -4186,6 +4546,7 @@ class PythonBackend(BackendBase):
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def compile_rust(program: Program) -> dict:
     """Translate a parsed Rust Program to Python and exec it."""
