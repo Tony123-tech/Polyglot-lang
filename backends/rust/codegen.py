@@ -1659,6 +1659,8 @@ class RustCodegen:
                 return f"{recv}.len_utf8()"
             if e.method == "len_utf16" and not e.args:
                 return f"{recv}.len_utf16()"
+            if e.method == "is_control" and not e.args:
+                return f"{recv}.is_control()"
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return f"{recv}.{e.method}()"
             if e.method == "replace" and len(e.args) == 2:

@@ -256,6 +256,11 @@ fn char_len_utf16(value: char) -> usize {
     value.len_utf16()
 }
 """,
+    "char_is_control": """
+fn char_is_control(value: char) -> bool {
+    value.is_control()
+}
+""",
 }
 
 
@@ -889,3 +894,24 @@ def test_python_char_len_utf16_parity():
     assert namespace["char_len_utf16"]("a") == 1
     assert namespace["char_len_utf16"]("€") == 1
     assert namespace["char_len_utf16"]("𝄞") == 2
+
+
+@pytest.mark.native
+def test_native_char_is_control(native_ns):
+    assert native_ns["char_is_control"]("\x00") is True
+    assert native_ns["char_is_control"]("\n") is True
+    assert native_ns["char_is_control"]("\x7f") is True
+    assert native_ns["char_is_control"]("\x9f") is True
+    assert native_ns["char_is_control"]("a") is False
+    assert native_ns["char_is_control"]("é") is False
+
+
+def test_python_char_is_control_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_control"])))
+
+    assert namespace["char_is_control"]("\x00") is True
+    assert namespace["char_is_control"]("\n") is True
+    assert namespace["char_is_control"]("\x7f") is True
+    assert namespace["char_is_control"]("\x9f") is True
+    assert namespace["char_is_control"]("a") is False
+    assert namespace["char_is_control"]("é") is False
