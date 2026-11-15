@@ -4490,6 +4490,12 @@ class Translator:
                     args=[],
                     keywords=[],
                 )
+            if e.method == "is_lowercase" and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(value=recv, attr="islower", ctx=ast.Load()),
+                    args=[],
+                    keywords=[],
+                )
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return ast.Call(
                     func=ast.Name(
