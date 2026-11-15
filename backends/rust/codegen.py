@@ -1324,6 +1324,9 @@ class RustCodegen:
                     )
                 if e.method == "drain" and not e.args:
                     return f"{recv}.drain().collect::<Vec<_>>()"
+                if e.method == "extend" and len(e.args) == 1:
+                    other = self.expr_to_rust(e.args[0])
+                    return f"{recv}.extend({other}.into_iter())"
             if kind == "HashSet":
                 if e.method == "insert" and len(e.args) == 1:
                     return f"{recv}.insert({self._owned_arg_to_rust(e.args[0])})"
