@@ -1488,6 +1488,12 @@ class RustCodegen:
                 )
             if e.method == "split_off" and len(e.args) == 1:
                 return f"{recv}.split_off({self._emit_usize_arg(e.args[0])})"
+            if e.method == "split_at" and len(e.args) == 1:
+                index = self._emit_usize_arg(e.args[0])
+                return (
+                    f"{{ let (left, right) = {recv}.split_at({index}); "
+                    "(left.to_vec(), right.to_vec()) }"
+                )
             if e.method == "find" and len(e.args) == 1:
                 return f"{recv}.find(&{self.expr_to_rust(e.args[0])})"
             if e.method == "binary_search" and len(e.args) == 1:

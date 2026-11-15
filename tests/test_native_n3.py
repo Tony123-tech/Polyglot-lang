@@ -96,6 +96,11 @@ fn vec_binary_search(values: Vec<i64>, target: i64) -> i64 {
     values.binary_search(&target).unwrap_or(999) as i64
 }
 """,
+    "vec_split_at": """
+fn vec_split_at(values: Vec<i64>, index: i64) -> (Vec<i64>, Vec<i64>) {
+    values.split_at(index as usize)
+}
+""",
     "vec_windows": """
 fn vec_windows(values: Vec<i64>) -> Vec<Vec<i64>> {
     values.windows(2)
@@ -177,6 +182,13 @@ def test_native_vec_binary_search(native_ns):
     assert native_ns["vec_binary_search"]([], 4) == 999
 
 
+@pytest.mark.native
+def test_native_vec_split_at(native_ns):
+    assert native_ns["vec_split_at"]([1, 2, 3, 4], 2) == ([1, 2], [3, 4])
+    assert native_ns["vec_split_at"]([1, 2], 0) == ([], [1, 2])
+    assert native_ns["vec_split_at"]([1, 2], 2) == ([1, 2], [])
+
+
 @pytest.mark.parametrize(
     ("name", "argument", "expected"),
     [
@@ -249,6 +261,15 @@ def test_python_vec_binary_search_parity():
     assert namespace["vec_binary_search"]([1, 3, 5, 7], 5) == 2
     assert namespace["vec_binary_search"]([1, 3, 5, 7], 4) == 999
     assert namespace["vec_binary_search"]([], 4) == 999
+
+
+def test_python_vec_split_at_parity():
+    program = parse(lex(SOURCES["vec_split_at"]))
+    namespace = compile_rust(program)
+
+    assert namespace["vec_split_at"]([1, 2, 3, 4], 2) == ([1, 2], [3, 4])
+    assert namespace["vec_split_at"]([1, 2], 0) == ([], [1, 2])
+    assert namespace["vec_split_at"]([1, 2], 2) == ([1, 2], [])
 
 
 @pytest.mark.parametrize(

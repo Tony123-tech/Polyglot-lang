@@ -435,6 +435,12 @@ def _runtime_vec_binary_search(values: list, target) -> "_Result":
     return _Result.from_err(low)
 
 
+def _runtime_vec_split_at(values: list, index: int) -> tuple[list, list]:
+    if index < 0 or index > len(values):
+        raise IndexError("split_at index out of bounds")
+    return (values[:index], values[index:])
+
+
 def _runtime_vec_windows(values: list, size: int) -> list[list]:
     if size <= 0:
         raise ValueError("window size must be positive")
@@ -1260,6 +1266,7 @@ class Translator:
         ns["_vec_dedup"] = _runtime_vec_dedup
         ns["_vec_dedup_by"] = _runtime_vec_dedup_by
         ns["_vec_binary_search"] = _runtime_vec_binary_search
+        ns["_vec_split_at"] = _runtime_vec_split_at
         ns["_vec_windows"] = _runtime_vec_windows
         ns["_vec_chunks"] = _runtime_vec_chunks
         ns["_filter"] = _runtime_filter
@@ -3417,6 +3424,12 @@ class Translator:
             if e.method == "binary_search" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(id="_vec_binary_search", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "split_at" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_split_at", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
