@@ -1205,6 +1205,23 @@ def _runtime_parse(value):
         return _Result.from_err(str(exc))
 
 
+def _runtime_char_to_digit(value, radix):
+    if len(value) != 1:
+        return _Option.none()
+    character = value
+    if "0" <= character <= "9":
+        digit = ord(character) - ord("0")
+    elif "a" <= character <= "z":
+        digit = ord(character) - ord("a") + 10
+    elif "A" <= character <= "Z":
+        digit = ord(character) - ord("A") + 10
+    else:
+        return _Option.none()
+    if 2 <= radix <= 36 and digit < radix:
+        return _Option.some(digit)
+    return _Option.none()
+
+
 class _ResultErrSentinel(Exception):
     def __init__(self, result):
         self.result = result
@@ -1685,6 +1702,7 @@ class Translator:
         ns["_string_to_ascii_lowercase"] = _runtime_string_to_ascii_lowercase
         ns["_string_to_ascii_uppercase"] = _runtime_string_to_ascii_uppercase
         ns["_result_parse"] = _runtime_parse
+        ns["_char_to_digit"] = _runtime_char_to_digit
         ns["_map_insert"] = _runtime_map_insert
         ns["_map_get"] = _runtime_map_get
         ns["_map_get_mut"] = _runtime_map_get_mut
@@ -4494,6 +4512,12 @@ class Translator:
                 return ast.Call(
                     func=ast.Attribute(value=recv, attr="islower", ctx=ast.Load()),
                     args=[],
+                    keywords=[],
+                )
+            if e.method == "to_digit" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_char_to_digit", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:

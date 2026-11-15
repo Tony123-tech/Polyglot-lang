@@ -198,6 +198,14 @@ fn char_to_lowercase(value: char) -> String {
     value.to_lowercase().to_string()
 }
 """,
+    "char_to_digit": """
+fn char_to_digit(value: char) -> i64 {
+    value.to_digit(16).unwrap_or(0) as i64
+}
+fn char_to_digit_some(value: char) -> bool {
+    value.to_digit(16).is_some()
+}
+""",
 }
 
 
@@ -638,3 +646,22 @@ def test_python_char_to_lowercase_parity():
     assert namespace["char_to_lowercase"]("A") == "a"
     assert namespace["char_to_lowercase"]("É") == "é"
     assert namespace["char_to_lowercase"]("1") == "1"
+
+
+@pytest.mark.native
+def test_native_char_to_digit(native_ns):
+    assert native_ns["char_to_digit"]("f") == 15
+    assert native_ns["char_to_digit"]("F") == 15
+    assert native_ns["char_to_digit"]("g") == 0
+    assert native_ns["char_to_digit_some"]("a") is True
+    assert native_ns["char_to_digit_some"]("g") is False
+
+
+def test_python_char_to_digit_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_to_digit"])))
+
+    assert namespace["char_to_digit"]("f") == 15
+    assert namespace["char_to_digit"]("F") == 15
+    assert namespace["char_to_digit"]("g") == 0
+    assert namespace["char_to_digit_some"]("a") is True
+    assert namespace["char_to_digit_some"]("g") is False
