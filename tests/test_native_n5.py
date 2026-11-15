@@ -30,6 +30,11 @@ fn n5_result_err_construction() -> Result<i64, String> {
     Err("bad")
 }
 """,
+    "result_unwrap_err": """
+fn n5_result_unwrap_err() -> String {
+    Err("bad").unwrap_err().to_string().replace("RuntimeError: ", "")
+}
+""",
     "option_unwrap": """
 fn n5_option_unwrap_get() -> i64 {
     Some(5).unwrap()
@@ -623,6 +628,17 @@ def test_native_result_ok_construction(native_ns):
 def test_native_result_err_construction(native_ns):
     with pytest.raises(Exception, match="bad"):
         native_ns["n5_result_err_construction"]()
+
+
+@pytest.mark.native
+def test_native_result_unwrap_err(native_ns):
+    assert native_ns["n5_result_unwrap_err"]() == "bad"
+
+
+def test_python_result_unwrap_err():
+    ns = _run_python(SOURCES["result_unwrap_err"])
+
+    assert ns["n5_result_unwrap_err"]() == "bad"
 
 
 # ---------------------------------------------------------------------------

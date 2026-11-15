@@ -1377,6 +1377,13 @@ class _Result:
             )
         return self._value
 
+    def unwrap_err(self):
+        if self._is_ok:
+            raise RuntimeError(
+                f"called `Result::unwrap_err()` on an `Ok` value: {self._value!r}"
+            )
+        return self._value
+
     def unwrap_or(self, default):
         return self._value if self._is_ok else default
 

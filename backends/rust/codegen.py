@@ -1236,7 +1236,7 @@ class RustCodegen:
                     f"{self.expr_to_rust(e.value)}))"
                 )
             return (
-                f"Err::<_, PyErr>(pyo3::exceptions::PyRuntimeError::new_err("
+                f"Err::<i64, PyErr>(pyo3::exceptions::PyRuntimeError::new_err("
                 f"{self.expr_to_rust(e.value)}))"
             )
         if isinstance(e, Unary):
@@ -1379,6 +1379,8 @@ class RustCodegen:
                 return f"{recv}.map_err({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap" and not e.args:
                 return f"{recv}.unwrap()"
+            if e.method == "unwrap_err" and not e.args:
+                return f"{recv}.unwrap_err()"
             if e.method == "unwrap_or" and len(e.args) == 1:
                 return f"{recv}.unwrap_or({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap_or_else" and len(e.args) == 1:
