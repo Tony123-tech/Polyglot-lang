@@ -223,6 +223,11 @@ fn vec_zip(left: Vec<i64>, right: Vec<i64>) -> Vec<(i64, i64)> {
     left.zip(right)
 }
 """,
+    "vec_flatten": """
+fn vec_flatten(values: Vec<Vec<i64>>) -> Vec<i64> {
+    values.flatten()
+}
+""",
 }
 
 
@@ -546,6 +551,19 @@ def test_python_vec_zip_parity():
 
     assert namespace["vec_zip"]([1, 2], [3, 4, 5]) == [(1, 3), (2, 4)]
     assert namespace["vec_zip"]([], [1]) == []
+
+
+@pytest.mark.native
+def test_native_vec_flatten(native_ns):
+    assert native_ns["vec_flatten"]([[1, 2], [], [3]]) == [1, 2, 3]
+    assert native_ns["vec_flatten"]([]) == []
+
+
+def test_python_vec_flatten_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_flatten"])))
+
+    assert namespace["vec_flatten"]([[1, 2], [], [3]]) == [1, 2, 3]
+    assert namespace["vec_flatten"]([]) == []
 
 
 @pytest.mark.native

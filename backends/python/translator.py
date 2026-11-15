@@ -595,6 +595,13 @@ def _runtime_vec_zip(left: list, right: list) -> list:
     return [(a, b) for a, b in zip(left, right)]
 
 
+def _runtime_vec_flatten(values: list) -> list:
+    flattened = []
+    for inner in values:
+        flattened.extend(inner)
+    return flattened
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1467,6 +1474,7 @@ class Translator:
         ns["_vec_skip"] = _runtime_vec_skip
         ns["_vec_enumerate"] = _runtime_vec_enumerate
         ns["_vec_zip"] = _runtime_vec_zip
+        ns["_vec_flatten"] = _runtime_vec_flatten
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3724,6 +3732,16 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_vec_zip", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if (
+                e.method == "flatten"
+                and not e.args
+                and self._is_vec_expr(e.receiver)
+            ):
+                return ast.Call(
+                    func=ast.Name(id="_vec_flatten", ctx=ast.Load()),
+                    args=[recv],
                     keywords=[],
                 )
             if e.method == "retain" and len(e.args) == 1:

@@ -1397,6 +1397,12 @@ class RustCodegen:
                     ".map(|(left, right)| (left.clone(), right.clone()))"
                     ".collect::<Vec<_>>()"
                 )
+            if (
+                e.method == "flatten"
+                and not e.args
+                and self._is_vec_expr(e.receiver)
+            ):
+                return f"{recv}.iter().flatten().cloned().collect::<Vec<_>>()"
             if e.method == "bytes" and not e.args:
                 return f"{recv}.bytes().collect::<Vec<u8>>()"
             if e.method == "parse" and not e.args:
