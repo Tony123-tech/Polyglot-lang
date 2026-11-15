@@ -180,6 +180,11 @@ fn vec_any(values: Vec<i64>, target: i64) -> bool {
     values.any(|value| value == target)
 }
 """,
+    "vec_all": """
+fn vec_all(values: Vec<i64>) -> bool {
+    values.all(|value| value > 0)
+}
+""",
 }
 
 
@@ -384,6 +389,21 @@ def test_python_vec_any_parity():
     assert namespace["vec_any"]([1, 2, 3], 2) is True
     assert namespace["vec_any"]([1, 2, 3], 9) is False
     assert namespace["vec_any"]([], 1) is False
+
+
+@pytest.mark.native
+def test_native_vec_all(native_ns):
+    assert native_ns["vec_all"]([1, 2, 3]) is True
+    assert native_ns["vec_all"]([1, 0, 3]) is False
+    assert native_ns["vec_all"]([]) is True
+
+
+def test_python_vec_all_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_all"])))
+
+    assert namespace["vec_all"]([1, 2, 3]) is True
+    assert namespace["vec_all"]([1, 0, 3]) is False
+    assert namespace["vec_all"]([]) is True
 
 
 @pytest.mark.native

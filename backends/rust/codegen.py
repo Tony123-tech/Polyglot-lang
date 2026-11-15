@@ -1521,6 +1521,11 @@ class RustCodegen:
                     f"{recv}.clone().into_iter().any("
                     f"{self.expr_to_rust(e.args[0])})"
                 )
+            if e.method == "all" and len(e.args) == 1:
+                return (
+                    f"{recv}.clone().into_iter().all("
+                    f"{self.expr_to_rust(e.args[0])})"
+                )
             if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
                 return (
                     f"{recv}.{e.method}(&{self.expr_to_rust(e.args[0])})"
