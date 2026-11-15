@@ -137,6 +137,12 @@ fn n5_vec_is_empty(values: Vec<i64>) -> bool {
     values.is_empty()
 }
 """,
+    "vec_dedup_by": """
+fn n5_vec_dedup_by(mut values: Vec<i64>) -> Vec<i64> {
+    values.dedup_by(|a, b| *a % 10 == *b % 10);
+    values
+}
+""",
     "vec_clear": """
 fn n5_vec_clear(mut values: Vec<i64>) -> Vec<i64> {
     values.clear();
@@ -373,6 +379,12 @@ fn dedup_by_modulo(mut values: Vec<i64>) -> Vec<i64> {
     )
     assert ns["dedup_by_modulo"]([1, 11, 2, 22, 3]) == [1, 2, 3]
     assert ns["dedup_by_modulo"]([]) == []
+
+
+@pytest.mark.native
+def test_native_vec_dedup_by(native_ns):
+    assert native_ns["n5_vec_dedup_by"]([1, 11, 2, 22, 3]) == [1, 2, 3]
+    assert native_ns["n5_vec_dedup_by"]([]) == []
 
 
 @pytest.mark.native
