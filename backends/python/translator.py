@@ -570,6 +570,13 @@ def _runtime_vec_sum(values: list):
     return sum(values)
 
 
+def _runtime_vec_product(values: list):
+    product = 1
+    for value in values:
+        product *= value
+    return product
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1437,6 +1444,7 @@ class Translator:
         ns["_vec_min"] = _runtime_vec_min
         ns["_vec_max"] = _runtime_vec_max
         ns["_vec_sum"] = _runtime_vec_sum
+        ns["_vec_product"] = _runtime_vec_product
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3655,6 +3663,12 @@ class Translator:
             if e.method == "sum" and not e.args:
                 return ast.Call(
                     func=ast.Name(id="_vec_sum", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "product" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_vec_product", ctx=ast.Load()),
                     args=[recv],
                     keywords=[],
                 )

@@ -199,6 +199,9 @@ fn vec_max(values: Vec<i64>) -> Option<i64> {
 fn vec_sum(values: Vec<i64>) -> i64 {
     values.sum()
 }
+fn vec_product(values: Vec<i64>) -> i64 {
+    values.product()
+}
 """,
 }
 
@@ -458,6 +461,19 @@ def test_python_vec_sum_parity():
 
     assert namespace["vec_sum"]([1, 2, 3, 4]) == 10
     assert namespace["vec_sum"]([]) == 0
+
+
+@pytest.mark.native
+def test_native_vec_product(native_ns):
+    assert native_ns["vec_product"]([1, 2, 3, 4]) == 24
+    assert native_ns["vec_product"]([]) == 1
+
+
+def test_python_vec_product_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_sum_product"])))
+
+    assert namespace["vec_product"]([1, 2, 3, 4]) == 24
+    assert namespace["vec_product"]([]) == 1
 
 
 @pytest.mark.native

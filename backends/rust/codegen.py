@@ -1532,6 +1532,8 @@ class RustCodegen:
                 return f"{recv}.iter().max().cloned()"
             if e.method == "sum" and not e.args:
                 return f"{recv}.iter().copied().sum::<i64>()"
+            if e.method == "product" and not e.args:
+                return f"{recv}.iter().copied().product::<i64>()"
             if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
                 return (
                     f"{recv}.{e.method}(&{self.expr_to_rust(e.args[0])})"
