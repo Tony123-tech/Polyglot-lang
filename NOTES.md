@@ -11,10 +11,11 @@
 - N9: Result/Option combinators
 - N10: SPEC v0.2.7 conformance
 - M10: Termination checking
+- M5: Async extensions (Send-aware PyFuture, async impl methods, cancellation, timeout)
 - F1: Deliverable CLI
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 
-**Latest baseline:** 469 passed, 9 skipped, 15 deselected; slow 15 passed, 478 deselected.
+**Latest baseline:** 686 passed, 5 skipped, 19 deselected; slow 19 passed, 691 deselected.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -754,9 +755,11 @@ Batch 5 validation: `pytest -v` completed with 133 passed and 8 skipped in 13.35
 
 ## Async runtime
 
-The native backend uses hand-written `PyFuture` and `PyFutureIterator` classes in `_RUNTIME_PREFIX` in `backends/rust/codegen.py`; it does not use `pyo3-asyncio` or PyO3 experimental async support. Both classes are `#[pyclass(unsendable)]` and poll the Rust future with a noop waker; the future output is `PyResult<PyObject>`. Async free functions are emitted as `#[pyfunction] fn name(params) -> PyResult<PyFuture> { Ok(py_future(async move { ... })) }`, and await expressions emit `.await`. The tail value is converted to Python with `into_py_any(py)` inside `Python::with_gil`, fixing conversion for PyO3 0.26.
+The native backend uses hand-written `PyFuture` and `PyFutureIterator` classes in `_RUNTIME_PREFIX` in `backends/rust/codegen.py`; it does not use `pyo3-asyncio` or PyO3 experimental async support. Both are regular `#[pyclass]` types. The boxed future is `Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>`, stored in a `Mutex<Option<...>>` so the pyclass is both `Send` and `Sync`, and `py_future` requires `Send`. Futures are polled with a noop waker. Async free functions are emitted as `#[pyfunction] fn name(params) -> PyResult<PyFuture> { Ok(py_future(async move { ... })) }`, and await expressions emit `.await`. The tail value is converted to Python with `into_py_any(py)` inside `Python::with_gil`, fixing conversion for PyO3 0.26.
 
-Tests: `tests/test_native_n5.py::test_native_async_add`, `tests/test_native_n5.py::test_native_async_identity`.
+Async `&self` impl methods use the same lowering. Before `async move`, referenced fields are cloned into owned locals and `self.<field>` is aliased to those locals, because `&self` is not `Send`. Async `&mut self` and by-value receivers are rejected, as are bare `self` uses and non-`Clone` payload-enum fields. Cancellation is drop-based: dropping a `PyFuture` or its iterator drops the boxed future without another poll. The internal `await_with_timeout` helper polls until ready or a deadline, sleeps with the GIL released, and raises `PyTimeoutError` on expiry.
+
+Tests: `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity`, `::test_native_async_send_add_across_threads`, `::test_native_async_impl_method`, `::test_native_await_with_timeout_value`, `::test_native_await_with_timeout_times_out`, `::test_native_dropping_future_iterator_cancels_before_poll`.
 
 ## Sandbox
 
@@ -772,7 +775,7 @@ When available, `sccache` is configured through `RUSTC_WRAPPER` in `_build_env`.
 
 N5 delivers Option and Result construction and combinators, the `?` operator, `if let`, nested Option support, async functions through the custom PyFuture runtime, match exhaustiveness warnings, and Python built-ins sandboxing. The features that remain Python-only are Result `is_ok`, `is_err`, `map_err`, and `ok_or` in let-bindings (native `Err` emits `PyErr`, which does not match the declared error type), Box patterns, enum payload slices, and nested Vec slice patterns. Option `map` remains intentionally unsupported because it collides with Vec `map`; both backends reject it with a clear error.
 
-Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style Option-returning `next()`; async functions as impl methods; and using a `PyFuture` from a thread other than the one that created it, because `PyFuture` is unsendable.
+Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style Option-returning `next()`. The M5 async work is documented below: async `&mut self` methods are rejected, the timeout helper is polling-based, and external wakeups/event-loop integration are not supported.
 
 Tests: `tests/test_native_n5.py` covers native and Python Option/Result, async, sandbox, `?`, `if let`, and match diagnostics.
 
@@ -949,8 +952,8 @@ Each README limitation is pinned by a test or has an explicit out-of-scope ratio
 | Result `is_ok`/`is_err`/`map_err`/`ok_or`/`and_then`/`or_else` are Python-only in let-bindings | `tests/test_native_n5.py` predicate/conversion tests; `tests/test_known_limitations.py::test_result_combinators_and_conversions_are_python_only`                    |
 | `while let Some(x) = iter.next()`                                                              | `tests/test_known_limitations.py::test_while_let_next_is_a_parse_error`                                                                                             |
 | Box patterns, enum payload slices, nested Vec slice patterns                                   | Python behavior in `tests/test_known_limitations.py`; native lowering remains out of scope because Rust slice patterns do not apply directly to `Vec`/enum payloads |
-| Async impl methods                                                                             | `tests/test_known_limitations.py::test_async_impl_method_runs_in_python` and `::test_async_impl_method_native_codegen_is_sync_only`                                 |
-| `PyFuture` is unsendable                                                                       | `tests/test_known_limitations.py::test_pyfuture_runtime_is_marked_unsendable`                                                                                       |
+| Async `&mut self` methods are rejected                                                                 | `tests/test_known_limitations.py::test_async_mut_self_method_native_codegen_is_rejected`; `tests/test_native_n5.py::test_native_async_impl_method` covers the supported `&self` path |
+| Async timeout uses polling; no event loop or external wakeups                                          | `tests/test_native_n5.py::test_native_await_with_timeout_value` and `::test_native_await_with_timeout_times_out`                                                                 |
 | Option `map` collides with Vec `map`                                                           | `tests/test_known_limitations.py` rejection tests for both backends plus `test_vec_map_still_lowers`                                                                |
 | HashMap entry subset                                                                           | `tests/test_native_n7_map.py` entry tests                                                                                                                           |
 | HashMap views allocate and have unspecified order                                              | `tests/test_native_n7_map.py` sorts view results where order is observable                                                                                          |
@@ -1351,3 +1354,34 @@ are parenthesised, Python literal out-of-range casts expect
 `RustCompileError` (matching Rust's literal typing). Include errors now
 carry spans, but still occupy five printed lines because the span is
 appended to the location line.
+
+## M5: Async extensions
+
+### PyFuture was not Send
+
+**Symptom:** A future created on one thread could not be awaited on another, and the limitation audit pinned `#[pyclass(unsendable)]` for both runtime types.
+
+**Cause:** The boxed future type and the `py_future` bound had no `Send` requirement. Removing `unsendable` from a `#[pyclass]` also requires the type to be `Sync`, which the bare `Option` field was not.
+
+**Fix:** Changed the boxed future to `Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>`, stored it in `Mutex<Option<...>>` so the pyclass is `Send + Sync`, removed `unsendable`, and added main-thread and cross-thread await tests. The stale limitation test was updated in a separate `test(rust)` commit because amending was not allowed.
+
+**Lesson:** A `#[pyclass]` that is not `unsendable` must be both `Send` and `Sync`; interior mutability is the minimal way to keep a consumed `Option<BoxFuture>` while satisfying both. Limitation audits must move with the limitation.
+
+### Async impl methods were silently synchronous
+
+**Symptom:** An `async fn` inside an `impl` block was emitted as a plain synchronous Rust method, so native code returned the value directly instead of a `PyFuture`.
+
+**Cause:** `generate_fn` applied the async lowering only when `not as_method`; the method path dropped the `async` keyword without an error.
+
+**Fix:** Async `&self` methods now return `PyResult<PyFuture>` and wrap the body in `py_future(async move { ... })`. Referenced fields are cloned into owned locals and `self.<field>` is aliased to them before the move. Async `&mut self`, by-value receivers, bare `self` uses, and non-`Clone` payload-enum fields are rejected with `TranslateError`. The known-limitations test now pins the `PyFuture` lowering and the `&mut self` rejection, and a native async-method test covers the supported path.
+
+**Lesson:** A silent synchronous fallback hides the absence of async semantics. Unsupported receivers should fail at translation time with a clear message rather than producing code with different behavior.
+
+### Status
+
+M5 is complete. Commit 1 also removed the thread-affinity limitation; commit 3 added drop-based cancellation and the polling timeout helper without changing the noop-waker design.
+
+- `pytest -q`: 686 passed, 5 skipped, 19 deselected.
+- `pytest -q -m slow`: 19 passed, 691 deselected.
+- `pytest -q tests/test_native_n5.py`: 62 passed, 2 deselected.
+- `pytest -q tests/test_known_limitations.py`: 16 passed.

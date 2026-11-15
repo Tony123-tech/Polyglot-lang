@@ -503,10 +503,10 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 469 passed, 9 skipped, 16 deselected.
-- `pytest -q -m slow`: 16 passed, 478 deselected.
+- `pytest -q`: 686 passed, 5 skipped, 19 deselected.
+- `pytest -q -m slow`: 19 passed, 691 deselected.
 
-The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, and M3-remaining tests added in v0.3.1–v0.3.5, including the completed M3 native collection matrix and the M4 integer matrix.
+The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, M3-remaining, and M5 async tests.
 
 - **12.1.1** The numbers above are from the current repository state at the time of writing. They MUST be updated whenever the test suite changes. The summary counts in 12.2.0 are derived from the 12.2 table below and MUST be recomputed whenever a row changes.
 - **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. The baseline is now restored; Blocked criteria have been re-evaluated in 12.2 and any that remain are marked **Partial** with a note recording what is still unverified.

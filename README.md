@@ -85,8 +85,9 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | F1 | Done | Installable package, CLI, examples, and delivery documentation |
 | M3 | Done | HashMap entry completion, `BTreeMap`, `HashSet`, and nested `HashMap` depth 1 |
 | M4 | Done | Additional fixed-width integer types and the cross-backend cast matrix |
+| M5 | Done | Send-aware `PyFuture`, async `&self` impl methods, drop-based cancellation, and a polling timeout helper |
 
-**Current test status:** 469 passed, 9 skipped, 16 deselected (`pytest -q`); 16 passed, 478 deselected (`pytest -q -m slow`).
+**Current test status:** 686 passed, 5 skipped, 19 deselected (`pytest -q`); 19 passed, 691 deselected (`pytest -q -m slow`).
 
 ## Support matrix
 
@@ -102,6 +103,10 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | Error codes (E001–E008) | ✅ | ✅ |
 | `#[terminates]` checking | ✅ | ✅ |
 | async free functions | ✅ (synchronous) | ✅ |
+| async `&self` impl methods | ✅ | ✅ |
+| cross-thread await with Send captures | n/a | ✅ |
+| drop-based cancellation | n/a | ✅ |
+| polling timeout helper | n/a | ✅ |
 | Box patterns | ✅ | ⬜ Deferred |
 | Payload enum slices | ✅ | ⬜ Deferred |
 
@@ -123,6 +128,7 @@ iteration order is unspecified; sort before comparing. `get_mut` on
 - **N8:** `HashMap<K, V>` construction and supported operations, typed `usize` length, dict conversion, key/value/iteration views, entry insertion, and mutable access.
 - **N9:** Dedicated Python/native coverage for Platform-defined Result/Option combinators and native `Result::and_then`/`or_else`.
 - **M10:** `#[terminates]` enables conservative static termination checks for bounded ranges, decreasing `while` variants, and recursive descent.
+- **M5:** Send-aware `PyFuture`, async `&self` impl methods, drop-based cancellation, and a polling timeout helper for the native backend.
 - **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
 
 ## CLI
@@ -211,7 +217,18 @@ namespace = get_backend("native").compile(parse(lex(source)))
 assert asyncio.run(namespace["add"](2, 3)) == 5
 ```
 
-The native backend uses a hand-written `PyFuture` runtime, not `pyo3-asyncio`. Async support is currently limited to free functions, not impl methods, and futures must not require `Send`.
+The native backend uses a hand-written `PyFuture` runtime, not `pyo3-asyncio`.
+Futures are Send-aware: a future created on one thread can be awaited on
+another when its captured values are Send. Async `&self` impl methods also
+return `PyFuture`; referenced fields are cloned into owned locals before the
+future is created, so the method body does not capture `self`. Dropping a
+future or its iterator before completion cancels it by drop semantics.
+
+The internal `await_with_timeout(future, seconds)` helper polls until the
+future is ready or the timeout expires, sleeping with the GIL released. It is
+polling-based and does not integrate with an event loop. Async `&mut self`
+methods are rejected by codegen, as are async methods that use bare `self`
+or capture non-`Clone` fields.
 
 ## Sandbox
 
@@ -271,8 +288,12 @@ Diagnostics include a stable error code. The table below maps each code to its c
 - `is_ok`, `is_err`, `map_err`, `ok_or`, `and_then`, and `or_else` are Python-only inside let-bindings.
 - `while let Some(x) = iter.next()` is out of scope because Python has no Rust-style Option-returning `next()`.
 - Box patterns, enum payload slices, and nested Vec slice patterns are Python-only.
-- Async is not supported on impl methods.
-- `PyFuture` is unsendable and can only be used on the thread that created it.
+- Async `&mut self` methods are rejected by the native codegen. Async `&self`
+  methods may only read fields (`self.<field>`); bare `self` use and
+  non-`Clone` fields such as payload enums are rejected.
+- The async timeout helper uses polling with `std::thread::sleep` and does not
+  integrate with an event loop. External wakeups are not supported: futures
+  are polled only when Python calls into `PyFutureIterator.__next__`.
 - Option `map` is intentionally unsupported because method dispatch is not
   yet fully type-aware; `Vec::map` and `Option::map` collide at the call
   site. `Vec::filter` and `Option::filter` are currently distinguished by a
@@ -314,10 +335,10 @@ rm -rf ~/.cache/polyglot-native
 
 ## Roadmap
 
-N0 through N10, M10, and F1 are complete. Remaining known limitations are listed under
-[Known limitations](#known-limitations). The main out-of-scope items are
-`while let Some(x) = iter.next()`, async impl methods, and cross-thread
-`PyFuture` use.
+N0 through N10, M10, F1, and M5 are complete. Remaining known limitations are
+listed under [Known limitations](#known-limitations). The main out-of-scope
+items are `while let Some(x) = iter.next()`, async `&mut self` methods, and
+real wakeups/event-loop integration.
 
 ## Notes
 
