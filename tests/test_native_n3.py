@@ -218,6 +218,11 @@ fn vec_enumerate(values: Vec<i64>) -> Vec<(i64, i64)> {
     values.enumerate()
 }
 """,
+    "vec_zip": """
+fn vec_zip(left: Vec<i64>, right: Vec<i64>) -> Vec<(i64, i64)> {
+    left.zip(right)
+}
+""",
 }
 
 
@@ -528,6 +533,19 @@ def test_python_vec_enumerate_parity():
 
     assert namespace["vec_enumerate"]([10, 20]) == [(0, 10), (1, 20)]
     assert namespace["vec_enumerate"]([]) == []
+
+
+@pytest.mark.native
+def test_native_vec_zip(native_ns):
+    assert native_ns["vec_zip"]([1, 2], [3, 4, 5]) == [(1, 3), (2, 4)]
+    assert native_ns["vec_zip"]([], [1]) == []
+
+
+def test_python_vec_zip_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_zip"])))
+
+    assert namespace["vec_zip"]([1, 2], [3, 4, 5]) == [(1, 3), (2, 4)]
+    assert namespace["vec_zip"]([], [1]) == []
 
 
 @pytest.mark.native

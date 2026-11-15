@@ -1390,6 +1390,13 @@ class RustCodegen:
                     ".map(|(index, value)| (index as i64, value.clone()))"
                     ".collect::<Vec<_>>()"
                 )
+            if e.method == "zip" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
+                other = self.expr_to_rust(e.args[0])
+                return (
+                    f"{recv}.iter().zip({other}.iter())"
+                    ".map(|(left, right)| (left.clone(), right.clone()))"
+                    ".collect::<Vec<_>>()"
+                )
             if e.method == "bytes" and not e.args:
                 return f"{recv}.bytes().collect::<Vec<u8>>()"
             if e.method == "parse" and not e.args:

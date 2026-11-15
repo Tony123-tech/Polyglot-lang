@@ -591,6 +591,10 @@ def _runtime_vec_enumerate(values: list) -> list:
     return [(index, value) for index, value in enumerate(values)]
 
 
+def _runtime_vec_zip(left: list, right: list) -> list:
+    return [(a, b) for a, b in zip(left, right)]
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1462,6 +1466,7 @@ class Translator:
         ns["_vec_rev"] = _runtime_vec_rev
         ns["_vec_skip"] = _runtime_vec_skip
         ns["_vec_enumerate"] = _runtime_vec_enumerate
+        ns["_vec_zip"] = _runtime_vec_zip
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3713,6 +3718,12 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_vec_enumerate", ctx=ast.Load()),
                     args=[recv],
+                    keywords=[],
+                )
+            if e.method == "zip" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
+                return ast.Call(
+                    func=ast.Name(id="_vec_zip", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
             if e.method == "retain" and len(e.args) == 1:
