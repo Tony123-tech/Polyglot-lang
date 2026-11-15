@@ -1403,6 +1403,9 @@ class _Result:
     def map_or(self, default, f):
         return f(self._value) if self._is_ok else default
 
+    def and_(self, other):
+        return other if self._is_ok else self
+
     def unwrap_or(self, default):
         return self._value if self._is_ok else default
 
@@ -3791,6 +3794,20 @@ class Translator:
                         args=[recv, self.translate_expr(e.args[0])],
                         keywords=[],
                     )
+            if (
+                e.method == "and"
+                and len(e.args) == 1
+                and self._option_result_type(e.receiver) == "Result"
+            ):
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv,
+                        attr="and_",
+                        ctx=ast.Load(),
+                    ),
+                    args=[self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
             if e.method == "map_err" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Attribute(

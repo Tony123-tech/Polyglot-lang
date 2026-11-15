@@ -59,6 +59,10 @@ fn n5_result_is_err_and_ok() -> bool { Ok(4).is_err_and(|_| true) }
 fn n5_result_map_or_ok() -> i64 { Ok(5).map_or(0, |x| x * 2) }
 fn n5_result_map_or_err() -> i64 { Err("x").map_or(7, |x| x * 2) }
 """,
+    "result_and": """
+fn n5_result_and_ok() -> Result<i64, String> { Ok(1).and(Ok(2)) }
+fn n5_result_and_err() -> bool { Err("x").and(Ok(2)).is_err() }
+""",
     "option_unwrap": """
 fn n5_option_unwrap_get() -> i64 {
     Some(5).unwrap()
@@ -728,6 +732,19 @@ def test_python_result_map_or():
 
     assert ns["n5_result_map_or_ok"]() == 10
     assert ns["n5_result_map_or_err"]() == 7
+
+
+@pytest.mark.native
+def test_native_result_and(native_ns):
+    assert native_ns["n5_result_and_ok"]() == 2
+    assert native_ns["n5_result_and_err"]() is True
+
+
+def test_python_result_and():
+    ns = _run_python(SOURCES["result_and"])
+
+    assert ns["n5_result_and_ok"]() == ns["_Result"].from_ok(2)
+    assert ns["n5_result_and_err"]() is True
 
 
 # ---------------------------------------------------------------------------

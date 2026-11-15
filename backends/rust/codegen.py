@@ -1407,6 +1407,12 @@ class RustCodegen:
                 first = self.expr_to_rust(e.args[0])
                 second = self.expr_to_rust(e.args[1])
                 return f"{recv}.map_or({first}, {second})"
+            if (
+                e.method == "and"
+                and len(e.args) == 1
+                and self._option_result_type(e.receiver) == "Result"
+            ):
+                return f"{recv}.and({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap_or" and len(e.args) == 1:
                 return f"{recv}.unwrap_or({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap_or_else" and len(e.args) == 1:
