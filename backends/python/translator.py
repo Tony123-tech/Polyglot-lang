@@ -1205,6 +1205,10 @@ def _runtime_parse(value):
         return _Result.from_err(str(exc))
 
 
+def _runtime_char_is_ascii_alphanumeric(value):
+    return len(value) == 1 and value.isascii() and value.isalnum()
+
+
 def _runtime_char_is_ascii_digit(value):
     return len(value) == 1 and "0" <= value <= "9"
 
@@ -1715,6 +1719,7 @@ class Translator:
         ns["_char_to_digit"] = _runtime_char_to_digit
         ns["_char_is_ascii_alphabetic"] = _runtime_char_is_ascii_alphabetic
         ns["_char_is_ascii_digit"] = _runtime_char_is_ascii_digit
+        ns["_char_is_ascii_alphanumeric"] = _runtime_char_is_ascii_alphanumeric
         ns["_map_insert"] = _runtime_map_insert
         ns["_map_get"] = _runtime_map_get
         ns["_map_get_mut"] = _runtime_map_get_mut
@@ -4541,6 +4546,15 @@ class Translator:
             if e.method == "is_ascii_digit" and not e.args:
                 return ast.Call(
                     func=ast.Name(id="_char_is_ascii_digit", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "is_ascii_alphanumeric" and not e.args:
+                return ast.Call(
+                    func=ast.Name(
+                        id="_char_is_ascii_alphanumeric",
+                        ctx=ast.Load(),
+                    ),
                     args=[recv],
                     keywords=[],
                 )
