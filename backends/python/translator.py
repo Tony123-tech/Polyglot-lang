@@ -1244,6 +1244,9 @@ class _Option:
             return _Option.some((self._value, other._value))
         return _Option.none()
 
+    def iter(self):
+        return [self._value] if self._is_some else []
+
     def replace(self, value):
         previous = _Option(self._is_some, self._value)
         self._is_some = True

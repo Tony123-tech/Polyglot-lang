@@ -67,6 +67,13 @@ fn n5_option_unwrap_or_else_on_none() -> i64 { None.unwrap_or_else(|| 99) }
 fn n5_option_zip_some() -> Option<(i64, i64)> { Some(1).zip(Some(2)) }
 fn n5_option_zip_none() -> Option<(i64, i64)> { Some(1).zip(None) }
 """,
+    "option_iter": """
+fn n5_option_iter_some() -> Vec<i64> { Some(5).iter() }
+fn n5_option_iter_none() -> Vec<i64> {
+    let value: Option<i64> = None;
+    value.iter()
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -885,6 +892,19 @@ def test_python_option_zip():
 
     assert ns["n5_option_zip_some"]() == ns["_Option"].some((1, 2))
     assert ns["n5_option_zip_none"]() == ns["_Option"].none()
+
+
+@pytest.mark.native
+def test_native_option_iter(native_ns):
+    assert native_ns["n5_option_iter_some"]() == [5]
+    assert native_ns["n5_option_iter_none"]() == []
+
+
+def test_python_option_iter():
+    ns = _run_python(SOURCES["option_iter"])
+
+    assert ns["n5_option_iter_some"]() == [5]
+    assert ns["n5_option_iter_none"]() == []
 
 
 @pytest.mark.native

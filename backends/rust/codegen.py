@@ -1383,6 +1383,12 @@ class RustCodegen:
                 return f"{recv}.unwrap_or({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap_or_else" and len(e.args) == 1:
                 return f"{recv}.unwrap_or_else({self.expr_to_rust(e.args[0])})"
+            if (
+                e.method == "iter"
+                and not e.args
+                and self._option_result_type(e.receiver) == "Option"
+            ):
+                return f"{recv}.iter().cloned().collect::<Vec<_>>()"
             if e.method == "chars" and not e.args:
                 return f"{recv}.chars().collect::<Vec<char>>()"
             if e.method == "char_indices" and not e.args:
