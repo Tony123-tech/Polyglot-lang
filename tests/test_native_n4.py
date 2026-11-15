@@ -241,6 +241,11 @@ fn char_is_ascii(value: char) -> bool {
     value.is_ascii()
 }
 """,
+    "char_is_ascii_punctuation": """
+fn char_is_ascii_punctuation(value: char) -> bool {
+    value.is_ascii_punctuation()
+}
+""",
 }
 
 
@@ -821,3 +826,24 @@ def test_python_char_is_ascii_parity():
     assert namespace["char_is_ascii"]("a") is True
     assert namespace["char_is_ascii"]("~") is True
     assert namespace["char_is_ascii"]("é") is False
+
+
+@pytest.mark.native
+def test_native_char_is_ascii_punctuation(native_ns):
+    assert native_ns["char_is_ascii_punctuation"]("!") is True
+    assert native_ns["char_is_ascii_punctuation"](".") is True
+    assert native_ns["char_is_ascii_punctuation"]("`") is True
+    assert native_ns["char_is_ascii_punctuation"]("a") is False
+    assert native_ns["char_is_ascii_punctuation"](" ") is False
+    assert native_ns["char_is_ascii_punctuation"]("é") is False
+
+
+def test_python_char_is_ascii_punctuation_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_ascii_punctuation"])))
+
+    assert namespace["char_is_ascii_punctuation"]("!") is True
+    assert namespace["char_is_ascii_punctuation"](".") is True
+    assert namespace["char_is_ascii_punctuation"]("`") is True
+    assert namespace["char_is_ascii_punctuation"]("a") is False
+    assert namespace["char_is_ascii_punctuation"](" ") is False
+    assert namespace["char_is_ascii_punctuation"]("é") is False
