@@ -83,6 +83,8 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | N10 | Done | SPEC v0.2.7 and final conformance status |
 | M10 | Done | Opt-in termination checking for `#[terminates]` functions |
 | F1 | Done | Installable package, CLI, examples, and delivery documentation |
+| M3 | Done | HashMap entry completion, `BTreeMap`, `HashSet`, and nested `HashMap` depth 1 |
+| M4 | Done | Additional fixed-width integer types and the cross-backend cast matrix |
 
 **Current test status:** 469 passed, 9 skipped, 16 deselected (`pytest -q`); 16 passed, 478 deselected (`pytest -q -m slow`).
 
@@ -92,9 +94,9 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 |---|---|---|
 | Vec, String, Option, Result | ✅ | ✅ |
 | HashMap (core ops) | ✅ | ✅ |
-| BTreeMap | 🟡 Partial | ⬜ Deferred |
-| HashSet | 🟡 Partial | ⬜ Deferred |
-| Nested HashMap (depth 1) | 🟡 Partial | ⬜ Deferred |
+| BTreeMap | ✅ | ✅ |
+| HashSet | ✅ | ✅ |
+| Nested HashMap (depth 1) | ✅ | ✅ |
 | Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, isize, usize) | ✅ | ✅ |
 | `include!` directive | ✅ | ✅ |
 | Error codes (E001–E008) | ✅ | ✅ |
@@ -103,16 +105,16 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | Box patterns | ✅ | ⬜ Deferred |
 | Payload enum slices | ✅ | ⬜ Deferred |
 
-🟡 Partial = basic operations only (`new`, `insert`, `get`, `remove`,
-`contains_key`, `len`, `is_empty`, `keys`, `values`, `iter`). Extended
-entry methods, nested HashMap depth-1 round trips, and `get_mut` boundary
-semantics are incomplete. See SPEC 7.2.8, 10.25, 10.27.
+`BTreeMap` iteration is sorted by key in both backends. `HashSet`
+iteration order is unspecified; sort before comparing. `get_mut` on
+`BTreeMap`/`HashSet` returns an owned copy at the native Python boundary
+(see SPEC 8.10.2 and 10.20).
 
 ## Features
 
 - **Shared front end:** Turns source text into tokens, a parsed program, and AST nodes.
 - **Python backend:** Translates the Rust-like AST to a Python AST, then compiles and executes it.
-- **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting `.so` or `.dylib` as a Python extension.
+- **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting Python extension (`.so` on macOS and Linux, `.pyd` on Windows).
 - **Common backend interface:** Select a backend with `get_backend("python")` or `get_backend("native")`. Calling `backend.compile(program)` returns a namespace dictionary.
 - **CLI:** `polyglot run`, `polyglot build`, and `polyglot check` for file-based workflows.
 - **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
@@ -134,9 +136,31 @@ polyglot check <file>
 - `run` compiles and executes a file and prints the result of `main()` when it returns a value.
 - `build` compiles a file. The native backend produces an extension module and prints its path.
 - `check` parses, translates (Python backend), and runs termination checks without executing.
-- Errors use the toolchain five-line format. Pass `--verbose` to include a traceback.
+- Errors use the toolchain five-line format, or six lines when a span is available. Pass `--verbose` to include a traceback.
+- `--error-format text|json` selects the diagnostic format on `run`, `build`, `check`, and `compile`. JSON output is a single object with `code`, `message`, `line`, `col`, `span`, and `source`.
 
 The Python backend has no native dependencies. The native backend requires a Rust toolchain (`cargo` and `rustc`) and PyO3-compatible build tooling.
+
+## Include directive
+
+`include!("path.poly");` splices the items of another `.poly` file at that point. Paths are resolved relative to the including file, and includes may nest.
+
+```polyglot
+// math.poly
+fn add(a: i64, b: i64) -> i64 { a + b }
+
+// main.poly
+include!("math.poly");
+fn main() -> i64 { add(2, 3) }
+```
+
+- Includes are one-way; the included file does not see the includer's items.
+- Cycles are rejected with `E005`, and missing files with `E006`.
+- Including the same file twice is allowed and splices its items twice. This is textual inclusion: duplicate item definitions are the author's responsibility.
+- `include!` is only valid at item position. Using it inside a block is a parse error.
+- Absolute paths and `..` segments are allowed. There is no repository-containment policy.
+
+The directive is expanded before code generation, so both backends see the same spliced program.
 
 ## Examples
 
@@ -266,9 +290,9 @@ Diagnostics include a stable error code. The table below maps each code to its c
   block (e.g. the tail of `main()`), but not as a sub-expression inside a
   `let` binding or a function argument. Use `match` when an `if let`
   expression is required inside another expression.
-- `BTreeMap` and `HashSet` are available in the Python backend only. Native support is deferred. See SPEC 10.27.
-- Nested `HashMap` (`HashMap<K, HashMap<K2, V2>>`) is supported in the Python backend only. Native support is deferred. See SPEC 10.25.
-- `get_mut` on `BTreeMap` and `HashSet` follows the same Python-boundary copy semantics as `HashMap` (Python: mutable view; native: deferred). See SPEC 8.10.2.
+- `BTreeMap` and `HashSet` are available in both backends for the type sets in SPEC 7.2.6. Deeper composition and unsupported key/value combinations remain deferred. See SPEC 10.25 and 10.27.
+- Nested `HashMap` (`HashMap<K, HashMap<K2, V2>>`) is supported at depth 1 in both backends. Deeper nesting is deferred. See SPEC 10.25.
+- `get_mut` on `BTreeMap` and `HashSet` follows the same Python-boundary copy semantics as `HashMap` (Python: mutable view; native: owned copy that cannot mutate the input). See SPEC 8.10.2 and 10.20.
 
 ## Running tests
 

@@ -68,6 +68,30 @@ You should see:
 - There is no `print()` in `main()`. `polyglot run` prints the return
   value of `main()` automatically.
 
+### Splitting a program across files
+
+Use `include!` to splice another file's items at item position:
+
+```polyglot
+// math.poly
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+```
+
+```polyglot
+// hello.poly
+include!("math.poly");
+
+fn main() -> i64 {
+    add(2, 3)
+}
+```
+
+Paths are resolved relative to the including file. `include!` cannot be
+used inside a function body, and including the same file twice splices
+its items twice (there is no de-duplication).
+
 ## 3. Variables and mutability
 
 Variables are **immutable by default**:
@@ -177,7 +201,7 @@ fn main() -> i64 {
 }
 ```
 
-`"...".to_string()` creates a string. (`String::from("...")` is parsed but not yet lowered because it requires special handling of the `from` associated function; `to_string` is a method call and its lowering path is simpler. See SPEC 10.28.)
+`"...".to_string()` creates a string. (`String::from("...")` is parsed but not yet lowered because it requires special handling of the `from` associated function; `to_string` is a method call and its lowering path is simpler. See SPEC 10.32.)
 `split`, `join`, `replace`, `trim`, and `contains` work like Python
 strings, but they return Polyglot types (`Vec<String>`, `Option<usize>`).
 
@@ -251,7 +275,7 @@ The Python backend is fine for most programs. Use the native
 backend when:
 
 - You need **C-level performance** for a hot loop.
-- You want to **ship a `.so`/`.dylib`** instead of Python source.
+- You want to **ship a `.so`/`.pyd`** instead of Python source.
 - You are already using PyO3 and want a simpler single-file alternative.
 
 Build a native extension:
@@ -260,16 +284,34 @@ Build a native extension:
 polyglot build hello.poly
 ```
 
-This produces a `.dylib`/`.so` next to `hello.poly`. You can import
-it from Python:
+This copies an importable extension next to `hello.poly`. The artifact
+is named `hello.so` on macOS and Linux and `hello.pyd` on Windows; on
+macOS, Cargo's `.dylib` output is copied to the `.so` suffix Python
+imports. Use `--out-dir out/` to write it elsewhere:
+
+```sh
+polyglot build hello.poly --out-dir out/
+```
+
+The file stem determines both the artifact name and the Python module
+name, so `hello.poly` becomes `import hello`. You can import it from
+Python:
 
 ```python
 import hello
+
 print(hello.add(2, 3))
 ```
 
 The first build takes about 2 minutes. Subsequent builds use a cache
-and take about 3 seconds.
+under `~/.cache/polyglot-native` (created with mode `0700`) and take
+about 3 seconds. Builds are keyed by a hash of the generated Rust, so
+editing the `.poly` source produces a new cache entry. To reclaim disk
+space, remove the cache directory:
+
+```sh
+rm -rf ~/.cache/polyglot-native
+```
 
 ## 9. Error codes
 

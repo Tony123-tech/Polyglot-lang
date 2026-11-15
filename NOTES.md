@@ -1147,7 +1147,7 @@ helpers; `_translate_iflet_expr` and `_iflet_match`;
 `_emit_if_let`.
 
 **Lesson:** Every statement-only node needs an explicit guard at every
-expression-entry point, in *both* backends. Rust `if let` is an
+expression-entry point, in _both_ backends. Rust `if let` is an
 expression, so the Rust codegen can emit it directly as a tail — but
 it needs an explicit branch to do so. The cross-backend parity test
 caught bug 10, which the Python-only tests would have missed.
@@ -1173,14 +1173,181 @@ is derived from the source file, so filename and module name diverge.
 `ExtensionFileLoader("polyglot_native", path)` + `exec_module()`. This
 makes the test pass and removes the deprecated `load_module()` call.
 
-**Open issue:** README Quick Start says `import hello`, which does not
-work. Either the native backend should emit `PyInit_<filename>` per
+**Open issue (resolved):** README Quick Start said `import hello`, which
+did not work. Either the native backend should emit `PyInit_<filename>` per
 source file, or README should document the `polyglot_native` loading
 pattern. Tracked for a follow-up.
 
-**Test baseline:** 469 passed, 9 skipped, 16 deselected; slow
-16 passed, 478 deselected.
+**Resolution (2026-11-14):** `polyglot build X.poly` now names the PyO3
+module after the source stem, so the artifact is `X.<suffix>` and its init
+symbol is `PyInit_X`. On macOS the copy step maps the Cargo `.dylib`
+suffix to `.so` (the suffix Python imports), while the cache keeps the
+original `.dylib`. `import X` therefore works after `polyglot build`, and
+`NativeBackend.compile(program)` without a module name still defaults to
+`polyglot_native` for programmatic callers. Regression coverage:
+`test_build_output_importable_by_stem`.
+
+**Test baseline:** 469 passed, 9 skipped, 17 deselected; slow
+17 passed, 478 deselected.
 
 **Lesson:** The filename and the exported module symbol are separate
 identities. Tests that load the artifact must use the symbol name, not
 the filename. Documentation must state which one is user-visible.
+
+## M3-remaining completion — native BTreeMap, HashSet, entry methods
+
+**Symptom:** SPEC 7.2.6-7.2.8 marked `BTreeMap`, `HashSet`, and the
+`HashMap` entry extensions as Partial, and the native backend emitted
+`HashMap` only. `tests/test_m3_collections.py` contained skip
+placeholders for the deferred cases.
+
+**Cause:** The initial collections milestone implemented the minimal
+`HashMap` API and left the remaining surface for a later pass. Native
+map dispatch was keyed on a single `_is_hashmap_expr` predicate, so there
+was no place to encode `BTreeMap` or `HashSet` method lowering.
+
+**Fix:** Replaced the predicate with `_map_kind`, which returns
+`HashMap`, `BTreeMap`, or `HashSet` from bindings, struct fields,
+`HashMap::new`-style constructors, and depth-1 nested lookups. The
+native backend now emits:
+`BTreeMap` construction/insert/get/remove/contains_key/len/is_empty/
+keys/values/iter/entry with sorted iteration;
+`HashSet` construction/insert/contains/remove/len/is_empty/iter; and
+`entry().or_insert_with`, `and_modify`, `or_insert_with_key`.
+Added `polyglot_hashset_get_mut` because `HashSet` has no std `get_mut`;
+the Python boundary returns an owned copy, matching the documented
+`Option<V>` semantics. On the Python side, `btreemap_insert` and
+`btreemap_remove` now return runtime `Option` objects to match Rust's
+`Option<V>` return type, and `hashset_get_mut` was added.
+Tests cover both backends, shuffled `BTreeMap` insertion order, sorted
+`BTreeMap` iteration, order-insensitive `HashSet` iteration (sort before
+comparing), nested `HashMap` depth 1, and `get_mut` copy semantics.
+
+**Lesson:** A single boolean predicate is too weak to dispatch a family
+of collection types. Encoding the collection kind as a small enum-like
+string made the Rust lowering table explicit and kept the Python and
+native method sets easy to compare.
+
+## M4-remaining completion — integer matrix and documented cast rules
+
+**Symptom:** The additional fixed-width integer types existed, but the
+cross-backend matrix was incomplete. Native literal casts out of range
+failed with Rust errors such as `literal out of range for i8`, while the
+M4 tests expected wrapping. Python `-1 as u8` was parsed as
+`-(1 as u8)` and therefore did not trigger the literal-range check.
+
+**Cause:** Rust infers an unsuffixed integer literal from the cast
+target, so an out-of-range literal is a compile error rather than a
+run-time wrap. The parser gives unary minus lower precedence than `as`,
+so a negative literal needs parentheses before `as`. `cast_i64` also
+lacked the `literal_out_of_range` keyword used by the other fixed-width
+cast helpers.
+
+**Fix:** `cast_i64` now delegates to `cast_int` like the other helpers.
+The M4 tests parenthesise negative literals, expect `OverflowError` for
+Python literal out-of-range casts, and expect `RustCompileError` for
+native literal out-of-range casts. A native variable-cast matrix asserts
+that run-time casts wrap. SPEC 8.1.5-8.1.7 records the exact
+float-to-int, `char`, and `bool` rules: float casts truncate toward zero
+(native saturates, Python wraps after truncation); `char as i64` yields
+the scalar value, native integer-to-`char` accepts only `u8`, and Python
+rejects surrogates and code points above `0x10FFFF`; `bool as i64` is
+0/1 in both backends, while `i64 as bool` is Python truthiness and a
+native compile error. `i128`/`u128` values above `2^64` are covered.
+
+**Lesson:** Literal casts and variable casts are different operations:
+literals are typed by their context and can be rejected at compile time,
+while variables perform a run-time conversion. Tests must state which
+one they exercise.
+
+## M6 include hardening — duplicate, `..`, block, and non-string cases
+
+**Symptom:** Include support covered the happy path, cycles, and missing
+files, but not duplicate includes, `..`/absolute paths, include-only
+files, block position, or non-string arguments. `include!` inside a
+block leaked through to a generic `unknown macro include!` translation
+error (E003) instead of a clear parse error.
+
+**Cause:** The parser only recognised `include!` in `parse_item`; in
+expression position it fell through to the generic macro parser.
+
+**Fix:** The macro parser now rejects `include` with
+`include! is only allowed at item position, not inside a block`.
+Tests document that:
+- duplicate includes are allowed and splice items twice (intended
+  textual-inclusion behaviour, no de-duplication);
+- relative `..` paths and absolute paths outside the repository are
+  allowed (no containment policy is proposed, because the language has
+  no sandbox model for source files);
+- a file containing only includes produces an empty program and exits 0;
+- `include!` inside a block and `include!(123)` are parse errors.
+README and GUIDE document the directive.
+
+**Lesson:** A textual include is not a module system. Defining duplicate
+and path behaviour through tests avoids accidental de-duplication or
+path-containment changes later.
+
+## M7 diagnostics hardening — spans, JSON, and unreachable E003
+
+**Symptom:** Some node types had no span, several error classes had no
+test proving the span appears, and there was no machine-readable
+diagnostic format.
+
+**Cause:** Spans were assigned ad hoc by individual parser branches.
+Boundary checks did not consistently pass a span. The CLI printed only
+the text format.
+
+**Fix:** Added `_fill_node_spans`, which walks the AST bottom-up and
+derives a span from child spans when a node lacks one; keyword
+statements (`return`, `break`, `continue`) get explicit spans.
+Boundary checks in the Python translator and native codegen now pass
+node spans, and include errors carry the include-site span. The CLI
+gained `--error-format={text,json}` with `code`, `message`, `line`,
+`col`, `span`, and `source`. `RustCompileError` from an invalid integer
+parse literal now preserves code `E008` and the literal's span.
+Tests cover span presence for E001-E008, E008 literal text, E006
+resolved path and include site, a three-file E005 chain in both the
+message and note lines, and JSON output for E001/E002/E005.
+
+**E003 reachability:** `TranslateError` (E003) is raised only by the
+Python translator. The native backend reports unsupported constructs as
+`UnsupportedNativePatternError` (E007) or `RustCompileError` (E004).
+There is no native E003 path to test; this is recorded in SPEC 10.31
+and the M7 test asserts the native Box-pattern rejection is E007.
+
+**Span coverage:** Before this pass, spans were already present for
+literals, identifiers, paths, binary/unary/cast expressions, calls,
+method calls, fields, indexes, array/tuple/struct literals, blocks,
+`if`, `if let`, and `match` expressions. `_fill_node_spans` now derives
+spans bottom-up for the remaining container nodes (`MatchArm`, `For`,
+`While`, `Loop`, `Closure`, and statement wrappers with spanned
+children), and `return`/`break`/`continue` receive explicit keyword
+spans. Type and pattern nodes intentionally remain span-less; they are
+not diagnostic boundaries.
+
+**Lesson:** Spans must be derived for every node, not just the node
+types that happened to need them. A JSON diagnostic contract is only
+useful if every error path carries the same five fields.
+
+## Repository tooling — docs sync, formatting, docs/, benchmark, CI contract
+
+**Symptom:** README and SPEC 12.1 could drift, formatting was not
+enforced in CI, there was no local task runner, and the architecture
+was only described in prose.
+
+**Fix:** Added `tools/check_docs_sync.py` (wired into CI and
+`make check`), `ruff format --check .` in CI, a `Makefile`, a `docs/`
+directory with an ASCII architecture pipeline and a one-page overview,
+`CHANGELOG.md` for v0.3.0-v0.3.4, `tools/bench_native_build.py`
+(cold/warm build timing, no timing assertions), and
+`tests/test_ci_contract.py` to guard required CI step names. Packaging
+tests assert `requires-python >= 3.14.8` and the
+`polyglot = "api.cli:main"` console script.
+
+**Test changes:** No existing test was deleted or skipped. M4 tests were
+updated only where the documented semantics changed: negative literals
+are parenthesised, Python literal out-of-range casts expect
+`OverflowError`, and native literal out-of-range casts expect
+`RustCompileError` (matching Rust's literal typing). Include errors now
+carry spans, but still occupy five printed lines because the span is
+appended to the location line.

@@ -1,4 +1,4 @@
-# polyglot-lang Specification v0.3.4
+# polyglot-lang Specification v0.3.5
 
 ## 0. Conventions
 
@@ -155,7 +155,7 @@ A requirement is marked Normative when it applies to both backends without platf
   - core: `Vec`, `String`, `Option`, and `Result`. Normative.
   - collections: `HashMap`. Normative.
   - platform-specific: the async executor and payload enums. See Section 8.
-- **7.2** Each library function MUST be marked Normative, Platform-defined, or Deferred. The complete function table is given in Sections 7.2.1 through 7.2.7.
+- **7.2** Each library function MUST be marked Normative, Platform-defined, or Deferred. The complete function table is given in Sections 7.2.1 through 7.2.8.
 - **7.3** A function marked Platform-defined MUST have an entry in Section 10.
 - **7.4** `HashMap` MUST be classified as a collections-layer type, not a core type.
 
@@ -254,12 +254,12 @@ Every row MUST have an entry in Section 8 and a cross-reference in Section 10.
 | Type                        | Status                                              | Reference       |
 | --------------------------- | --------------------------------------------------- | --------------- |
 | `HashMap`                   | Normative                                           | 7.1, 7.4, 7.2.7 |
-| `BTreeMap`                  | Partial (M3-remaining)                              | 7.2.8, 10.27    |
-| `HashSet`                   | Partial (M3-remaining)                              | 7.2.8, 10.27    |
+| `BTreeMap`                  | Normative (M3)                                      | 7.2.8, 10.25    |
+| `HashSet`                   | Normative (M3)                                      | 7.2.8, 10.25    |
 | Async executor (`PyFuture`) | Platform-defined                                    | 8.2.2–8.2.3     |
 | Payload enum exposure       | Platform-defined (native: internal; Python: public) | 8.4.2           |
 
-`HashMap<K, V>` supports `K` in `{i64, String}` and `V` in `{i64, String, bool, f64, Vec<i64>, HashMap<K2, V2>}` where `K2`/`V2` are themselves in the supported sets (depth 1). `BTreeMap` and `HashSet` support the same core key/value constraints where applicable. Deeper nesting is Deferred. See 10.25.
+`HashMap<K, V>` supports `K` in `{i64, String}` and `V` in `{i64, String, bool, f64, Vec<i64>, HashMap<K2, V2>}` where `K2`/`V2` are themselves in the supported sets (depth 1). `BTreeMap<K, V>` supports `K` in `{i64, String}` and `V` in `{i64, String, bool, f64, Vec<i64>}`. `HashSet<T>` supports `T` in `{i64, String}`. Deeper nesting is Deferred. See 10.25.
 
 ### 7.2.7 `HashMap<K, V>` (collections)
 
@@ -268,16 +268,18 @@ Every row MUST have an entry in Section 8 and a cross-reference in Section 10.
 | `new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter` | Normative (N8)                          | 7.2.6, 8.10.1 |
 | `entry(k).or_insert(v)`                                                                       | Normative (N8 minimal entry subset)     | —             |
 | `get_mut`                                                                                     | Platform-defined at the Python boundary | 8.10.2        |
-| `entry(k).or_insert_with(f)`                                                                  | Partial (M3-remaining)                  | 10.27         |
-| `entry(k).and_modify(f)`                                                                      | Partial (M3-remaining)                  | 10.27         |
-| `entry(k).or_insert_with_key(f)`                                                              | Partial (M3-remaining)                  | 10.27         |
+| `entry(k).or_insert_with(f)`                                                                  | Normative (M3)                          | 7.2.6         |
+| `entry(k).and_modify(f)`                                                                      | Normative (M3)                          | 7.2.6         |
+| `entry(k).or_insert_with_key(f)`                                                              | Normative (M3)                          | 7.2.6         |
 
 ### 7.2.8 `BTreeMap<K, V>` and `HashSet<T>` (collections)
 
 | Function                                                                                                                    | Status                 | Reference |
 | --------------------------------------------------------------------------------------------------------------------------- | ---------------------- | --------- |
-| `BTreeMap::new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter`, `entry`, `get_mut` | Partial (M3-remaining) | 10.27     |
-| `HashSet::new`, `insert`, `contains`, `remove`, `len`, `is_empty`, `iter`                                                   | Partial (M3-remaining) | 10.27     |
+| `BTreeMap::new`, `insert`, `get`, `remove`, `contains_key`, `len`, `is_empty`, `keys`, `values`, `iter`, `entry`            | Normative (M3)         | 7.2.6     |
+| `BTreeMap::get_mut`                                                                                                         | Platform-defined at the Python boundary | 8.10.2 |
+| `HashSet::new`, `insert`, `contains`, `remove`, `len`, `is_empty`, `iter`                                                   | Normative (M3)         | 7.2.6     |
+| `HashSet::get_mut`                                                                                                          | Platform-defined at the Python boundary | 8.10.2 |
 
 ## 8. Platform Differences
 
@@ -290,6 +292,9 @@ This section defines the platform differences permitted by this specification. E
 - **8.1.2** Cross-backend numerical results MAY differ when overflow occurs.
 - **8.1.3** Explicit `as` conversions between integer types MUST follow Rust semantics natively. In the Python backend, fixed-width integer `as` casts apply Rust-like wrapping/truncation/sign interpretation unless the source is a literal integer value outside the target range, in which case `OverflowError` is raised at the `as` boundary. `usize`/`isize` casts remain range-checked per 2.4.9 and 2.4.12. See 2.5 and 10.26.
 - **8.1.4** This difference MUST be recorded in Section 10.
+- **8.1.5** Float-to-integer `as` casts truncate toward zero in both backends. NaN and infinities become 0. Native Rust saturates at the target type's bounds; the Python backend wraps the truncated value to the target width. The difference MUST be recorded in Section 10. See 10.28.
+- **8.1.6** `char as i64` yields the Unicode scalar value in both backends. Integer-to-`char` casts are limited by Rust in the native backend: only `u8 as char` is accepted, and wider integer sources are rejected at Rust compile time. The Python backend accepts any integer in `0..=0x10FFFF` except the surrogate range `0xD800..=0xDFFF`, and raises `ValueError` otherwise. See 10.29.
+- **8.1.7** `bool as i64` yields `0` or `1` in both backends. `i64 as bool` is a truthiness conversion in the Python backend (`0` is false, any non-zero value is true); the native backend rejects it at Rust compile time because Rust has no `integer as bool` cast. See 10.30.
 
 **Acceptance criteria**
 
@@ -461,7 +466,13 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.24** AST spans are best-effort; nodes with a single token have span equal to that token's span. See 2.4.7 and 9.3.
 - **10.25** Nested `HashMap` value depth is 1 (e.g. `HashMap<K, HashMap<K2, V2>>` where `K2`/`V2` are supported). Deeper nesting is Deferred. See 7.2.6.
 - **10.26** M4 Python-backend integer `as` casts apply Rust-like wrapping for fixed-width integer targets unless the source is a literal integer value outside the target range, in which case `OverflowError` is raised at the `as` boundary. `usize`/`isize` casts remain range-checked per 2.4.9 and 2.4.12. See 2.5 and 8.1.
-- **10.27** M3-remaining: native backend support for `BTreeMap`, `HashSet`, extended entry methods, nested `HashMap` depth-1 values, and collection `get_mut` copy semantics beyond existing `HashMap` coverage is incomplete in this pass; Python backend support is partial. See 7.2.6–7.2.8.
+- **10.27** Native backend support for `BTreeMap`, `HashSet`, extended entry methods, nested `HashMap` depth-1 values, and collection `get_mut` copy semantics is implemented for the types listed in 7.2.6–7.2.8. Deeper nesting and unsupported key/value combinations remain Deferred. See 7.2.6–7.2.8.
+- **10.28** Float-to-integer `as` casts truncate toward zero in both backends; native saturates at the target bounds while the Python backend wraps the truncated value. See 8.1.5.
+- **10.29** Integer-to-`char` `as` casts accept only `u8` natively (Rust restriction); the Python backend accepts Unicode scalar values and rejects surrogates and values above `0x10FFFF`. See 8.1.6.
+- **10.30** `i64 as bool` is a truthiness conversion in the Python backend and a native compile error (Rust has no such cast). `bool as i64` is `0`/`1` in both backends. See 8.1.7.
+- **10.31** `TranslateError` (E003) is raised only by the Python backend translation path. The native backend reports unsupported constructs as `UnsupportedNativePatternError` (E007) or `RustCompileError` (E004); there is no native E003 path. See 9.3.
+- **10.32** `String::from(...)` is parsed but not lowered by either backend; use "...".to_string() instead. See 7.2.2.
+- **10.33** The `vec![...]` macro expression is parsed as a token stream but not lowered by either backend; use `[...].to_vec()` instead. See 7.2.1.
 
 ## 11. Versioning
 
@@ -480,6 +491,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.12** v0.3.2 records M7: stable diagnostic error codes, AST character spans, and the extended five/six-line diagnostic format.
 - **11.13** v0.3.3 records M4-remaining: additional fixed-width integer types, integer boundary diagnostics across all integer types, and documented Python/native `as`-cast behavior for those types.
 - **11.14** v0.3.4 records M3-remaining: HashMap API completion targets, BTreeMap/HashSet collection types, extended supported key/value sets, and documented partial implementation status.
+- **11.15** v0.3.5 records completion of M3-remaining and M4-remaining, include-system hardening, M7 span/JSON diagnostics hardening, and the documentation, packaging, and CI tooling pass. It adds 8.1.5–8.1.7 for float, `char`, and `bool` cast differences and 10.28–10.31 for the corresponding limitations and the unreachable native E003 path.
 
 ## 12. Conformance Status
 
@@ -494,7 +506,7 @@ As recorded in this session, under Python 3.14.8:
 - `pytest -q`: 469 passed, 9 skipped, 16 deselected.
 - `pytest -q -m slow`: 16 passed, 478 deselected.
 
-The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, and M3-remaining tests added in v0.3.1–v0.3.4 (including partial/skipped M3 cases).
+The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, and M3-remaining tests added in v0.3.1–v0.3.5, including the completed M3 native collection matrix and the M4 integer matrix.
 
 - **12.1.1** The numbers above are from the current repository state at the time of writing. They MUST be updated whenever the test suite changes. The summary counts in 12.2.0 are derived from the 12.2 table below and MUST be recomputed whenever a row changes.
 - **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. The baseline is now restored; Blocked criteria have been re-evaluated in 12.2 and any that remain are marked **Partial** with a note recording what is still unverified.
@@ -502,7 +514,7 @@ The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M
 
 ### 12.2 Acceptance criteria status
 
-**12.2.0** Summary: 62 Pass, 5 Partial, 0 Fail, 0 Blocked.
+**12.2.0** Summary: 70 Pass, 6 Partial, 0 Fail, 0 Blocked.
 
 **12.2.1** **Partial** means at least one test exists and passes, but the criterion is not fully covered. The Note column MUST state what is missing. A criterion marked **Partial** with the note "Tests not yet recorded" means the test may exist but is not traceable to a named test in `NOTES.md` or `tests/`. Such a criterion MUST be reclassified as **Fail** if, on inspection, no such test exists.
 
@@ -538,12 +550,15 @@ The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M
 | 6       | Async embedding test                                                                  | 6.4                       | Pass    | —                                                                                                                                                                                                                                                                                   |
 | 6       | Python async free-function test                                                       | 6.4.1                     | Partial | Synchronous execution asserted indirectly                                                                                                                                                                                                                                           |
 | 6       | Deferred items in Section 10                                                          | 6.4, 6.5                  | Pass    | 10.7, 10.8                                                                                                                                                                                                                                                                          |
-| 7       | Function table with status markers                                                    | 7.2                       | Pass    | 7.2.1–7.2.7                                                                                                                                                                                                                                                                         |
+| 7       | Function table with status markers                                                    | 7.2                       | Pass    | 7.2.1–7.2.8                                                                                                                                                                                                                                                                         |
 | 7       | No Platform-defined function lacks Section 10 entry                                   | 7.3                       | Pass    | 10.13–10.18, 10.20                                                                                                                                                                                                                                                                  |
 | 7       | HashMap supported methods, type sets, and dictionary boundary                         | 7.2.6–7.2.7, 8.10.1       | Pass    | `tests/test_n8_hashmap.py`                                                                                                                                                                                                                                                          |
 | 7       | HashMap `get_mut` reference at native Python boundary                                 | 8.10.2                    | Partial | Native returns an owned copy because the input map is passed by value; see 10.20                                                                                                                                                                                                    |
 | 8.1     | Native overflow test                                                                  | 8.1.1                     | Partial | Baseline restored; dedicated test not yet verified in this session                                                                                                                                                                                                                  |
 | 8.1     | Python arbitrary-precision test                                                       | 8.1.2                     | Partial | Baseline restored; dedicated test not yet verified in this session                                                                                                                                                                                                                  |
+| 8.1     | Float-to-int `as` cast documented and tested                                          | 8.1.5                     | Pass    | `tests/test_m4_integers.py::test_float_to_int_truncates_toward_zero_both_backends`, `::test_float_to_int_range_difference_is_documented`                                                                                                                                           |
+| 8.1     | `char` casts documented and tested                                                    | 8.1.6                     | Pass    | `tests/test_m4_integers.py::test_char_as_i64_both_backends`, `::test_python_integer_as_char_invalid_code_points`, `::test_native_integer_as_char_other_widths_rejected`                                                                                                            |
+| 8.1     | `bool` casts documented and tested                                                    | 8.1.7                     | Pass    | `tests/test_m4_integers.py::test_bool_as_i64_both_backends`, `::test_python_i64_as_bool`, `::test_native_i64_as_bool_rejected`                                                                                                                                                      |
 | 8.2     | Native async test                                                                     | 8.2.2                     | Pass    | `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity`                                                                                                                                                                                                    |
 | 8.2     | Cross-thread rejection test                                                           | 8.2.3                     | Partial | `PyFuture` unsendable; explicit test name not recorded                                                                                                                                                                                                                              |
 | 8.3     | Python Box pattern test                                                               | 8.3.1                     | Pass    | —                                                                                                                                                                                                                                                                                   |
@@ -578,29 +593,27 @@ The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M
 | M6      | `include!` splices items and runs in both backends                                    | 9.2, 10.23                | Pass    | `tests/test_m6_include.py::test_include_add_both_backends`, `::test_include_add_native_backend`                                                                                                                                                                                     |
 | M6      | Nested and relative-path includes resolve correctly                                   | 9.2                       | Pass    | `tests/test_m6_include.py::test_nested_include`, `::test_include_path_relative_to_including_file`                                                                                                                                                                                   |
 | M6      | Cyclic/missing includes rejected with five-line diagnostics                           | 9.2, 10.23                | Pass    | `tests/test_m6_include.py::test_cyclic_include_rejected`, `::test_missing_include_file`                                                                                                                                                                                             |
-| M7      | Stable error codes and span-aware diagnostics                                         | 2.4.7, 9.3, 10.24         | Pass    | `tests/test_m7_diagnostics.py::test_e001_boundary_error_has_code_and_span`, `::test_e002_termination_error_has_code_and_span`, `::test_e005_include_cycle_has_code_and_chain`, `::test_every_error_class_emits_code_exactly_once`, `::test_span_present_for_multi_token_expression` |
-| M4      | Additional integer types, `as` casts, and E001 boundaries                             | 2.5, 8.1, 10.26           | Pass | `tests/test_m4_integers.py` covers Python and native matrix/boundary cases (E001)                                                                                                                              |
-| M3      | HashMap API completion, BTreeMap, HashSet, nested values, and `get_mut` semantics     | 7.2.6–7.2.8, 10.25, 10.27 | Partial | Basic Python HashSet/BTreeMap covered by `tests/test_m3_collections.py`; extended entry methods, nested HashMap depth-1, BTreeMap/HashSet `get_mut` boundary semantics, and native parity are incomplete in this pass                                                               |
+| M6      | Duplicate, `..`, absolute, include-only, block, and non-string includes               | 9.2                       | Pass    | `tests/test_m6_include.py::test_duplicate_include_is_allowed_and_splices_twice`, `::test_include_with_parent_directory_segments_is_allowed`, `::test_include_with_absolute_path_outside_repo_is_allowed`, `::test_include_only_file_produces_empty_program`, `::test_include_inside_block_is_parse_error`, `::test_include_with_non_string_argument_is_parse_error` |
+| M7      | Stable error codes and span-aware diagnostics                                         | 2.4.7, 9.3, 10.24         | Pass    | `tests/test_m7_diagnostics.py` covers E001–E008 span formatting, E007 native rejection, E008 literal span, E005 multi-file chain, E006 resolved path, and JSON diagnostics for E001/E002/E005                                                                                          |
+| M4      | Additional integer types, `as` casts, and E001 boundaries                             | 2.5, 8.1, 10.26           | Pass | `tests/test_m4_integers.py` covers the full Python/native integer matrix, literal and variable casts, E001 boundaries, `i128`/`u128` above 2^64, float/char/bool casts                                                                                                               |
+| M3      | HashMap API completion, BTreeMap, HashSet, nested values, and `get_mut` semantics     | 7.2.6–7.2.8, 10.25, 10.27 | Pass    | `tests/test_m3_collections.py` covers Python and native `BTreeMap`, `HashSet`, entry methods, nested HashMap depth-1 values, sorted/unspecified iteration, and `get_mut` copy semantics                                                                                               |
 
-### 12.3 Outstanding items that block a v0.3.0 conformance claim
+### 12.3 Outstanding items that block a v0.3.5 conformance claim
 
-No item blocks a v0.3.0 conformance claim, provided that:
+No item blocks a v0.3.5 conformance claim, provided that:
 
 - Every Partial in 12.2 is explicitly accepted as a known gap in this version.
 - The 6 Partial criteria are listed in 12.3.1 with a justification for why each does not block conformance.
 
-### 12.3.1 Accepted Partial items for v0.3.0
+### 12.3.1 Accepted Partial items for v0.3.5
 
 | Partial item                                        | Justification                                                                                                                  |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | 3.4 mutability preservation test                    | Behaviour exists; only the test name is missing from NOTES                                                                     |
 | 6.4.1 Python async synchronous execution            | Behaviour is backend-specific per 11.3.1; not a parity gap                                                                     |
 | 8.1 overflow tests                                  | Baseline restored; dedicated verification is next milestone scope                                                              |
+| 8.1 Python arbitrary-precision test                 | Baseline restored; dedicated verification is next milestone scope                                                              |
 | 8.2 cross-thread rejection test                     | `PyFuture` unsendable is documented; explicit test is next milestone scope                                                     |
 | 8.10.2 native `HashMap::get_mut` boundary reference | The by-value native map cannot safely return a mutable reference; the documented platform behaviour returns a copy. See 10.20. |
 
 Each item above is either (a) covered by a Deferred clause, (b) a test-recording gap rather than a behaviour gap, or (c) explicitly assigned to next milestone in the roadmap.
-- **10.28** `String::from(...)` is parsed but not lowered by either backend;
-  use `"...".to_string()` instead. See 7.2.2.
-- **10.29** The `vec![...]` macro expression is parsed as a token stream but
-  not lowered by either backend; use `[...].to_vec()` instead. See 7.2.1.
