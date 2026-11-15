@@ -448,6 +448,16 @@ def _runtime_vec_is_sorted_by(values: list, compare) -> bool:
     )
 
 
+def _runtime_vec_starts_with(values: list, prefix: list) -> bool:
+    return values[: len(prefix)] == prefix
+
+
+def _runtime_vec_ends_with(values: list, suffix: list) -> bool:
+    if len(suffix) > len(values):
+        return False
+    return values[len(values) - len(suffix) :] == suffix
+
+
 def _runtime_vec_windows(values: list, size: int) -> list[list]:
     if size <= 0:
         raise ValueError("window size must be positive")
@@ -1312,6 +1322,8 @@ class Translator:
         ns["_vec_binary_search"] = _runtime_vec_binary_search
         ns["_vec_split_at"] = _runtime_vec_split_at
         ns["_vec_is_sorted_by"] = _runtime_vec_is_sorted_by
+        ns["_vec_starts_with"] = _runtime_vec_starts_with
+        ns["_vec_ends_with"] = _runtime_vec_ends_with
         ns["_vec_windows"] = _runtime_vec_windows
         ns["_vec_chunks"] = _runtime_vec_chunks
         ns["_filter"] = _runtime_filter
@@ -3792,13 +3804,23 @@ class Translator:
                     keywords=[],
                 )
             if e.method in ("starts_with", "ends_with") and len(e.args) == 1:
+                argument = self.translate_expr(e.args[0])
+                if self._is_vec_expr(e.receiver):
+                    return ast.Call(
+                        func=ast.Name(
+                            id=f"_vec_{e.method}",
+                            ctx=ast.Load(),
+                        ),
+                        args=[recv, argument],
+                        keywords=[],
+                    )
                 return ast.Call(
                     func=ast.Attribute(
                         value=recv,
                         attr="startswith" if e.method == "starts_with" else "endswith",
                         ctx=ast.Load(),
                     ),
-                    args=[self.translate_expr(e.args[0])],
+                    args=[argument],
                     keywords=[],
                 )
             if e.method in ("trim_start", "trim_end") and not e.args:

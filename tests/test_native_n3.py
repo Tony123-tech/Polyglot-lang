@@ -106,6 +106,14 @@ fn vec_is_sorted_by(values: Vec<i64>) -> bool {
     values.is_sorted_by(|left, right| left <= right)
 }
 """,
+    "vec_starts_ends_with": """
+fn vec_starts_with(values: Vec<i64>, prefix: Vec<i64>) -> bool {
+    values.starts_with(prefix)
+}
+fn vec_ends_with(values: Vec<i64>, suffix: Vec<i64>) -> bool {
+    values.ends_with(suffix)
+}
+""",
     "vec_windows": """
 fn vec_windows(values: Vec<i64>) -> Vec<Vec<i64>> {
     values.windows(2)
@@ -199,6 +207,25 @@ def test_native_vec_is_sorted_by(native_ns):
     assert native_ns["vec_is_sorted_by"]([1, 2, 2, 3]) is True
     assert native_ns["vec_is_sorted_by"]([1, 3, 2]) is False
     assert native_ns["vec_is_sorted_by"]([]) is True
+
+
+@pytest.mark.native
+def test_native_vec_starts_ends_with(native_ns):
+    assert native_ns["vec_starts_with"]([1, 2, 3], [1, 2]) is True
+    assert native_ns["vec_starts_with"]([1, 2, 3], [2, 3]) is False
+    assert native_ns["vec_ends_with"]([1, 2, 3], [2, 3]) is True
+    assert native_ns["vec_ends_with"]([1, 2, 3], [1, 2]) is False
+    assert native_ns["vec_ends_with"]([1], [2, 3]) is False
+
+
+def test_python_vec_starts_ends_with_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_starts_ends_with"])))
+
+    assert namespace["vec_starts_with"]([1, 2, 3], [1, 2]) is True
+    assert namespace["vec_starts_with"]([1, 2, 3], [2, 3]) is False
+    assert namespace["vec_ends_with"]([1, 2, 3], [2, 3]) is True
+    assert namespace["vec_ends_with"]([1, 2, 3], [1, 2]) is False
+    assert namespace["vec_ends_with"]([1], [2, 3]) is False
 
 
 @pytest.mark.parametrize(
