@@ -991,6 +991,12 @@ class _Option:
             return _Option.some((self._value, other._value))
         return _Option.none()
 
+    def replace(self, value):
+        previous = _Option(self._is_some, self._value)
+        self._is_some = True
+        self._value = value
+        return previous
+
     def ok_or(self, error):
         return (
             _Result.from_ok(self._value) if self._is_some else _Result.from_err(error)
