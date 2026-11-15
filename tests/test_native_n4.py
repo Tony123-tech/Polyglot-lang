@@ -63,6 +63,14 @@ fn string_rsplit(value: String) -> Vec<String> {
     value.rsplit(",")
 }
 """,
+    "string_matches": """
+fn string_matches(value: String) -> Vec<String> {
+    value.matches("ab")
+}
+fn string_rmatches(value: String) -> Vec<String> {
+    value.rmatches("ab")
+}
+""",
     "string_join": """
 fn string_join(values: Vec<String>, separator: String) -> String {
     values.join(separator)
@@ -263,6 +271,21 @@ def test_python_string_rsplit_parity():
 
     assert namespace["string_rsplit"]("a,b,c") == ["c", "b", "a"]
     assert namespace["string_rsplit"]("solo") == ["solo"]
+
+
+@pytest.mark.native
+def test_native_string_matches(native_ns):
+    assert native_ns["string_matches"]("abxabab") == ["ab", "ab", "ab"]
+    assert native_ns["string_matches"]("none") == []
+    assert native_ns["string_rmatches"]("abxabab") == ["ab", "ab", "ab"]
+
+
+def test_python_string_matches_parity():
+    namespace = compile_rust(parse(lex(SOURCES["string_matches"])))
+
+    assert namespace["string_matches"]("abxabab") == ["ab", "ab", "ab"]
+    assert namespace["string_matches"]("none") == []
+    assert namespace["string_rmatches"]("abxabab") == ["ab", "ab", "ab"]
 
 
 @pytest.mark.native
