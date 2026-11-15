@@ -40,6 +40,11 @@ fn n5_result_expect_ok() -> i64 {
     Ok(7).expect("boom")
 }
 """,
+    "result_expect_err": """
+fn n5_result_expect_err() -> String {
+    Err("bad").expect_err("boom").to_string().replace("RuntimeError: ", "")
+}
+""",
     "option_unwrap": """
 fn n5_option_unwrap_get() -> i64 {
     Some(5).unwrap()
@@ -655,6 +660,17 @@ def test_python_result_expect():
     ns = _run_python(SOURCES["result_expect"])
 
     assert ns["n5_result_expect_ok"]() == 7
+
+
+@pytest.mark.native
+def test_native_result_expect_err(native_ns):
+    assert native_ns["n5_result_expect_err"]() == "bad"
+
+
+def test_python_result_expect_err():
+    ns = _run_python(SOURCES["result_expect_err"])
+
+    assert ns["n5_result_expect_err"]() == "bad"
 
 
 # ---------------------------------------------------------------------------
