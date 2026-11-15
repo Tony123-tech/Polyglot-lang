@@ -42,6 +42,14 @@ fn string_split(value: String) -> Vec<String> {
     value.split(",")
 }
 """,
+    "string_splitn": """
+fn string_splitn(value: String) -> Vec<String> {
+    value.splitn(2, ",")
+}
+fn string_rsplitn(value: String) -> Vec<String> {
+    value.rsplitn(2, ",")
+}
+""",
     "string_join": """
 fn string_join(values: Vec<String>, separator: String) -> String {
     values.join(separator)
@@ -201,6 +209,19 @@ def test_python_string_split_join_parity(name, args, expected):
     namespace = compile_rust(parse(lex(SOURCES[name])))
 
     assert namespace[name](*args) == expected
+
+
+@pytest.mark.native
+def test_native_string_splitn(native_ns):
+    assert native_ns["string_splitn"]("a,b,c") == ["a", "b,c"]
+    assert native_ns["string_rsplitn"]("a,b,c") == ["c", "a,b"]
+
+
+def test_python_string_splitn_parity():
+    namespace = compile_rust(parse(lex(SOURCES["string_splitn"])))
+
+    assert namespace["string_splitn"]("a,b,c") == ["a", "b,c"]
+    assert namespace["string_rsplitn"]("a,b,c") == ["c", "a,b"]
 
 
 @pytest.mark.native

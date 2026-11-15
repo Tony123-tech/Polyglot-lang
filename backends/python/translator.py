@@ -1061,6 +1061,13 @@ def _runtime_string_split_once(value, separator, *, reverse):
     )
 
 
+def _runtime_string_splitn(value, count, separator, *, reverse):
+    maxsplit = count - 1
+    if reverse:
+        return list(reversed(value.rsplit(separator, maxsplit)))
+    return value.split(separator, maxsplit)
+
+
 def _runtime_string_lines(value):
     if not value:
         return []
@@ -1516,6 +1523,7 @@ class Translator:
         ns["_string_rfind"] = _runtime_string_rfind
         ns["_string_strip"] = _runtime_string_strip
         ns["_string_split_once"] = _runtime_string_split_once
+        ns["_string_splitn"] = _runtime_string_splitn
         ns["_string_lines"] = _runtime_string_lines
         ns["_string_is_char_boundary"] = _runtime_string_is_char_boundary
         ns["_string_char_indices"] = _runtime_string_char_indices
@@ -4333,6 +4341,21 @@ class Translator:
                     ),
                     args=[self.translate_expr(e.args[0])],
                     keywords=[],
+                )
+            if e.method in ("splitn", "rsplitn") and len(e.args) == 2:
+                return ast.Call(
+                    func=ast.Name(id="_string_splitn", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                        self.translate_expr(e.args[1]),
+                    ],
+                    keywords=[
+                        ast.keyword(
+                            arg="reverse",
+                            value=ast.Constant(value=e.method == "rsplitn"),
+                        ),
+                    ],
                 )
             if e.method == "join" and len(e.args) == 1:
                 return ast.Call(

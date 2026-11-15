@@ -1460,6 +1460,13 @@ class RustCodegen:
                 return (
                     f"{recv}.split(&{separator}).map(String::from).collect::<Vec<_>>()"
                 )
+            if e.method in ("splitn", "rsplitn") and len(e.args) == 2:
+                count = self.expr_to_rust(e.args[0])
+                separator = self.expr_to_rust(e.args[1])
+                return (
+                    f"{recv}.{e.method}({count}, &{separator})"
+                    ".map(String::from).collect::<Vec<_>>()"
+                )
             if e.method == "join" and len(e.args) == 1:
                 separator = self.expr_to_rust(e.args[0])
                 return f"{recv}.join(&{separator})"
