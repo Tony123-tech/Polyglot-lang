@@ -155,6 +155,14 @@ fn n5_option_is_some_and_none() -> bool {
     value.is_some_and(|x| x > 2)
 }
 """,
+    "option_is_none_or": """
+fn n5_option_is_none_or_true() -> bool { Some(1).is_none_or(|x| x > 2) }
+fn n5_option_is_none_or_false() -> bool { Some(4).is_none_or(|x| x > 2) }
+fn n5_option_is_none_or_none() -> bool {
+    let value: Option<i64> = None;
+    value.is_none_or(|x| x > 2)
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -1105,6 +1113,21 @@ def test_python_option_is_some_and():
     assert ns["n5_option_is_some_and_true"]() is True
     assert ns["n5_option_is_some_and_false"]() is False
     assert ns["n5_option_is_some_and_none"]() is False
+
+
+@pytest.mark.native
+def test_native_option_is_none_or(native_ns):
+    assert native_ns["n5_option_is_none_or_true"]() is False
+    assert native_ns["n5_option_is_none_or_false"]() is True
+    assert native_ns["n5_option_is_none_or_none"]() is True
+
+
+def test_python_option_is_none_or():
+    ns = _run_python(SOURCES["option_is_none_or"])
+
+    assert ns["n5_option_is_none_or_true"]() is False
+    assert ns["n5_option_is_none_or_false"]() is True
+    assert ns["n5_option_is_none_or_none"]() is True
 
 
 @pytest.mark.native
