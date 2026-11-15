@@ -1361,6 +1361,14 @@ class RustCodegen:
                 return f"{recv}.unwrap_or_else({self.expr_to_rust(e.args[0])})"
             if e.method == "chars" and not e.args:
                 return f"{recv}.chars().collect::<Vec<char>>()"
+            if (
+                e.method == "rev"
+                and not e.args
+                and isinstance(e.receiver, MethodCall)
+                and e.receiver.method == "chars"
+            ):
+                inner = self.expr_to_rust(e.receiver.receiver)
+                return f"{inner}.chars().rev().collect::<Vec<char>>()"
             if e.method == "bytes" and not e.args:
                 return f"{recv}.bytes().collect::<Vec<u8>>()"
             if e.method == "parse" and not e.args:

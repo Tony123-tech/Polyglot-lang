@@ -3809,6 +3809,23 @@ class Translator:
                     args=[recv],
                     keywords=[],
                 )
+            if (
+                e.method == "rev"
+                and not e.args
+                and isinstance(e.receiver, MethodCall)
+                and e.receiver.method == "chars"
+            ):
+                return ast.Call(
+                    func=ast.Name(id="list", ctx=ast.Load()),
+                    args=[
+                        ast.Call(
+                            func=ast.Name(id="reversed", ctx=ast.Load()),
+                            args=[recv],
+                            keywords=[],
+                        )
+                    ],
+                    keywords=[],
+                )
             if e.method == "bytes" and not e.args:
                 return ast.Call(
                     func=ast.Attribute(

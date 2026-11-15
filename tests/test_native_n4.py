@@ -17,6 +17,11 @@ fn string_chars(value: String) -> Vec<char> {
     value.chars()
 }
 """,
+    "string_chars_rev": """
+fn string_chars_rev(value: String) -> Vec<char> {
+    value.chars().rev()
+}
+""",
     "string_bytes": """
 fn string_bytes(value: String) -> Vec<u8> {
     value.bytes()
@@ -102,6 +107,17 @@ def test_native_string_len_chars_bytes(native_ns):
     assert native_ns["string_len"]("café") == 5
     assert native_ns["string_chars"]("café") == ["c", "a", "f", "é"]
     assert native_ns["string_bytes"]("café") == b"caf\xc3\xa9"
+
+
+@pytest.mark.native
+def test_native_string_chars_rev(native_ns):
+    assert native_ns["string_chars_rev"]("café") == ["é", "f", "a", "c"]
+
+
+def test_python_string_chars_rev():
+    namespace = compile_rust(parse(lex(SOURCES["string_chars_rev"])))
+
+    assert namespace["string_chars_rev"]("café") == ["é", "f", "a", "c"]
 
 
 @pytest.mark.parametrize(
