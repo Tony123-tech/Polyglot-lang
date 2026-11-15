@@ -1588,6 +1588,16 @@ class RustCodegen:
                 )
             if e.method == "split_off" and len(e.args) == 1:
                 return f"{recv}.split_off({self._emit_usize_arg(e.args[0])})"
+            if (
+                e.method == "split_at"
+                and len(e.args) == 1
+                and self._is_string_expr(e.receiver)
+            ):
+                index = self._emit_usize_arg(e.args[0])
+                return (
+                    f"{{ let (left, right) = {recv}.split_at({index}); "
+                    "(left.to_string(), right.to_string()) }"
+                )
             if e.method == "split_at" and len(e.args) == 1:
                 index = self._emit_usize_arg(e.args[0])
                 return (

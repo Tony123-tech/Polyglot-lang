@@ -76,6 +76,11 @@ fn string_replacen(value: String) -> String {
     value.replacen("a", "z", 2)
 }
 """,
+    "string_split_at": """
+fn string_split_at(value: String) -> (String, String) {
+    value.split_at(2)
+}
+""",
     "string_join": """
 fn string_join(values: Vec<String>, separator: String) -> String {
     values.join(separator)
@@ -304,6 +309,19 @@ def test_python_string_replacen_parity():
 
     assert namespace["string_replacen"]("banana") == "bznzna"
     assert namespace["string_replacen"]("xyz") == "xyz"
+
+
+@pytest.mark.native
+def test_native_string_split_at(native_ns):
+    assert native_ns["string_split_at"]("banana") == ("ba", "nana")
+    assert native_ns["string_split_at"]("ab") == ("ab", "")
+
+
+def test_python_string_split_at_parity():
+    namespace = compile_rust(parse(lex(SOURCES["string_split_at"])))
+
+    assert namespace["string_split_at"]("banana") == ("ba", "nana")
+    assert namespace["string_split_at"]("ab") == ("ab", "")
 
 
 @pytest.mark.native
