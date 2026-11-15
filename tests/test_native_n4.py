@@ -158,6 +158,11 @@ fn string_before(left: String, right: String) -> bool {
     left < right
 }
 """,
+    "char_is_alphabetic": """
+fn char_is_alphabetic(value: char) -> bool {
+    value.is_alphabetic()
+}
+""",
 }
 
 
@@ -472,3 +477,18 @@ def test_python_string_comparison_and_ordering_parity():
 
     assert namespace["string_before"]("alpha", "beta") is True
     assert namespace["string_before"]("beta", "alpha") is False
+
+
+@pytest.mark.native
+def test_native_char_is_alphabetic(native_ns):
+    assert native_ns["char_is_alphabetic"]("a") is True
+    assert native_ns["char_is_alphabetic"]("é") is True
+    assert native_ns["char_is_alphabetic"]("1") is False
+
+
+def test_python_char_is_alphabetic_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_alphabetic"])))
+
+    assert namespace["char_is_alphabetic"]("a") is True
+    assert namespace["char_is_alphabetic"]("é") is True
+    assert namespace["char_is_alphabetic"]("1") is False

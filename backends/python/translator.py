@@ -4460,6 +4460,12 @@ class Translator:
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
+            if e.method == "is_alphabetic" and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(value=recv, attr="isalpha", ctx=ast.Load()),
+                    args=[],
+                    keywords=[],
+                )
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return ast.Call(
                     func=ast.Name(
