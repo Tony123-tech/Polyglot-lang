@@ -213,6 +213,11 @@ fn vec_skip(values: Vec<i64>) -> Vec<i64> {
     values.skip(2)
 }
 """,
+    "vec_enumerate": """
+fn vec_enumerate(values: Vec<i64>) -> Vec<(i64, i64)> {
+    values.enumerate()
+}
+""",
 }
 
 
@@ -510,6 +515,19 @@ def test_python_vec_skip_parity():
 
     assert namespace["vec_skip"]([1, 2, 3, 4]) == [3, 4]
     assert namespace["vec_skip"]([1, 2]) == []
+
+
+@pytest.mark.native
+def test_native_vec_enumerate(native_ns):
+    assert native_ns["vec_enumerate"]([10, 20]) == [(0, 10), (1, 20)]
+    assert native_ns["vec_enumerate"]([]) == []
+
+
+def test_python_vec_enumerate_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_enumerate"])))
+
+    assert namespace["vec_enumerate"]([10, 20]) == [(0, 10), (1, 20)]
+    assert namespace["vec_enumerate"]([]) == []
 
 
 @pytest.mark.native
