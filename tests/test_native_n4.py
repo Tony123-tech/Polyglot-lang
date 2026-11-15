@@ -50,6 +50,11 @@ fn string_rsplitn(value: String) -> Vec<String> {
     value.rsplitn(2, ",")
 }
 """,
+    "string_rsplit": """
+fn string_rsplit(value: String) -> Vec<String> {
+    value.rsplit(",")
+}
+""",
     "string_join": """
 fn string_join(values: Vec<String>, separator: String) -> String {
     values.join(separator)
@@ -222,6 +227,19 @@ def test_python_string_splitn_parity():
 
     assert namespace["string_splitn"]("a,b,c") == ["a", "b,c"]
     assert namespace["string_rsplitn"]("a,b,c") == ["c", "a,b"]
+
+
+@pytest.mark.native
+def test_native_string_rsplit(native_ns):
+    assert native_ns["string_rsplit"]("a,b,c") == ["c", "b", "a"]
+    assert native_ns["string_rsplit"]("solo") == ["solo"]
+
+
+def test_python_string_rsplit_parity():
+    namespace = compile_rust(parse(lex(SOURCES["string_rsplit"])))
+
+    assert namespace["string_rsplit"]("a,b,c") == ["c", "b", "a"]
+    assert namespace["string_rsplit"]("solo") == ["solo"]
 
 
 @pytest.mark.native
