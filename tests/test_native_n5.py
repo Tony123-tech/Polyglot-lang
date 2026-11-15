@@ -107,6 +107,18 @@ fn n5_option_insert_some() -> i64 {
     value.unwrap()
 }
 """,
+    "option_get_or_insert": """
+fn n5_option_get_or_insert_none() -> i64 {
+    let mut value: Option<i64> = None;
+    value.get_or_insert(4);
+    value.unwrap()
+}
+fn n5_option_get_or_insert_some() -> i64 {
+    let mut value: Option<i64> = Some(3);
+    value.get_or_insert(8);
+    value.unwrap()
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -990,6 +1002,19 @@ def test_python_option_insert():
 
     assert ns["n5_option_insert_none"]() == 7
     assert ns["n5_option_insert_some"]() == 9
+
+
+@pytest.mark.native
+def test_native_option_get_or_insert(native_ns):
+    assert native_ns["n5_option_get_or_insert_none"]() == 4
+    assert native_ns["n5_option_get_or_insert_some"]() == 3
+
+
+def test_python_option_get_or_insert():
+    ns = _run_python(SOURCES["option_get_or_insert"])
+
+    assert ns["n5_option_get_or_insert_none"]() == 4
+    assert ns["n5_option_get_or_insert_some"]() == 3
 
 
 @pytest.mark.native
