@@ -1641,6 +1641,8 @@ class RustCodegen:
             if e.method == "to_digit" and len(e.args) == 1:
                 radix = self.expr_to_rust(e.args[0])
                 return f"{recv}.to_digit({radix} as u32)"
+            if e.method == "is_ascii_alphabetic" and not e.args:
+                return f"{recv}.is_ascii_alphabetic()"
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return f"{recv}.{e.method}()"
             if e.method == "replace" and len(e.args) == 2:

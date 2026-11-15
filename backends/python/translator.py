@@ -1205,6 +1205,12 @@ def _runtime_parse(value):
         return _Result.from_err(str(exc))
 
 
+def _runtime_char_is_ascii_alphabetic(value):
+    return len(value) == 1 and (
+        "A" <= value <= "Z" or "a" <= value <= "z"
+    )
+
+
 def _runtime_char_to_digit(value, radix):
     if len(value) != 1:
         return _Option.none()
@@ -1703,6 +1709,7 @@ class Translator:
         ns["_string_to_ascii_uppercase"] = _runtime_string_to_ascii_uppercase
         ns["_result_parse"] = _runtime_parse
         ns["_char_to_digit"] = _runtime_char_to_digit
+        ns["_char_is_ascii_alphabetic"] = _runtime_char_is_ascii_alphabetic
         ns["_map_insert"] = _runtime_map_insert
         ns["_map_get"] = _runtime_map_get
         ns["_map_get_mut"] = _runtime_map_get_mut
@@ -4518,6 +4525,12 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_char_to_digit", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "is_ascii_alphabetic" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_char_is_ascii_alphabetic", ctx=ast.Load()),
+                    args=[recv],
                     keywords=[],
                 )
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:

@@ -206,6 +206,11 @@ fn char_to_digit_some(value: char) -> bool {
     value.to_digit(16).is_some()
 }
 """,
+    "char_is_ascii_alphabetic": """
+fn char_is_ascii_alphabetic(value: char) -> bool {
+    value.is_ascii_alphabetic()
+}
+""",
 }
 
 
@@ -665,3 +670,20 @@ def test_python_char_to_digit_parity():
     assert namespace["char_to_digit"]("g") == 0
     assert namespace["char_to_digit_some"]("a") is True
     assert namespace["char_to_digit_some"]("g") is False
+
+
+@pytest.mark.native
+def test_native_char_is_ascii_alphabetic(native_ns):
+    assert native_ns["char_is_ascii_alphabetic"]("a") is True
+    assert native_ns["char_is_ascii_alphabetic"]("Z") is True
+    assert native_ns["char_is_ascii_alphabetic"]("é") is False
+    assert native_ns["char_is_ascii_alphabetic"]("1") is False
+
+
+def test_python_char_is_ascii_alphabetic_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_ascii_alphabetic"])))
+
+    assert namespace["char_is_ascii_alphabetic"]("a") is True
+    assert namespace["char_is_ascii_alphabetic"]("Z") is True
+    assert namespace["char_is_ascii_alphabetic"]("é") is False
+    assert namespace["char_is_ascii_alphabetic"]("1") is False
