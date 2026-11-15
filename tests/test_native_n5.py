@@ -81,6 +81,13 @@ fn n5_option_and_none() -> Option<i64> {
     value.and(Some(2))
 }
 """,
+    "option_or": """
+fn n5_option_or_some() -> Option<i64> { Some(1).or(Some(2)) }
+fn n5_option_or_none() -> Option<i64> {
+    let value: Option<i64> = None;
+    value.or(Some(2))
+}
+""",
     "option_replace": """
 fn n5_option_replace_some() -> i64 {
     let mut value: Option<i64> = Some(1);
@@ -925,6 +932,19 @@ def test_python_option_and():
 
     assert ns["n5_option_and_some"]() == ns["_Option"].some(2)
     assert ns["n5_option_and_none"]() == ns["_Option"].none()
+
+
+@pytest.mark.native
+def test_native_option_or(native_ns):
+    assert native_ns["n5_option_or_some"]() == 1
+    assert native_ns["n5_option_or_none"]() == 2
+
+
+def test_python_option_or():
+    ns = _run_python(SOURCES["option_or"])
+
+    assert ns["n5_option_or_some"]() == ns["_Option"].some(1)
+    assert ns["n5_option_or_none"]() == ns["_Option"].some(2)
 
 
 @pytest.mark.native
