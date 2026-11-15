@@ -34,6 +34,7 @@ from backends.rust.codegen import RustCodegen
 # Errors
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RustCompileError(RuntimeError):
     """Structured Cargo error with generated and source locations."""
@@ -69,10 +70,16 @@ class RustCompileError(RuntimeError):
     def format(self) -> str:
         line = self.source_line if self.source_line is not None else self.rust_line
         col = self.source_col if self.source_col is not None else self.rust_col
-        at = f"at: line {line}, column {col}" if line is not None and col is not None else "at: <unknown>"
+        at = (
+            f"at: line {line}, column {col}"
+            if line is not None and col is not None
+            else "at: <unknown>"
+        )
         if self.span is not None:
             at += f" (span {self.span[0]}..{self.span[1]})"
-        reason = self.message.splitlines()[0] if self.message else "rust compilation failed"
+        reason = (
+            self.message.splitlines()[0] if self.message else "rust compilation failed"
+        )
         help_text = "inspect the generated Rust and fix the reported issue"
         note = "RustCompileError"
         if self.error_code:
@@ -92,8 +99,7 @@ class RustCompileError(RuntimeError):
         lines = [self.format()]
         if self.source_line is not None:
             lines.append(
-                f"Polyglot source at {self.source_line}:"
-                f"{self.source_col or 1}"
+                f"Polyglot source at {self.source_line}:{self.source_col or 1}"
             )
             if self.source_line_text is not None:
                 lines.append(f"  {self.source_line_text}")
@@ -160,23 +166,18 @@ class TypeErrorForBoundary(RustCompileError):
         return self.format_boundary()
 
 
-_ERROR_HEAD_RE = re.compile(
-    r"(?m)^\s*error(?:\[(?P<code>E\d+)\])?:\s*(?P<msg>[^\n]+)"
-)
+_ERROR_HEAD_RE = re.compile(r"(?m)^\s*error(?:\[(?P<code>E\d+)\])?:\s*(?P<msg>[^\n]+)")
 _ERROR_LOCATION_RE = re.compile(
     r"(?m)^\s*-->\s*src/lib\.rs:(?P<line>\d+):(?P<col>\d+)\s*$"
 )
-_WARNING_RE = re.compile(
-    r"(?m)^\s*warning(?:\[[^\]]+\])?:\s*(?P<msg>[^\n]+)"
-)
-_DIAGNOSTIC_START_RE = re.compile(
-    r"^(?:error(?:\[[^\]]+\])?:|warning(?:\[[^\]]+\])?:)"
-)
+_WARNING_RE = re.compile(r"(?m)^\s*warning(?:\[[^\]]+\])?:\s*(?P<msg>[^\n]+)")
+_DIAGNOSTIC_START_RE = re.compile(r"^(?:error(?:\[[^\]]+\])?:|warning(?:\[[^\]]+\])?:)")
 
 
 # ---------------------------------------------------------------------------
 # Backend
 # ---------------------------------------------------------------------------
+
 
 class NativeBackend(BackendBase):
     name = "native"
@@ -188,9 +189,7 @@ class NativeBackend(BackendBase):
         trusted: bool = True,
     ) -> None:
         super().__init__(trusted=trusted)
-        self.cache_dir = Path(
-            cache_dir or Path.home() / ".cache" / "polyglot-native"
-        )
+        self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "polyglot-native")
         self.cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             self.cache_dir.chmod(0o700)
@@ -199,9 +198,11 @@ class NativeBackend(BackendBase):
 
     # ---- public API --------------------------------------------------------
 
-    def compile(self, program: Program) -> dict[str, Any]:
+    def compile(
+        self, program: Program, module_name: str = "polyglot_native"
+    ) -> dict[str, Any]:
         self._check_trust()
-        codegen = RustCodegen()
+        codegen = RustCodegen(module_name=module_name)
         try:
             source = codegen.generate(program)
         except InvalidIntegerParseLiteralError as error:
@@ -210,6 +211,8 @@ class NativeBackend(BackendBase):
                 source_line=error.line,
                 source_col=error.col,
                 source_line_text=program.source_lines.get(error.line),
+                span=error.span,
+                code="E008",
             ) from error
         key = hashlib.sha256(source.encode()).hexdigest()[:16]
         build_dir = self.cache_dir / key
@@ -220,10 +223,11 @@ class NativeBackend(BackendBase):
                 build_dir,
                 codegen.line_map,
                 codegen.source_line_text_map,
+                module_name=module_name,
             )
 
         ext = self._find_extension(build_dir)
-        mod = self._load_extension(ext)
+        mod = self._load_extension(ext, module_name=module_name)
         return mod.__dict__
 
     # ---- build steps -------------------------------------------------------
@@ -244,13 +248,14 @@ class NativeBackend(BackendBase):
         build_dir: Path,
         line_map: dict[int, tuple[int, int]],
         source_line_text_map: dict[int, str] | None = None,
+        module_name: str = "polyglot_native",
     ) -> None:
         first_build = not build_dir.exists()
         if first_build:
             build_dir.mkdir(parents=True)
 
         (build_dir / "Cargo.toml").write_text(
-            self._cargo_toml(), encoding="utf-8"
+            self._cargo_toml(module_name), encoding="utf-8"
         )
 
         if sys.platform == "darwin":
@@ -282,23 +287,26 @@ class NativeBackend(BackendBase):
         )
         if result.returncode != 0:
             raise _parse_cargo_error(
-                result.stdout, result.stderr, source, line_map,
+                result.stdout,
+                result.stderr,
+                source,
+                line_map,
                 source_line_text_map,
             )
 
-    def _cargo_toml(self) -> str:
-        return """\
+    def _cargo_toml(self, module_name: str = "polyglot_native") -> str:
+        return f"""\
 [package]
-name = "polyglot_native"
+name = "{module_name}"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "polyglot_native"
+name = "{module_name}"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.26", features = ["extension-module"] }
+pyo3 = {{ version = "0.26", features = ["extension-module"] }}
 futures = "0.3"
 """
 
@@ -312,13 +320,11 @@ futures = "0.3"
                 return matches[0]
         raise RuntimeError(f"No extension module found in {release}")
 
-    def _load_extension(self, path: Path):
-        mod_name = "polyglot_native"
+    def _load_extension(self, path: Path, module_name: str = "polyglot_native"):
+        mod_name = module_name
         if mod_name in sys.modules:
             del sys.modules[mod_name]
-        loader = importlib.machinery.ExtensionFileLoader(
-            mod_name, str(path)
-        )
+        loader = importlib.machinery.ExtensionFileLoader(mod_name, str(path))
         spec = importlib.util.spec_from_file_location(
             mod_name, str(path), loader=loader
         )
@@ -333,6 +339,7 @@ futures = "0.3"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_env() -> dict[str, str]:
     env = os.environ.copy()
@@ -350,12 +357,11 @@ def _parse_cargo_error(
     line_map: dict[int, tuple[int, int]] | None = None,
     source_line_text_map: dict[int, str] | None = None,
 ) -> RustCompileError:
-    combined = _deduplicate_error_blocks(
-        f"{stdout}\n{stderr}".strip()
-    )
+    combined = _deduplicate_error_blocks(f"{stdout}\n{stderr}".strip())
     head = _ERROR_HEAD_RE.search(combined)
     location = _ERROR_LOCATION_RE.search(
-        combined, head.end() if head is not None else 0,
+        combined,
+        head.end() if head is not None else 0,
     )
     rust_line = int(location.group("line")) if location else None
     rust_col = int(location.group("col")) if location else None

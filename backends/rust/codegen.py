@@ -113,6 +113,7 @@ from struct_order import order_struct_declarations
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_unit_type(ty: Type) -> bool:
     return isinstance(ty, TypeUnit) or (
         isinstance(ty, TypeTuple) and len(ty.elems) == 0
@@ -125,9 +126,7 @@ def _is_valid_i64_literal(value: str) -> bool:
     negative = value.startswith("-")
     digits = value.lstrip("+-").lstrip("0") or "0"
     limit = "9223372036854775808" if negative else "9223372036854775807"
-    return len(digits) < len(limit) or (
-        len(digits) == len(limit) and digits <= limit
-    )
+    return len(digits) < len(limit) or (len(digits) == len(limit) and digits <= limit)
 
 
 _RUNTIME_PREFIX = r"""
@@ -149,6 +148,19 @@ static VTABLE: RawWakerVTable = RawWakerVTable::new(
     |_| {},
     |_| {},
 );
+
+// M3: HashSet has no `get_mut` in std. At the Python boundary the value is
+// an owned copy anyway, so return the present element unchanged.
+fn polyglot_hashset_get_mut<T: Clone + Eq + std::hash::Hash>(
+    set: &HashSet<T>,
+    value: &T,
+) -> Option<T> {
+    if set.contains(value) {
+        Some(value.clone())
+    } else {
+        None
+    }
+}
 
 #[pyclass(unsendable)]
 pub struct PyFuture {
@@ -210,10 +222,12 @@ where
 }
 """
 
+
 class RustCodegen:
     """Generate Rust source (with PyO3) from a Polyglot Program."""
 
-    def __init__(self) -> None:
+    def __init__(self, module_name: str = "polyglot_native") -> None:
+        self.module_name = module_name
         self.lines: list[str] = []
         self.indent_level = 0
         self.exported_fns: list[str] = []
@@ -303,38 +317,33 @@ class RustCodegen:
                     )
             elif isinstance(item, FnDecl):
                 self._function_signatures[item.name] = [
-                    self._binding_type_name(param.ty)
-                    for param in item.params
+                    self._binding_type_name(param.ty) for param in item.params
                 ]
             elif isinstance(item, ImplBlock):
                 target = self._binding_type_name(item.ty)
                 if target is not None:
                     for method in item.items:
                         if isinstance(method, FnDecl):
-                            self._method_return_types[
-                                (target, method.name)
-                            ] = self._binding_type_name(method.ret)
+                            self._method_return_types[(target, method.name)] = (
+                                self._binding_type_name(method.ret)
+                            )
             elif isinstance(item, EnumDecl) and all(
                 variant.fields is None for variant in item.variants
             ):
                 self.pyclass_names.add(item.name)
 
                 # Suppress warnings from aggressive `mut` / stub bodies.
-        self.emit(
-            "#![allow(unused_mut, unused_variables, dead_code, unused_imports)]"
-        )
+        self.emit("#![allow(unused_mut, unused_variables, dead_code, unused_imports)]")
         self.emit()
         self.emit("use pyo3::prelude::*;")
-        self.emit("use std::collections::HashMap;")
+        self.emit("use std::collections::{BTreeMap, HashMap, HashSet};")
         self.emit("use std::fmt::Write as FmtWrite;")
         self.emit()
         for line in _RUNTIME_PREFIX.strip().splitlines():
             self.emit(line)
         self.emit()
 
-        structs = [
-            item for item in program.items if isinstance(item, StructDecl)
-        ]
+        structs = [item for item in program.items if isinstance(item, StructDecl)]
         for struct in order_struct_declarations(structs):
             self.generate_struct(struct)
         emitted_impls: set[str] = set()
@@ -345,7 +354,8 @@ class RustCodegen:
                     if target in emitted_impls:
                         continue
                     impls = [
-                        candidate for candidate in program.items
+                        candidate
+                        for candidate in program.items
                         if isinstance(candidate, ImplBlock)
                         and self.type_to_rust(candidate.ty) == target
                     ]
@@ -356,9 +366,7 @@ class RustCodegen:
 
         self.emit()
         self.emit("#[pymodule]")
-        self.emit(
-            "fn polyglot_native(m: &Bound<'_, PyModule>) -> PyResult<()> {"
-        )
+        self.emit(f"fn {self.module_name}(m: &Bound<'_, PyModule>) -> PyResult<()> {{")
         self.indent()
         for name in self.exported_fns:
             self.emit(f"m.add_function(wrap_pyfunction!({name}, m)?)?;")
@@ -483,7 +491,9 @@ class RustCodegen:
             self.indent()
             if fn.body is not None:
                 self.generate_block_body(
-                    fn.body, as_fn_body=True, async_wrap=True,
+                    fn.body,
+                    as_fn_body=True,
+                    async_wrap=True,
                 )
             else:
                 self.emit("Err(pyo3::exceptions::PyRuntimeError::new_err(")
@@ -566,9 +576,7 @@ class RustCodegen:
 
         previous_impl_type = self._current_impl_type
         self._current_impl_type = (
-            impls[0].ty.name
-            if isinstance(impls[0].ty, TypeName)
-            else None
+            impls[0].ty.name if isinstance(impls[0].ty, TypeName) else None
         )
         self.emit(f"impl {target} {{")
         self.indent()
@@ -621,18 +629,12 @@ class RustCodegen:
                 else self.expr_to_rust(block.tail)
             )
             if async_wrap:
-                self.emit(
-                    f"pyo3::Python::with_gil(|py| "
-                    f"{tail}.into_py_any(py))"
-                )
+                self.emit(f"pyo3::Python::with_gil(|py| {tail}.into_py_any(py))")
             else:
                 self.emit(tail)
         elif as_fn_body and not block.stmts:
             if async_wrap:
-                self.emit(
-                    "pyo3::Python::with_gil(|py| "
-                    "().into_py_any(py))"
-                )
+                self.emit("pyo3::Python::with_gil(|py| ().into_py_any(py))")
             else:
                 self.emit("()")
 
@@ -679,9 +681,7 @@ class RustCodegen:
                         self._current_return_type,
                         expr.value,
                     )
-                    self.emit(
-                        f"return {self._return_expr_to_rust(expr.value)};"
-                    )
+                    self.emit(f"return {self._return_expr_to_rust(expr.value)};")
             elif isinstance(expr, Break):
                 self.emit("break;")
             elif isinstance(expr, Continue):
@@ -703,32 +703,36 @@ class RustCodegen:
         if isinstance(expr, MethodCall):
             receiver_type = self._expr_type(expr.receiver)
             if expr.method == "len":
-                if receiver_type in {"Vec", "String", "HashMap"}:
+                if receiver_type in {"Vec", "String", "HashMap", "BTreeMap", "HashSet"}:
                     return "usize"
                 return self._method_return_types.get(
                     (receiver_type, expr.method),
                 )
+            if expr.method in {"get", "get_mut"} and self._map_kind(expr.receiver):
+                return "Option"
+            if expr.method == "unwrap" and isinstance(expr.receiver, MethodCall):
+                inner = expr.receiver
+                if inner.method == "get":
+                    kind = self._map_kind(inner.receiver)
+                    if kind in {"HashMap", "BTreeMap"}:
+                        return kind
             return self._method_return_types.get(
                 (receiver_type, expr.method),
             )
         if isinstance(expr, Cast) and isinstance(expr.ty, TypeName):
             return expr.ty.name
         if isinstance(expr, Range):
-            return (
-                self._expr_type(expr.end)
-                if expr.end is not None
-                else None
-            ) or (
-                self._expr_type(expr.start)
-                if expr.start is not None
-                else None
+            return (self._expr_type(expr.end) if expr.end is not None else None) or (
+                self._expr_type(expr.start) if expr.start is not None else None
             )
         if isinstance(expr, Binary):
             left_type = self._expr_type(expr.left)
             right_type = self._expr_type(expr.right)
             if left_type is not None and right_type is not None:
                 self._check_type_boundary(
-                    right_type, left_type, expr,
+                    right_type,
+                    left_type,
+                    expr,
                 )
             return left_type or right_type
         return None
@@ -739,16 +743,13 @@ class RustCodegen:
             self._current_return_type == "Option"
             and isinstance(expr, MethodCall)
             and expr.method == "get_mut"
-            and self._is_hashmap_expr(expr.receiver)
+            and self._map_kind(expr.receiver) in {"HashMap", "BTreeMap"}
         ):
             return f"({emitted}).map(|value| (*value).clone())"
         return emitted
 
     def emit_cast(self, node: Cast) -> str:
-        return (
-            f"({self.expr_to_rust(node.expr)} as "
-            f"{self.type_to_rust(node.ty)})"
-        )
+        return f"({self.expr_to_rust(node.expr)} as {self.type_to_rust(node.ty)})"
 
     def _emit_usize_arg(self, expr: Expr) -> str:
         self._check_type_boundary(self._expr_type(expr), "usize", expr)
@@ -796,32 +797,43 @@ class RustCodegen:
             return
         # M4: implicit conversion between different integer types requires `as`
         _INT_TYPE_NAMES = {
-            "i8", "i16", "i32", "i64", "i128",
-            "u8", "u16", "u32", "u64", "u128",
-            "usize", "isize",
+            "i8",
+            "i16",
+            "i32",
+            "i64",
+            "i128",
+            "u8",
+            "u16",
+            "u32",
+            "u64",
+            "u128",
+            "usize",
+            "isize",
         }
         if source_type in _INT_TYPE_NAMES and expected_type in _INT_TYPE_NAMES:
             if source_type != expected_type:
                 from backends.rust.compiler import TypeErrorForBoundary
+
                 raise TypeErrorForBoundary(
                     source_type,
                     expected_type,
                     node.line,
                     node.col,
                     self.source_lines.get(node.line),
+                    span=getattr(node, "span", None),
                 )
             return
         source_ty = TypeName(node.line, node.col, source_type)
         expected_ty = TypeName(node.line, node.col, expected_type)
-        source_is_pointer_sized = (
-            is_usize_type(source_ty) or is_isize_type(source_ty)
-        )
-        expected_is_pointer_sized = (
-            is_usize_type(expected_ty) or is_isize_type(expected_ty)
+        source_is_pointer_sized = is_usize_type(source_ty) or is_isize_type(source_ty)
+        expected_is_pointer_sized = is_usize_type(expected_ty) or is_isize_type(
+            expected_ty
         )
         if (
-            source_is_pointer_sized and is_i64_type(expected_ty)
-            or expected_is_pointer_sized and is_i64_type(source_ty)
+            source_is_pointer_sized
+            and is_i64_type(expected_ty)
+            or expected_is_pointer_sized
+            and is_i64_type(source_ty)
             or (
                 source_is_pointer_sized
                 and expected_is_pointer_sized
@@ -836,15 +848,14 @@ class RustCodegen:
                 node.line,
                 node.col,
                 self.source_lines.get(node.line),
+                span=getattr(node, "span", None),
             )
 
     def emit_let(self, stmt: LetStmt) -> None:
         mut = "mut " if stmt.mutable else ""
         pat = self.pattern_to_rust(stmt.pattern)
         ty = f": {self.type_to_rust(stmt.ty)}" if stmt.ty else ""
-        inferred_type = (
-            self._expr_type(stmt.value) if stmt.value is not None else None
-        )
+        inferred_type = self._expr_type(stmt.value) if stmt.value is not None else None
         expected_type = self._binding_type_name(stmt.ty)
         self._check_type_boundary(inferred_type, expected_type, stmt)
         previous_result_types = self._result_types
@@ -859,9 +870,7 @@ class RustCodegen:
                 self.type_to_rust(stmt.ty.args[1]),
             )
         if stmt.value is not None:
-            self.emit(
-                f"let {mut}{pat}{ty} = {self.expr_to_rust(stmt.value)};"
-            )
+            self.emit(f"let {mut}{pat}{ty} = {self.expr_to_rust(stmt.value)};")
             if isinstance(stmt.pattern, PatIdent):
                 binding_type = (
                     expected_type
@@ -870,18 +879,12 @@ class RustCodegen:
                 )
                 if binding_type is not None:
                     self.binding_types[stmt.pattern.name] = binding_type
-            if (
-                isinstance(stmt.pattern, PatIdent)
-                and self._is_string_expr(stmt.value)
-            ):
+            if isinstance(stmt.pattern, PatIdent) and self._is_string_expr(stmt.value):
                 self.string_bindings.add(stmt.pattern.name)
-            if (
-                isinstance(stmt.pattern, PatIdent)
-                and (
-                    isinstance(stmt.ty, TypeName)
-                    and stmt.ty.name == "Vec"
-                    or self._is_vec_expr(stmt.value)
-                )
+            if isinstance(stmt.pattern, PatIdent) and (
+                isinstance(stmt.ty, TypeName)
+                and stmt.ty.name == "Vec"
+                or self._is_vec_expr(stmt.value)
             ):
                 self.vec_bindings.add(stmt.pattern.name)
         else:
@@ -976,7 +979,8 @@ class RustCodegen:
 
     def _emit_match(self, m: MatchExpr, *, as_stmt: bool) -> None:
         warn_match_issues(
-            m, scrutinee_type=self._match_scrutinee_type(m),
+            m,
+            scrutinee_type=self._match_scrutinee_type(m),
         )
         scrutinee = self.expr_to_rust(m.scrutinee)
         if any(isinstance(arm.pattern, PatSlice) for arm in m.arms):
@@ -1037,10 +1041,7 @@ class RustCodegen:
         if isinstance(e, ResultOk):
             if self._result_types is not None:
                 ok_ty, _err_ty = self._result_types
-                return (
-                    f"Ok::<{ok_ty}, PyErr>("
-                    f"{self.expr_to_rust(e.value)})"
-                )
+                return f"Ok::<{ok_ty}, PyErr>({self.expr_to_rust(e.value)})"
             return f"Ok::<_, PyErr>({self.expr_to_rust(e.value)})"
         if isinstance(e, ResultErr):
             if self._result_types is not None:
@@ -1067,36 +1068,30 @@ class RustCodegen:
                 and isinstance(e.operand.ty, TypeName)
                 and e.operand.ty.name in {"isize", "usize"}
             ):
-                return self.emit_cast(Cast(
-                    e.operand.line,
-                    e.operand.col,
-                    Unary(e.line, e.col, "-", e.operand.expr),
-                    e.operand.ty,
-                ))
+                return self.emit_cast(
+                    Cast(
+                        e.operand.line,
+                        e.operand.col,
+                        Unary(e.line, e.col, "-", e.operand.expr),
+                        e.operand.ty,
+                    )
+                )
             op = "&mut " if e.op == "&mut" else e.op
             return f"({op}{self.expr_to_rust(e.operand)})"
         if isinstance(e, Binary):
             if e.op == "+" and (
-                self._is_string_expr(e.left)
-                or self._is_string_expr(e.right)
+                self._is_string_expr(e.left) or self._is_string_expr(e.right)
             ):
                 return (
                     f'format!("{{}}{{}}", {self.expr_to_rust(e.left)}, '
                     f"{self.expr_to_rust(e.right)})"
                 )
-            return (
-                f"({self.expr_to_rust(e.left)} {e.op} "
-                f"{self.expr_to_rust(e.right)})"
-            )
+            return f"({self.expr_to_rust(e.left)} {e.op} {self.expr_to_rust(e.right)})"
         if isinstance(e, Assign):
-            return (
-                f"({self.expr_to_rust(e.target)} = "
-                f"{self.expr_to_rust(e.value)})"
-            )
+            return f"({self.expr_to_rust(e.target)} = {self.expr_to_rust(e.value)})"
         if isinstance(e, CompoundAssign):
             return (
-                f"({self.expr_to_rust(e.target)} {e.op} "
-                f"{self.expr_to_rust(e.value)})"
+                f"({self.expr_to_rust(e.target)} {e.op} {self.expr_to_rust(e.value)})"
             )
         if isinstance(e, Call):
             self._check_call_arguments(e)
@@ -1104,7 +1099,8 @@ class RustCodegen:
             return f"{self.expr_to_rust(e.func)}({args})"
         if isinstance(e, MethodCall):
             recv = self.expr_to_rust(e.receiver)
-            if self._is_hashmap_expr(e.receiver):
+            kind = self._map_kind(e.receiver)
+            if kind in {"HashMap", "BTreeMap"}:
                 if e.method == "insert" and len(e.args) == 2:
                     return (
                         f"{recv}.insert("
@@ -1112,40 +1108,19 @@ class RustCodegen:
                         f"{self.expr_to_rust(e.args[1])})"
                     )
                 if e.method == "get" and len(e.args) == 1:
-                    return (
-                        f"{recv}.get("
-                        f"{self._ref_arg_to_rust(e.args[0])}).cloned()"
-                    )
+                    return f"{recv}.get({self._ref_arg_to_rust(e.args[0])}).cloned()"
                 if e.method == "get_mut" and len(e.args) == 1:
-                    return (
-                        f"{recv}.get_mut("
-                        f"{self._ref_arg_to_rust(e.args[0])})"
-                    )
+                    return f"{recv}.get_mut({self._ref_arg_to_rust(e.args[0])})"
                 if e.method == "remove" and len(e.args) == 1:
-                    return (
-                        f"{recv}.remove("
-                        f"{self._ref_arg_to_rust(e.args[0])})"
-                    )
+                    return f"{recv}.remove({self._ref_arg_to_rust(e.args[0])})"
                 if e.method == "contains_key" and len(e.args) == 1:
-                    return (
-                        f"{recv}.contains_key("
-                        f"{self._ref_arg_to_rust(e.args[0])})"
-                    )
+                    return f"{recv}.contains_key({self._ref_arg_to_rust(e.args[0])})"
                 if e.method == "entry" and len(e.args) == 1:
-                    return (
-                        f"{recv}.entry("
-                        f"{self._owned_arg_to_rust(e.args[0])})"
-                    )
+                    return f"{recv}.entry({self._owned_arg_to_rust(e.args[0])})"
                 if e.method == "keys" and not e.args:
-                    return (
-                        f"{recv}.keys().cloned()"
-                        ".collect::<Vec<_>>()"
-                    )
+                    return f"{recv}.keys().cloned().collect::<Vec<_>>()"
                 if e.method == "values" and not e.args:
-                    return (
-                        f"{recv}.values().cloned()"
-                        ".collect::<Vec<_>>()"
-                    )
+                    return f"{recv}.values().cloned().collect::<Vec<_>>()"
                 if e.method == "iter" and not e.args:
                     return (
                         f"{recv}.iter()"
@@ -1153,29 +1128,31 @@ class RustCodegen:
                         "(key.clone(), value.clone()))"
                         ".collect::<Vec<_>>()"
                     )
+            if kind == "HashSet":
+                if e.method == "insert" and len(e.args) == 1:
+                    return f"{recv}.insert({self._owned_arg_to_rust(e.args[0])})"
+                if e.method == "contains" and len(e.args) == 1:
+                    return f"{recv}.contains({self._ref_arg_to_rust(e.args[0])})"
+                if e.method == "remove" and len(e.args) == 1:
+                    return f"{recv}.remove({self._ref_arg_to_rust(e.args[0])})"
+                if e.method == "get_mut" and len(e.args) == 1:
+                    return (
+                        "polyglot_hashset_get_mut("
+                        f"&({recv}), {self._ref_arg_to_rust(e.args[0])})"
+                    )
+                if e.method == "iter" and not e.args:
+                    return f"{recv}.iter().cloned().collect::<Vec<_>>()"
             if self._is_map_entry_expr(e.receiver):
                 if e.method == "key" and not e.args:
                     return f"{recv}.key().clone()"
                 if e.method == "or_insert_with_key" and len(e.args) == 1:
-                    return (
-                        f"{recv}.or_insert_with_key("
-                        f"{self.expr_to_rust(e.args[0])})"
-                    )
+                    return f"{recv}.or_insert_with_key({self.expr_to_rust(e.args[0])})"
                 if e.method == "or_insert" and len(e.args) == 1:
-                    return (
-                        f"{recv}.or_insert("
-                        f"{self.expr_to_rust(e.args[0])})"
-                    )
+                    return f"{recv}.or_insert({self.expr_to_rust(e.args[0])})"
                 if e.method == "or_insert_with" and len(e.args) == 1:
-                    return (
-                        f"{recv}.or_insert_with("
-                        f"{self.expr_to_rust(e.args[0])})"
-                    )
+                    return f"{recv}.or_insert_with({self.expr_to_rust(e.args[0])})"
                 if e.method == "and_modify" and len(e.args) == 1:
-                    return (
-                        f"{recv}.and_modify("
-                        f"{self.expr_to_rust(e.args[0])})"
-                    )
+                    return f"{recv}.and_modify({self.expr_to_rust(e.args[0])})"
             if e.method == "ok_or" and len(e.args) == 1:
                 error = self.expr_to_rust(e.args[0])
                 return (
@@ -1204,9 +1181,7 @@ class RustCodegen:
                 return f"{recv}.bytes().collect::<Vec<u8>>()"
             if e.method == "parse" and not e.args:
                 target = (
-                    self.type_to_rust(e.generic_args[0])
-                    if e.generic_args
-                    else "i64"
+                    self.type_to_rust(e.generic_args[0]) if e.generic_args else "i64"
                 )
                 if (
                     target == "i64"
@@ -1217,13 +1192,13 @@ class RustCodegen:
                         e.receiver.value,
                         e.receiver.line,
                         e.receiver.col,
+                        getattr(e.receiver, "span", None),
                     )
                 return f"{recv}.parse::<{target}>().unwrap()"
             if e.method == "split" and len(e.args) == 1:
                 separator = self.expr_to_rust(e.args[0])
                 return (
-                    f"{recv}.split(&{separator})"
-                    ".map(String::from).collect::<Vec<_>>()"
+                    f"{recv}.split(&{separator}).map(String::from).collect::<Vec<_>>()"
                 )
             if e.method == "join" and len(e.args) == 1:
                 separator = self.expr_to_rust(e.args[0])
@@ -1236,8 +1211,7 @@ class RustCodegen:
                 return f"{recv}.is_ascii()"
             if e.method == "lines" and not e.args:
                 return (
-                    f"{recv}.lines().map(|line| line.to_string())"
-                    ".collect::<Vec<_>>()"
+                    f"{recv}.lines().map(|line| line.to_string()).collect::<Vec<_>>()"
                 )
             if e.method == "split_whitespace" and not e.args:
                 return (
@@ -1268,8 +1242,7 @@ class RustCodegen:
                 option_kind = self._option_result_type(e.receiver)
                 if option_kind is not None:
                     raise NotImplementedError(
-                        f"{option_kind}.map is unsupported; use match or "
-                        "if let instead"
+                        f"{option_kind}.map is unsupported; use match or if let instead"
                     )
                 return (
                     f"{recv}.into_iter().map("
@@ -1294,10 +1267,7 @@ class RustCodegen:
                     f"{self.expr_to_rust(e.args[1])})"
                 )
             if e.method == "partition" and len(e.args) == 1:
-                return (
-                    f"{recv}.partition("
-                    f"{self.expr_to_rust(e.args[0])})"
-                )
+                return f"{recv}.partition({self.expr_to_rust(e.args[0])})"
             if e.method == "len" and not e.args:
                 return f"{recv}.len()"
             if e.method == "is_sorted" and not e.args:
@@ -1318,10 +1288,7 @@ class RustCodegen:
                     f"{self._emit_usize_arg(e.args[1])})"
                 )
             if e.method == "extend_from_slice" and len(e.args) == 1:
-                return (
-                    f"{recv}.extend_from_slice(&"
-                    f"{self.expr_to_rust(e.args[0])})"
-                )
+                return f"{recv}.extend_from_slice(&{self.expr_to_rust(e.args[0])})"
             if e.method == "resize" and len(e.args) == 2:
                 return (
                     f"{recv}.resize({self._emit_usize_arg(e.args[0])}, "
@@ -1394,10 +1361,7 @@ class RustCodegen:
                 and len(e.args) == 1
                 and isinstance(e.args[0], Closure)
             ):
-                return (
-                    f"{recv}.sort_by_key("
-                    f"{self.expr_to_rust(e.args[0])})"
-                )
+                return f"{recv}.sort_by_key({self.expr_to_rust(e.args[0])})"
             args = ", ".join(self.expr_to_rust(a) for a in e.args)
             return f"{self.expr_to_rust(e.receiver)}.{e.method}({args})"
         if isinstance(e, Field):
@@ -1410,17 +1374,15 @@ class RustCodegen:
                     if e.index.start is not None
                     else ""
                 )
-                end = (
-                    self.expr_to_rust(e.index.end)
-                    if e.index.end is not None
-                    else ""
-                )
+                end = self.expr_to_rust(e.index.end) if e.index.end is not None else ""
                 op = "..=" if e.index.inclusive else ".."
                 if self._is_string_expr(e.receiver):
                     return f"{recv}[{start}{op}{end}].to_string()"
                 return f"{recv}[{start}{op}{end}].to_vec()"
             self._check_type_boundary(
-                self._expr_type(e.index), "usize", e.index,
+                self._expr_type(e.index),
+                "usize",
+                e.index,
             )
             idx = self.expr_to_rust(e.index)
             return f"{recv}[{idx}]"
@@ -1433,15 +1395,10 @@ class RustCodegen:
             elems = ", ".join(self.expr_to_rust(x) for x in e.elems)
             return f"vec![{elems}]"
         if isinstance(e, RepeatArray):
-            return (
-                f"vec![{self.expr_to_rust(e.elem)}; "
-                f"{self.expr_to_rust(e.count)}]"
-            )
+            return f"vec![{self.expr_to_rust(e.elem)}; {self.expr_to_rust(e.count)}]"
         if isinstance(e, StructLiteral):
             name = e.path.split("::")[-1]
-            fields = ", ".join(
-                f"{k}: {self.expr_to_rust(v)}" for k, v in e.fields
-            )
+            fields = ", ".join(f"{k}: {self.expr_to_rust(v)}" for k, v in e.fields)
             rest = ""
             if e.rest is not None:
                 rest = f", ..{self.expr_to_rust(e.rest)}"
@@ -1454,12 +1411,12 @@ class RustCodegen:
             elif e.else_branch is not None:
                 else_part = self.expr_to_rust(e.else_branch)
             return (
-                f"(if {self.expr_to_rust(e.cond)} "
-                f"{{ {then} }} else {{ {else_part} }})"
+                f"(if {self.expr_to_rust(e.cond)} {{ {then} }} else {{ {else_part} }})"
             )
         if isinstance(e, MatchExpr):
             warn_match_issues(
-                e, scrutinee_type=self._match_scrutinee_type(e),
+                e,
+                scrutinee_type=self._match_scrutinee_type(e),
             )
             arms = []
             for arm in e.arms:
@@ -1475,9 +1432,7 @@ class RustCodegen:
             scrutinee = self.expr_to_rust(e.scrutinee)
             if any(isinstance(arm.pattern, PatSlice) for arm in e.arms):
                 scrutinee = f"({scrutinee}).as_slice()"
-            return (
-                f"(match {scrutinee} {{ {', '.join(arms)} }})"
-            )
+            return f"(match {scrutinee} {{ {', '.join(arms)} }})"
         if isinstance(e, Loop):
             return "/* loop-expr not supported as value */"
         if isinstance(e, While):
@@ -1545,9 +1500,7 @@ class RustCodegen:
                     return "write!().unwrap()"
                 target = self.expr_to_rust(e.args[0])
                 format_string = self._format_str(e.args[1])
-                rest = ", ".join(
-                    self.expr_to_rust(arg) for arg in e.args[2:]
-                )
+                rest = ", ".join(self.expr_to_rust(arg) for arg in e.args[2:])
                 args = f"{target}, {format_string}"
                 if rest:
                     args += f", {rest}"
@@ -1609,14 +1562,20 @@ class RustCodegen:
             return "Result"
         if isinstance(expr, MethodCall) and expr.method in {"pop", "next"}:
             return "Option"
-        if isinstance(expr, Path) and expr.segments[:1] == ["HashMap"]:
-            return "HashMap"
-        if (
-            isinstance(expr, Call)
-            and isinstance(expr.func, Path)
-            and expr.func.segments == ["HashMap", "new"]
+        if isinstance(expr, Path) and expr.segments[:1] in (
+            ["HashMap"],
+            ["BTreeMap"],
+            ["HashSet"],
         ):
-            return "HashMap"
+            return expr.segments[0]
+        if isinstance(expr, Call) and isinstance(expr.func, Path):
+            segments = expr.func.segments
+            if (
+                len(segments) == 2
+                and segments[1] == "new"
+                and segments[0] in {"HashMap", "BTreeMap", "HashSet"}
+            ):
+                return segments[0]
         return None
 
     def _binding_type_name(self, ty: Type | None) -> str | None:
@@ -1641,30 +1600,52 @@ class RustCodegen:
         return None
 
     def _is_hashmap_expr(self, expr: Expr) -> bool:
+        return self._map_kind(expr) == "HashMap"
+
+    def _is_btreemap_expr(self, expr: Expr) -> bool:
+        return self._map_kind(expr) == "BTreeMap"
+
+    def _is_hashset_expr(self, expr: Expr) -> bool:
+        return self._map_kind(expr) == "HashSet"
+
+    def _map_kind(self, expr: Expr) -> str | None:
+        """Return the collection kind of an expression, if known."""
+        if isinstance(expr, Paren):
+            return self._map_kind(expr.inner)
         if isinstance(expr, Ident):
-            return self.binding_types.get(expr.name) == "HashMap"
+            kind = self.binding_types.get(expr.name)
+            return kind if kind in {"HashMap", "BTreeMap", "HashSet"} else None
         if isinstance(expr, Field):
             owner = self._expr_struct_type(expr.receiver)
             if owner is None:
-                return False
-            fields = self.struct_field_types.get(owner, {})
-            return fields.get(expr.name) == "HashMap"
+                return None
+            kind = self.struct_field_types.get(owner, {}).get(expr.name)
+            return kind if kind in {"HashMap", "BTreeMap", "HashSet"} else None
+        if isinstance(expr, Call) and isinstance(expr.func, Path):
+            segments = expr.func.segments
+            if (
+                len(segments) == 2
+                and segments[1] == "new"
+                and segments[0] in {"HashMap", "BTreeMap", "HashSet"}
+            ):
+                return segments[0]
         if (
-            isinstance(expr, Call)
-            and isinstance(expr.func, Path)
-            and expr.func.segments == ["HashMap", "new"]
+            isinstance(expr, MethodCall)
+            and expr.method == "unwrap"
+            and isinstance(expr.receiver, MethodCall)
+            and expr.receiver.method == "get"
         ):
-            return True
-        if isinstance(expr, Paren):
-            return self._is_hashmap_expr(expr.inner)
-        return False
+            # A map lookup returns the nested map value (depth 1).
+            kind = self._map_kind(expr.receiver.receiver)
+            return kind if kind in {"HashMap", "BTreeMap"} else None
+        return None
 
     def _is_map_entry_expr(self, expr: Expr) -> bool:
         if isinstance(expr, Paren):
             return self._is_map_entry_expr(expr.inner)
         if isinstance(expr, MethodCall):
             if expr.method == "entry":
-                return self._is_hashmap_expr(expr.receiver)
+                return self._map_kind(expr.receiver) in {"HashMap", "BTreeMap"}
             if expr.method == "and_modify":
                 return self._is_map_entry_expr(expr.receiver)
         return False
@@ -1729,10 +1710,7 @@ class RustCodegen:
         if isinstance(ty, TypeSlice):
             return f"[{self.type_to_rust(ty.inner)}]"
         if isinstance(ty, TypeArray):
-            return (
-                f"[{self.type_to_rust(ty.inner)}; "
-                f"{self.expr_to_rust(ty.size)}]"
-            )
+            return f"[{self.type_to_rust(ty.inner)}; {self.expr_to_rust(ty.size)}]"
         if isinstance(ty, TypeTuple):
             elems = ", ".join(self.type_to_rust(t) for t in ty.elems)
             if len(ty.elems) == 1:
@@ -1803,13 +1781,9 @@ class RustCodegen:
             return " | ".join(self.pattern_to_rust(alt) for alt in pat.alts)
         if isinstance(pat, PatRange):
             start = (
-                self._pattern_bound_to_rust(pat.start)
-                if pat.start is not None else ""
+                self._pattern_bound_to_rust(pat.start) if pat.start is not None else ""
             )
-            end = (
-                self._pattern_bound_to_rust(pat.end)
-                if pat.end is not None else ""
-            )
+            end = self._pattern_bound_to_rust(pat.end) if pat.end is not None else ""
             op = "..=" if pat.inclusive else ".."
             return f"{start}{op}{end}"
         if isinstance(pat, PatBinding):
