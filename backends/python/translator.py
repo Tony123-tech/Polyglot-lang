@@ -4472,6 +4472,12 @@ class Translator:
                     args=[],
                     keywords=[],
                 )
+            if e.method == "is_alphanumeric" and not e.args:
+                return ast.Call(
+                    func=ast.Attribute(value=recv, attr="isalnum", ctx=ast.Load()),
+                    args=[],
+                    keywords=[],
+                )
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return ast.Call(
                     func=ast.Name(
