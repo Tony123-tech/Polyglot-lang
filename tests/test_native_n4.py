@@ -221,6 +221,11 @@ fn char_is_ascii_alphanumeric(value: char) -> bool {
     value.is_ascii_alphanumeric()
 }
 """,
+    "char_is_ascii_whitespace": """
+fn char_is_ascii_whitespace(value: char) -> bool {
+    value.is_ascii_whitespace()
+}
+""",
 }
 
 
@@ -733,3 +738,22 @@ def test_python_char_is_ascii_alphanumeric_parity():
     assert namespace["char_is_ascii_alphanumeric"]("0") is True
     assert namespace["char_is_ascii_alphanumeric"]("é") is False
     assert namespace["char_is_ascii_alphanumeric"]("_") is False
+
+
+@pytest.mark.native
+def test_native_char_is_ascii_whitespace(native_ns):
+    assert native_ns["char_is_ascii_whitespace"](" ") is True
+    assert native_ns["char_is_ascii_whitespace"]("\t") is True
+    assert native_ns["char_is_ascii_whitespace"]("\n") is True
+    assert native_ns["char_is_ascii_whitespace"]("\x0b") is False
+    assert native_ns["char_is_ascii_whitespace"]("a") is False
+
+
+def test_python_char_is_ascii_whitespace_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_ascii_whitespace"])))
+
+    assert namespace["char_is_ascii_whitespace"](" ") is True
+    assert namespace["char_is_ascii_whitespace"]("\t") is True
+    assert namespace["char_is_ascii_whitespace"]("\n") is True
+    assert namespace["char_is_ascii_whitespace"]("\x0b") is False
+    assert namespace["char_is_ascii_whitespace"]("a") is False
