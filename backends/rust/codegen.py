@@ -1510,6 +1510,12 @@ class RustCodegen:
                 return f"{recv}.binary_search(&{self.expr_to_rust(e.args[0])})"
             if e.method == "rfind" and len(e.args) == 1:
                 return f"{recv}.rfind(&{self.expr_to_rust(e.args[0])})"
+            if e.method == "position" and len(e.args) == 1:
+                return (
+                    f"{recv}.clone().into_iter().position("
+                    f"{self.expr_to_rust(e.args[0])})"
+                    ".map(|index| index as i64)"
+                )
             if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
                 return (
                     f"{recv}.{e.method}(&{self.expr_to_rust(e.args[0])})"

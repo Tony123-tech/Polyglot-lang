@@ -539,6 +539,13 @@ def _runtime_vec_is_sorted_by_key(values: list, key) -> bool:
     )
 
 
+def _runtime_vec_position(values: list, predicate):
+    for index, value in enumerate(values):
+        if predicate(value):
+            return _Option.some(index)
+    return _Option.none()
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1400,6 +1407,7 @@ class Translator:
         ns["_vec_swap_remove"] = _runtime_vec_swap_remove
         ns["_vec_dedup_by_key"] = _runtime_vec_dedup_by_key
         ns["_vec_is_sorted_by_key"] = _runtime_vec_is_sorted_by_key
+        ns["_vec_position"] = _runtime_vec_position
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3582,6 +3590,12 @@ class Translator:
             if e.method == "is_sorted_by_key" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(id="_vec_is_sorted_by_key", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "position" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_position", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )

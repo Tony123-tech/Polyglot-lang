@@ -170,6 +170,11 @@ fn vec_is_sorted_by_key(values: Vec<i64>) -> bool {
     values.is_sorted_by_key(|value| *value)
 }
 """,
+    "vec_position": """
+fn vec_position(values: Vec<i64>, target: i64) -> Option<i64> {
+    values.position(|value| value == target)
+}
+""",
 }
 
 
@@ -346,6 +351,19 @@ def test_python_vec_is_sorted_by_key_parity():
     assert namespace["vec_is_sorted_by_key"]([1, 2, 2, 3]) is True
     assert namespace["vec_is_sorted_by_key"]([1, 3, 2]) is False
     assert namespace["vec_is_sorted_by_key"]([]) is True
+
+
+@pytest.mark.native
+def test_native_vec_position(native_ns):
+    assert native_ns["vec_position"]([4, 2, 7], 7) == 2
+    assert native_ns["vec_position"]([4, 2, 7], 9) is None
+
+
+def test_python_vec_position_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_position"])))
+
+    assert namespace["vec_position"]([4, 2, 7], 7) == namespace["_Option"].some(2)
+    assert namespace["vec_position"]([4, 2, 7], 9) == namespace["_Option"].none()
 
 
 @pytest.mark.native
