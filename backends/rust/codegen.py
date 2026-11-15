@@ -1387,6 +1387,12 @@ class RustCodegen:
             if e.method == "expect_err" and len(e.args) == 1:
                 message = self.expr_to_rust(e.args[0])
                 return f"{recv}.expect_err(&{message})"
+            if (
+                e.method == "is_ok_and"
+                and len(e.args) == 1
+                and self._option_result_type(e.receiver) == "Result"
+            ):
+                return f"{recv}.is_ok_and({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap_or" and len(e.args) == 1:
                 return f"{recv}.unwrap_or({self.expr_to_rust(e.args[0])})"
             if e.method == "unwrap_or_else" and len(e.args) == 1:

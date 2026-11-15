@@ -1394,6 +1394,9 @@ class _Result:
             raise RuntimeError(f"{message}: {self._value!r}")
         return self._value
 
+    def is_ok_and(self, predicate):
+        return self._is_ok and predicate(self._value)
+
     def unwrap_or(self, default):
         return self._value if self._is_ok else default
 

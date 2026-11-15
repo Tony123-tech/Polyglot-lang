@@ -45,6 +45,11 @@ fn n5_result_expect_err() -> String {
     Err("bad").expect_err("boom").to_string().replace("RuntimeError: ", "")
 }
 """,
+    "result_is_ok_and": """
+fn n5_result_is_ok_and_true() -> bool { Ok(4).is_ok_and(|x| x > 2) }
+fn n5_result_is_ok_and_false() -> bool { Ok(1).is_ok_and(|x| x > 2) }
+fn n5_result_is_ok_and_err() -> bool { Err("x").is_ok_and(|x| x > 2) }
+""",
     "option_unwrap": """
 fn n5_option_unwrap_get() -> i64 {
     Some(5).unwrap()
@@ -671,6 +676,21 @@ def test_python_result_expect_err():
     ns = _run_python(SOURCES["result_expect_err"])
 
     assert ns["n5_result_expect_err"]() == "bad"
+
+
+@pytest.mark.native
+def test_native_result_is_ok_and(native_ns):
+    assert native_ns["n5_result_is_ok_and_true"]() is True
+    assert native_ns["n5_result_is_ok_and_false"]() is False
+    assert native_ns["n5_result_is_ok_and_err"]() is False
+
+
+def test_python_result_is_ok_and():
+    ns = _run_python(SOURCES["result_is_ok_and"])
+
+    assert ns["n5_result_is_ok_and_true"]() is True
+    assert ns["n5_result_is_ok_and_false"]() is False
+    assert ns["n5_result_is_ok_and_err"]() is False
 
 
 # ---------------------------------------------------------------------------
