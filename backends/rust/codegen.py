@@ -1428,6 +1428,15 @@ class RustCodegen:
                     f"{recv}.split_first()"
                     ".map(|(first, rest)| (*first, rest.to_vec()))"
                 )
+            if (
+                e.method == "split_last"
+                and not e.args
+                and self._is_vec_expr(e.receiver)
+            ):
+                return (
+                    f"{recv}.split_last()"
+                    ".map(|(last, rest)| (*last, rest.to_vec()))"
+                )
             if e.method == "bytes" and not e.args:
                 return f"{recv}.bytes().collect::<Vec<u8>>()"
             if e.method == "parse" and not e.args:

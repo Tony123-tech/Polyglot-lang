@@ -618,6 +618,12 @@ def _runtime_vec_split_first(values: list):
     return _Option.some((values[0], list(values[1:])))
 
 
+def _runtime_vec_split_last(values: list):
+    if not values:
+        return _Option.none()
+    return _Option.some((values[-1], list(values[:-1])))
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1494,6 +1500,7 @@ class Translator:
         ns["_vec_chain"] = _runtime_vec_chain
         ns["_vec_step_by"] = _runtime_vec_step_by
         ns["_vec_split_first"] = _runtime_vec_split_first
+        ns["_vec_split_last"] = _runtime_vec_split_last
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3786,6 +3793,16 @@ class Translator:
             ):
                 return ast.Call(
                     func=ast.Name(id="_vec_split_first", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if (
+                e.method == "split_last"
+                and not e.args
+                and self._is_vec_expr(e.receiver)
+            ):
+                return ast.Call(
+                    func=ast.Name(id="_vec_split_last", ctx=ast.Load()),
                     args=[recv],
                     keywords=[],
                 )

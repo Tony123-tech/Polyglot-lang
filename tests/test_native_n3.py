@@ -243,6 +243,11 @@ fn vec_split_first(values: Vec<i64>) -> Option<(i64, Vec<i64>)> {
     values.split_first()
 }
 """,
+    "vec_split_last": """
+fn vec_split_last(values: Vec<i64>) -> Option<(i64, Vec<i64>)> {
+    values.split_last()
+}
+""",
 }
 
 
@@ -621,6 +626,20 @@ def test_python_vec_split_first_parity():
     option = namespace["_Option"]
     assert namespace["vec_split_first"]([1, 2, 3]) == option.some((1, [2, 3]))
     assert namespace["vec_split_first"]([]) == option.none()
+
+
+@pytest.mark.native
+def test_native_vec_split_last(native_ns):
+    assert native_ns["vec_split_last"]([1, 2, 3]) == (3, [1, 2])
+    assert native_ns["vec_split_last"]([]) is None
+
+
+def test_python_vec_split_last_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_split_last"])))
+
+    option = namespace["_Option"]
+    assert namespace["vec_split_last"]([1, 2, 3]) == option.some((3, [1, 2]))
+    assert namespace["vec_split_last"]([]) == option.none()
 
 
 @pytest.mark.native
