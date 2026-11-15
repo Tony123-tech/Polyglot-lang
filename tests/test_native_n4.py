@@ -163,6 +163,11 @@ fn char_is_alphabetic(value: char) -> bool {
     value.is_alphabetic()
 }
 """,
+    "char_is_numeric": """
+fn char_is_numeric(value: char) -> bool {
+    value.is_numeric()
+}
+""",
 }
 
 
@@ -492,3 +497,18 @@ def test_python_char_is_alphabetic_parity():
     assert namespace["char_is_alphabetic"]("a") is True
     assert namespace["char_is_alphabetic"]("é") is True
     assert namespace["char_is_alphabetic"]("1") is False
+
+
+@pytest.mark.native
+def test_native_char_is_numeric(native_ns):
+    assert native_ns["char_is_numeric"]("1") is True
+    assert native_ns["char_is_numeric"]("٣") is True
+    assert native_ns["char_is_numeric"]("a") is False
+
+
+def test_python_char_is_numeric_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_numeric"])))
+
+    assert namespace["char_is_numeric"]("1") is True
+    assert namespace["char_is_numeric"]("٣") is True
+    assert namespace["char_is_numeric"]("a") is False

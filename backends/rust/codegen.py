@@ -1628,6 +1628,8 @@ class RustCodegen:
                 return f"{recv}.is_char_boundary({self._emit_usize_arg(e.args[0])})"
             if e.method == "is_alphabetic" and not e.args:
                 return f"{recv}.is_alphabetic()"
+            if e.method == "is_numeric" and not e.args:
+                return f"{recv}.is_numeric()"
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return f"{recv}.{e.method}()"
             if e.method == "replace" and len(e.args) == 2:
