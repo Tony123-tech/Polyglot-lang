@@ -27,6 +27,11 @@ fn string_char_indices(value: String) -> Vec<(i64, char)> {
     value.char_indices()
 }
 """,
+    "string_trim_matches": """
+fn string_trim_matches(value: String) -> String {
+    value.trim_matches(|c| c == 'x')
+}
+""",
     "string_bytes": """
 fn string_bytes(value: String) -> Vec<u8> {
     value.bytes()
@@ -144,6 +149,21 @@ def test_python_string_char_indices():
         (2, "f"),
         (3, "é"),
     ]
+
+
+@pytest.mark.native
+def test_native_string_trim_matches(native_ns):
+    assert native_ns["string_trim_matches"]("xxabcxx") == "abc"
+    assert native_ns["string_trim_matches"]("abc") == "abc"
+    assert native_ns["string_trim_matches"]("xxxx") == ""
+
+
+def test_python_string_trim_matches():
+    namespace = compile_rust(parse(lex(SOURCES["string_trim_matches"])))
+
+    assert namespace["string_trim_matches"]("xxabcxx") == "abc"
+    assert namespace["string_trim_matches"]("abc") == "abc"
+    assert namespace["string_trim_matches"]("xxxx") == ""
 
 
 @pytest.mark.parametrize(

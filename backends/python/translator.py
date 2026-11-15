@@ -926,6 +926,16 @@ def _runtime_string_char_indices(value):
     return indices
 
 
+def _runtime_string_trim_matches(value, predicate):
+    start = 0
+    end = len(value)
+    while start < end and predicate(value[start]):
+        start += 1
+    while end > start and predicate(value[end - 1]):
+        end -= 1
+    return value[start:end]
+
+
 def _runtime_string_to_ascii_lowercase(value):
     return value.translate(
         str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
@@ -1322,6 +1332,7 @@ class Translator:
         ns["_string_lines"] = _runtime_string_lines
         ns["_string_is_char_boundary"] = _runtime_string_is_char_boundary
         ns["_string_char_indices"] = _runtime_string_char_indices
+        ns["_string_trim_matches"] = _runtime_string_trim_matches
         ns["_string_to_ascii_lowercase"] = _runtime_string_to_ascii_lowercase
         ns["_string_to_ascii_uppercase"] = _runtime_string_to_ascii_uppercase
         ns["_result_parse"] = _runtime_parse
@@ -3907,6 +3918,12 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_string_char_indices", ctx=ast.Load()),
                     args=[recv],
+                    keywords=[],
+                )
+            if e.method == "trim_matches" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_string_trim_matches", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
             if (
