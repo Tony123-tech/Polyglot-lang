@@ -171,6 +171,11 @@ fn n6_map_into_values(values: HashMap<String, i64>) -> Vec<i64> {
     values.into_values()
 }
 """,
+    "map_drain": """
+fn n6_map_drain(mut values: HashMap<String, i64>) -> Vec<(String, i64)> {
+    values.drain()
+}
+""",
 }
 
 
@@ -307,6 +312,23 @@ def test_python_map_into_keys_values():
     values = {"b": 2, "a": 1}
     assert sorted(ns["n6_map_into_keys"](values)) == ["a", "b"]
     assert sorted(ns["n6_map_into_values"](values)) == [1, 2]
+
+
+@pytest.mark.native
+def test_native_map_drain(native_ns):
+    assert sorted(native_ns["n6_map_drain"]({"b": 2, "a": 1})) == [
+        ("a", 1),
+        ("b", 2),
+    ]
+    assert native_ns["n6_map_drain"]({}) == []
+
+
+def test_python_map_drain():
+    ns = _run_python(SOURCES["map_drain"])
+    values = {"b": 2, "a": 1}
+    assert sorted(ns["n6_map_drain"](values)) == [("a", 1), ("b", 2)]
+    assert values == {}
+    assert ns["n6_map_drain"]({}) == []
 
 
 def test_python_map_retain():

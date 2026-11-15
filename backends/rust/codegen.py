@@ -1322,6 +1322,8 @@ class RustCodegen:
                         "(key.clone(), value.clone()))"
                         ".collect::<Vec<_>>()"
                     )
+                if e.method == "drain" and not e.args:
+                    return f"{recv}.drain().collect::<Vec<_>>()"
             if kind == "HashSet":
                 if e.method == "insert" and len(e.args) == 1:
                     return f"{recv}.insert({self._owned_arg_to_rust(e.args[0])})"

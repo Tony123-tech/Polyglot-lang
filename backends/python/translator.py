@@ -899,6 +899,12 @@ def _runtime_map_iter(mapping):
     return list(mapping.items())
 
 
+def _runtime_map_drain(mapping):
+    entries = list(mapping.items())
+    mapping.clear()
+    return entries
+
+
 def _runtime_map_entry(mapping, key):
     return _MapEntry(mapping, key)
 
@@ -1589,6 +1595,7 @@ class Translator:
         ns["_map_keys"] = _runtime_map_keys
         ns["_map_values"] = _runtime_map_values
         ns["_map_iter"] = _runtime_map_iter
+        ns["_map_drain"] = _runtime_map_drain
         ns["_map_entry"] = _runtime_map_entry
         ns["_map_slot_set"] = _runtime_map_slot_set
         ns["_map_slot_aug"] = _runtime_map_slot_aug
@@ -3546,6 +3553,12 @@ class Translator:
                 if e.method == "iter" and not e.args:
                     return ast.Call(
                         func=ast.Name(id="_map_iter", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
+                if e.method == "drain" and not e.args:
+                    return ast.Call(
+                        func=ast.Name(id="_map_drain", ctx=ast.Load()),
                         args=[recv],
                         keywords=[],
                     )
