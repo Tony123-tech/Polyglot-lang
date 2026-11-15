@@ -84,6 +84,9 @@ async fn n5_async_add(a: i64, b: i64) -> i64 { a + b }
     "async_identity": """
 async fn n5_async_identity(x: i64) -> i64 { x }
 """,
+    "async_send_add": """
+async fn n5_async_send_add(a: i64, b: i64) -> i64 { a + b }
+""",
     "vec_is_empty": """
 fn n5_vec_is_empty(values: Vec<i64>) -> bool {
     values.is_empty()
@@ -911,6 +914,39 @@ def test_native_async_identity(native_ns):
         return await native_ns["n5_async_identity"](42)
 
     assert asyncio.run(_await()) == 42
+
+
+@pytest.mark.native
+def test_native_async_send_add_on_main_thread(native_ns):
+    import asyncio
+
+    async def _await(future):
+        return await future
+
+    future = native_ns["n5_async_send_add"](3, 4)
+    assert asyncio.run(_await(future)) == 7
+
+
+@pytest.mark.native
+@pytest.mark.slow
+def test_native_async_send_add_across_threads(native_ns):
+    import asyncio
+    import threading
+
+    future = native_ns["n5_async_send_add"](20, 22)
+    result: dict[str, int] = {}
+
+    async def _await():
+        return await future
+
+    def _run():
+        result["value"] = asyncio.run(_await())
+
+    thread = threading.Thread(target=_run)
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert result["value"] == 42
 
 
 # ---------------------------------------------------------------------------

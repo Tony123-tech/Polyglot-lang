@@ -133,6 +133,7 @@ _RUNTIME_PREFIX = r"""
 use std::future::Future;
 use pyo3::IntoPyObjectExt;
 use std::pin::Pin;
+use std::sync::Mutex;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 fn _noop_waker() -> Waker {
@@ -162,9 +163,9 @@ fn polyglot_hashset_get_mut<T: Clone + Eq + std::hash::Hash>(
     }
 }
 
-#[pyclass(unsendable)]
+#[pyclass]
 pub struct PyFuture {
-    future: Option<Pin<Box<dyn Future<Output = PyResult<PyObject>> + 'static>>>,
+    future: Mutex<Option<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>>>,
 }
 
 #[pymethods]
@@ -172,7 +173,7 @@ impl PyFuture {
     fn __await__(mut slf: PyRefMut<'_, Self>) -> PyResult<Py<PyFutureIterator>> {
         let py = slf.py();
         let iter = PyFutureIterator {
-            future: slf.future.take(),
+            future: Mutex::new(slf.future.lock().unwrap().take()),
         };
         Py::new(py, iter)
     }
@@ -182,9 +183,9 @@ impl PyFuture {
     }
 }
 
-#[pyclass(unsendable)]
+#[pyclass]
 pub struct PyFutureIterator {
-    future: Option<Pin<Box<dyn Future<Output = PyResult<PyObject>> + 'static>>>,
+    future: Mutex<Option<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>>>,
 }
 
 #[pymethods]
@@ -194,7 +195,7 @@ impl PyFutureIterator {
     }
 
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<PyObject> {
-        let Some(mut fut) = slf.future.take() else {
+        let Some(mut fut) = slf.future.lock().unwrap().take() else {
             return Err(pyo3::exceptions::PyStopIteration::new_err(()));
         };
         let waker = _noop_waker();
@@ -205,7 +206,7 @@ impl PyFutureIterator {
             }
             Poll::Ready(Err(e)) => Err(e),
             Poll::Pending => {
-                slf.future = Some(fut);
+                *slf.future.lock().unwrap() = Some(fut);
                 Ok(pyo3::Python::with_gil(|py| py.None()))
             }
         }
@@ -214,10 +215,10 @@ impl PyFutureIterator {
 
 fn py_future<F>(future: F) -> PyFuture
 where
-    F: Future<Output = PyResult<PyObject>> + 'static,
+    F: Future<Output = PyResult<PyObject>> + Send + 'static,
 {
     PyFuture {
-        future: Some(Box::pin(future)),
+        future: Mutex::new(Some(Box::pin(future))),
     }
 }
 """
