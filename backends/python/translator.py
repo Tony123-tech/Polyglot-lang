@@ -1397,6 +1397,9 @@ class _Result:
     def is_ok_and(self, predicate):
         return self._is_ok and predicate(self._value)
 
+    def is_err_and(self, predicate):
+        return (not self._is_ok) and predicate(self._value)
+
     def unwrap_or(self, default):
         return self._value if self._is_ok else default
 
