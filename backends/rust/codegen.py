@@ -1375,6 +1375,8 @@ class RustCodegen:
             ):
                 inner = self.expr_to_rust(e.receiver.receiver)
                 return f"{inner}.chars().rev().collect::<Vec<char>>()"
+            if e.method == "rev" and not e.args:
+                return f"{recv}.iter().rev().cloned().collect::<Vec<_>>()"
             if e.method == "bytes" and not e.args:
                 return f"{recv}.bytes().collect::<Vec<u8>>()"
             if e.method == "parse" and not e.args:

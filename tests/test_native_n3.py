@@ -203,6 +203,11 @@ fn vec_product(values: Vec<i64>) -> i64 {
     values.product()
 }
 """,
+    "vec_rev": """
+fn vec_rev(values: Vec<i64>) -> Vec<i64> {
+    values.rev()
+}
+""",
 }
 
 
@@ -474,6 +479,19 @@ def test_python_vec_product_parity():
 
     assert namespace["vec_product"]([1, 2, 3, 4]) == 24
     assert namespace["vec_product"]([]) == 1
+
+
+@pytest.mark.native
+def test_native_vec_rev(native_ns):
+    assert native_ns["vec_rev"]([1, 2, 3]) == [3, 2, 1]
+    assert native_ns["vec_rev"]([]) == []
+
+
+def test_python_vec_rev_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_rev"])))
+
+    assert namespace["vec_rev"]([1, 2, 3]) == [3, 2, 1]
+    assert namespace["vec_rev"]([]) == []
 
 
 @pytest.mark.native
