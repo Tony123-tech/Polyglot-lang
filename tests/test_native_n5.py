@@ -87,6 +87,19 @@ async fn n5_async_identity(x: i64) -> i64 { x }
     "async_send_add": """
 async fn n5_async_send_add(a: i64, b: i64) -> i64 { a + b }
 """,
+    "async_impl_method": """
+struct N5AsyncCounter {
+    value: i64,
+}
+impl N5AsyncCounter {
+    fn new(value: i64) -> N5AsyncCounter {
+        N5AsyncCounter { value }
+    }
+    async fn double(&self) -> i64 {
+        self.value * 2
+    }
+}
+""",
     "vec_is_empty": """
 fn n5_vec_is_empty(values: Vec<i64>) -> bool {
     values.is_empty()
@@ -947,6 +960,19 @@ def test_native_async_send_add_across_threads(native_ns):
     thread.join(timeout=5)
     assert not thread.is_alive()
     assert result["value"] == 42
+
+
+@pytest.mark.native
+@pytest.mark.slow
+def test_native_async_impl_method(native_ns):
+    import asyncio
+
+    counter = native_ns["N5AsyncCounter"](21)
+
+    async def _await():
+        return await counter.double()
+
+    assert asyncio.run(_await()) == 42
 
 
 # ---------------------------------------------------------------------------

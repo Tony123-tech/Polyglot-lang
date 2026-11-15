@@ -13,6 +13,7 @@ Supports (v2 native, N2b):
 from __future__ import annotations
 
 import re
+from dataclasses import fields as dataclass_fields, is_dataclass
 
 from ast_nodes import (
     ArrayExpr,
@@ -104,6 +105,7 @@ from ast_nodes import (
 )
 from backends.errors import (
     InvalidIntegerParseLiteralError,
+    TranslateError,
     UnsupportedNativePatternError,
 )
 from match_diagnostics import warn_match_issues
@@ -253,6 +255,8 @@ class RustCodegen:
         self._in_pymethods = False
         self._result_types: tuple[str, str] | None = None
         self._current_return_type: str | None = None
+        self._self_field_aliases: dict[str, str] | None = None
+        self._payload_enum_names: set[str] = set()
 
     # ---- helpers ----------------------------------------------------------
 
@@ -301,6 +305,8 @@ class RustCodegen:
         self._in_pymethods = False
         self._result_types = None
         self._current_return_type = None
+        self._self_field_aliases = None
+        self._payload_enum_names = set()
 
         for item in program.items:
             if isinstance(item, StructDecl):
@@ -332,8 +338,12 @@ class RustCodegen:
                 variant.fields is None for variant in item.variants
             ):
                 self.pyclass_names.add(item.name)
+            elif isinstance(item, EnumDecl):
+                # Payload enums are generated without a Clone derive, so an
+                # async &self method cannot clone such a field.
+                self._payload_enum_names.add(item.name)
 
-                # Suppress warnings from aggressive `mut` / stub bodies.
+        # Suppress warnings from aggressive `mut` / stub bodies.
         self.emit("#![allow(unused_mut, unused_variables, dead_code, unused_imports)]")
         self.emit()
         self.emit("use pyo3::prelude::*;")
@@ -407,6 +417,74 @@ class RustCodegen:
             self.emit(f"type {item.name} = {self.type_to_rust(item.ty)};")
         elif isinstance(item, TraitDecl):
             pass
+
+    def _async_receiver_kind(self, fn: FnDecl) -> str | None:
+        """Classify the receiver of `fn` as ``shared``, ``mut`` or ``value``."""
+        if not fn.params:
+            return None
+        pattern = fn.params[0].pattern
+        if (
+            isinstance(pattern, PatRef)
+            and isinstance(pattern.inner, PatIdent)
+            and pattern.inner.name == "self"
+        ):
+            return "mut" if pattern.mutable else "shared"
+        if isinstance(pattern, PatIdent) and pattern.name == "self":
+            return "value"
+        return None
+
+    def _collect_async_self_usage(
+        self,
+        node: Node | list | tuple | None,
+        fields: set[str],
+        bare: list[Node],
+    ) -> None:
+        """Collect ``self.<field>`` reads and bare ``self`` uses in ``node``."""
+        if isinstance(node, Field):
+            if isinstance(node.receiver, Ident) and node.receiver.name == "self":
+                fields.add(node.name)
+            else:
+                self._collect_async_self_usage(node.receiver, fields, bare)
+            return
+        if isinstance(node, Ident):
+            if node.name == "self":
+                bare.append(node)
+            return
+        if is_dataclass(node):
+            for info in dataclass_fields(node):
+                self._collect_async_self_usage(getattr(node, info.name), fields, bare)
+        elif isinstance(node, (list, tuple)):
+            for item in node:
+                self._collect_async_self_usage(item, fields, bare)
+
+    def _prepare_async_self_fields(self, fn: FnDecl) -> dict[str, str]:
+        """Return field aliases to clone before an async ``&self`` body runs."""
+        fields: set[str] = set()
+        bare: list[Node] = []
+        if fn.body is not None:
+            self._collect_async_self_usage(fn.body, fields, bare)
+        if bare:
+            raise TranslateError(
+                f"async method '{fn.name}' uses `self` directly; "
+                "async &self methods may only access fields such as "
+                "`self.<field>`"
+            )
+        field_types = self.struct_field_types.get(self._current_impl_type or "", {})
+        aliases: dict[str, str] = {}
+        for name in sorted(fields):
+            ty = field_types.get(name)
+            if ty is None:
+                raise TranslateError(
+                    f"async method '{fn.name}' reads field '{name}', but the "
+                    "native backend cannot prove the field type is Clone"
+                )
+            if ty in self._payload_enum_names:
+                raise TranslateError(
+                    f"async method '{fn.name}' reads field '{name}' whose type "
+                    f"'{ty}' is not Clone; async &self methods cannot capture it"
+                )
+            aliases[name] = f"__self_{name}"
+        return aliases
 
     def generate_fn(self, fn: FnDecl, *, as_method: bool) -> None:
         from termination import check_function
@@ -485,9 +563,28 @@ class RustCodegen:
 
         unsafe_prefix = "unsafe " if fn.is_unsafe else ""
 
-        if fn.is_async and not as_method:
+        receiver_kind = self._async_receiver_kind(fn) if as_method else None
+        if fn.is_async and receiver_kind == "mut":
+            raise TranslateError(
+                f"async method '{fn.name}' takes `&mut self`; async &mut self "
+                "methods are not supported by the native backend yet"
+            )
+        if fn.is_async and receiver_kind == "value":
+            raise TranslateError(
+                f"async method '{fn.name}' takes `self` by value; async methods "
+                "must take `&self` or no receiver"
+            )
+
+        if fn.is_async:
+            aliases: dict[str, str] = {}
+            if receiver_kind == "shared" and fn.body is not None:
+                aliases = self._prepare_async_self_fields(fn)
             self.emit(f"fn {fn.name}({param_str}) -> PyResult<PyFuture> {{")
             self.indent()
+            previous_aliases = self._self_field_aliases
+            self._self_field_aliases = aliases
+            for name, alias in aliases.items():
+                self.emit(f"let {alias} = self.{name}.clone();")
             self.emit("Ok(py_future(async move {")
             self.indent()
             if fn.body is not None:
@@ -502,6 +599,7 @@ class RustCodegen:
                 self.emit("))")
             self.dedent()
             self.emit("}))")
+            self._self_field_aliases = previous_aliases
             self.dedent()
             self.emit("}")
             self.emit()
@@ -1366,6 +1464,13 @@ class RustCodegen:
             args = ", ".join(self.expr_to_rust(a) for a in e.args)
             return f"{self.expr_to_rust(e.receiver)}.{e.method}({args})"
         if isinstance(e, Field):
+            if (
+                self._self_field_aliases is not None
+                and isinstance(e.receiver, Ident)
+                and e.receiver.name == "self"
+                and e.name in self._self_field_aliases
+            ):
+                return self._self_field_aliases[e.name]
             return f"{self.expr_to_rust(e.receiver)}.{e.name}"
         if isinstance(e, Index):
             recv = self.expr_to_rust(e.receiver)

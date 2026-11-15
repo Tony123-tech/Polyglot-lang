@@ -105,19 +105,29 @@ impl Counter {
     assert asyncio.run(counter.get()) == 7
 
 
-def test_async_impl_method_native_codegen_is_sync_only():
-    """Native codegen has no async-method lowering; it emits a plain method.
-
-    This pins the documented limitation rather than the ideal behavior, so a
-    future native async implementation must update both this test and the
-    README.
-    """
+def test_async_impl_method_native_codegen_returns_pyfuture():
+    """Native async impl methods return a PyFuture instead of a plain method."""
     generated = _rust_source(
         "struct Counter { value: i64 }\n"
         "impl Counter { async fn get(&self) -> i64 { self.value } }\n"
     )
-    assert "fn get(&self) -> i64" in generated
-    assert "PyFuture" not in generated.split("impl Counter")[-1]
+    method = generated.split("impl Counter")[-1]
+    assert "fn get(&self) -> PyResult<PyFuture>" in method
+    assert "fn get(&self) -> i64" not in method
+    assert "PyFuture" in method
+    assert "py_future(async move" in method
+    assert "let __self_value = self.value.clone();" in method
+
+
+def test_async_mut_self_method_native_codegen_is_rejected():
+    with pytest.raises(TranslateError) as excinfo:
+        _rust_source(
+            "struct Counter { value: i64 }\n"
+            "impl Counter { async fn bump(&mut self) { self.value += 1; } }\n"
+        )
+    message = str(excinfo.value)
+    assert "&mut self" in message
+    assert "not supported" in message
 
 
 # ---------------------------------------------------------------------------
