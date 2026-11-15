@@ -532,6 +532,13 @@ def _runtime_vec_dedup_by_key(values: list, key) -> None:
     values[:] = deduped
 
 
+def _runtime_vec_is_sorted_by_key(values: list, key) -> bool:
+    return all(
+        key(values[index]) <= key(values[index + 1])
+        for index in range(len(values) - 1)
+    )
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1392,6 +1399,7 @@ class Translator:
         ns["_vec_concat"] = _runtime_vec_concat
         ns["_vec_swap_remove"] = _runtime_vec_swap_remove
         ns["_vec_dedup_by_key"] = _runtime_vec_dedup_by_key
+        ns["_vec_is_sorted_by_key"] = _runtime_vec_is_sorted_by_key
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3568,6 +3576,12 @@ class Translator:
             if e.method == "dedup_by_key" and len(e.args) == 1:
                 return ast.Call(
                     func=ast.Name(id="_vec_dedup_by_key", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "is_sorted_by_key" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_vec_is_sorted_by_key", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )

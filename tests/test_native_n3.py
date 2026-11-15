@@ -165,6 +165,11 @@ fn vec_sort_unstable_by_key(mut values: Vec<i64>) -> Vec<i64> {
     values
 }
 """,
+    "vec_is_sorted_by_key": """
+fn vec_is_sorted_by_key(values: Vec<i64>) -> bool {
+    values.is_sorted_by_key(|value| *value)
+}
+""",
 }
 
 
@@ -326,6 +331,21 @@ def test_python_vec_sort_unstable_by_key_parity():
 
     assert namespace["vec_sort_unstable_by_key"]([1, 3, 2, 4]) == [4, 3, 2, 1]
     assert namespace["vec_sort_unstable_by_key"]([]) == []
+
+
+@pytest.mark.native
+def test_native_vec_is_sorted_by_key(native_ns):
+    assert native_ns["vec_is_sorted_by_key"]([1, 2, 2, 3]) is True
+    assert native_ns["vec_is_sorted_by_key"]([1, 3, 2]) is False
+    assert native_ns["vec_is_sorted_by_key"]([]) is True
+
+
+def test_python_vec_is_sorted_by_key_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_is_sorted_by_key"])))
+
+    assert namespace["vec_is_sorted_by_key"]([1, 2, 2, 3]) is True
+    assert namespace["vec_is_sorted_by_key"]([1, 3, 2]) is False
+    assert namespace["vec_is_sorted_by_key"]([]) is True
 
 
 @pytest.mark.native
