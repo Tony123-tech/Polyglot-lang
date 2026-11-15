@@ -1403,6 +1403,12 @@ class RustCodegen:
                 and self._is_vec_expr(e.receiver)
             ):
                 return f"{recv}.iter().flatten().cloned().collect::<Vec<_>>()"
+            if e.method == "chain" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
+                other = self.expr_to_rust(e.args[0])
+                return (
+                    f"{recv}.iter().chain({other}.iter())"
+                    ".cloned().collect::<Vec<_>>()"
+                )
             if e.method == "bytes" and not e.args:
                 return f"{recv}.bytes().collect::<Vec<u8>>()"
             if e.method == "parse" and not e.args:

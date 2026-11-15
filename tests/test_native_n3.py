@@ -228,6 +228,11 @@ fn vec_flatten(values: Vec<Vec<i64>>) -> Vec<i64> {
     values.flatten()
 }
 """,
+    "vec_chain": """
+fn vec_chain(left: Vec<i64>, right: Vec<i64>) -> Vec<i64> {
+    left.chain(right)
+}
+""",
 }
 
 
@@ -564,6 +569,19 @@ def test_python_vec_flatten_parity():
 
     assert namespace["vec_flatten"]([[1, 2], [], [3]]) == [1, 2, 3]
     assert namespace["vec_flatten"]([]) == []
+
+
+@pytest.mark.native
+def test_native_vec_chain(native_ns):
+    assert native_ns["vec_chain"]([1, 2], [3]) == [1, 2, 3]
+    assert native_ns["vec_chain"]([], []) == []
+
+
+def test_python_vec_chain_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_chain"])))
+
+    assert namespace["vec_chain"]([1, 2], [3]) == [1, 2, 3]
+    assert namespace["vec_chain"]([], []) == []
 
 
 @pytest.mark.native
