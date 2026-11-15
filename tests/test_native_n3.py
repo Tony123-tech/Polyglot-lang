@@ -208,6 +208,11 @@ fn vec_rev(values: Vec<i64>) -> Vec<i64> {
     values.rev()
 }
 """,
+    "vec_skip": """
+fn vec_skip(values: Vec<i64>) -> Vec<i64> {
+    values.skip(2)
+}
+""",
 }
 
 
@@ -492,6 +497,19 @@ def test_python_vec_rev_parity():
 
     assert namespace["vec_rev"]([1, 2, 3]) == [3, 2, 1]
     assert namespace["vec_rev"]([]) == []
+
+
+@pytest.mark.native
+def test_native_vec_skip(native_ns):
+    assert native_ns["vec_skip"]([1, 2, 3, 4]) == [3, 4]
+    assert native_ns["vec_skip"]([1, 2]) == []
+
+
+def test_python_vec_skip_parity():
+    namespace = compile_rust(parse(lex(SOURCES["vec_skip"])))
+
+    assert namespace["vec_skip"]([1, 2, 3, 4]) == [3, 4]
+    assert namespace["vec_skip"]([1, 2]) == []
 
 
 @pytest.mark.native

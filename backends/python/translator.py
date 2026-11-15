@@ -581,6 +581,12 @@ def _runtime_vec_rev(values: list) -> list:
     return list(reversed(values))
 
 
+def _runtime_vec_skip(values: list, count: int) -> list:
+    if count <= 0:
+        return list(values)
+    return list(values[count:])
+
+
 def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
@@ -1450,6 +1456,7 @@ class Translator:
         ns["_vec_sum"] = _runtime_vec_sum
         ns["_vec_product"] = _runtime_vec_product
         ns["_vec_rev"] = _runtime_vec_rev
+        ns["_vec_skip"] = _runtime_vec_skip
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
         ns["_vec_truncate"] = _runtime_vec_truncate
@@ -3681,6 +3688,16 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_vec_rev", ctx=ast.Load()),
                     args=[recv],
+                    keywords=[],
+                )
+            if (
+                e.method == "skip"
+                and len(e.args) == 1
+                and self._is_vec_expr(e.receiver)
+            ):
+                return ast.Call(
+                    func=ast.Name(id="_vec_skip", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
             if e.method == "retain" and len(e.args) == 1:
