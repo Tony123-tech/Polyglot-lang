@@ -25,7 +25,7 @@ struct Point { x: i64, y: i64 }
 
 impl Point {
     fn new(x: i64, y: i64) -> Point { Point { x: x, y: y } }
-    fn sum(&self) -> i64 { self.x + self.y }
+    fn total(&self) -> i64 { self.x + self.y }
     fn duplicate(&self) -> Point { self.clone() }
 }
 impl Point {
@@ -34,7 +34,7 @@ impl Point {
 
 fn main() -> i64 {
     let p = Point::new(1, 2);
-    p.sum()
+    p.total()
 }
 """
 
@@ -57,10 +57,10 @@ def test_point_is_dataclass_with_fields():
     assert p.y == 4
 
 
-def test_point_sum_method():
+def test_point_total_method():
     ns = _run(SRC)
     p = ns["Point"](10, 20)
-    assert p.sum() == 30
+    assert p.total() == 30
 
 
 def test_point_method_returns_self():
@@ -76,7 +76,7 @@ def test_point_methods_across_impl_blocks():
     ns = _run(SRC)
     point = ns["Point"](5, 8)
 
-    assert point.sum() == 13
+    assert point.total() == 13
     assert point.product() == 40
 
 
@@ -114,7 +114,7 @@ def test_point_new_constructor():
 def test_point_new_accepts_positional():
     ns = _run(SRC)
     p = ns["Point"].new(1, 2)
-    assert p.sum() == 3
+    assert p.total() == 3
 
 
 def test_point_has_repr_from_dataclass():

@@ -33,7 +33,7 @@ struct Point { x: i64, y: i64 }
 
 impl Point {
     fn new(x: i64, y: i64) -> Point { Point { x: x, y: y } }
-    fn sum(&self) -> i64 { self.x + self.y }
+    fn total(&self) -> i64 { self.x + self.y }
     fn duplicate(&self) -> Point { self.clone() }
 }
 impl Point {
@@ -42,7 +42,7 @@ impl Point {
 
 fn test_native_point_make(x: i64, y: i64) -> i64 {
     let p = Point::new(x, y);
-    p.sum()
+    p.total()
 }
 """,
     "test_native_multiple_pyclasses": """
@@ -160,7 +160,7 @@ def test_native_struct_method_returns_self(native_ns):
 def test_native_multiple_impl_blocks(native_ns):
     point = native_ns["Point"](5, 8)
 
-    assert point.sum() == 13
+    assert point.total() == 13
     assert point.product() == 40
 
 
