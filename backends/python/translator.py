@@ -725,6 +725,9 @@ class _MapSlot:
         self._mapping[self._key] = value
         return value
 
+    def __iter__(self):
+        return iter((self._key, self))
+
     def _apply(self, other, op):
         if isinstance(other, _MapSlot):
             other = other.get()
@@ -908,6 +911,14 @@ def _runtime_map_keys(mapping):
 
 def _runtime_map_values(mapping):
     return list(mapping.values())
+
+
+def _runtime_map_iter_mut(mapping):
+    return [_MapSlot(mapping, key) for key in list(mapping.keys())]
+
+
+def _runtime_map_values_mut(mapping):
+    return [_MapSlot(mapping, key) for key in list(mapping.keys())]
 
 
 def _runtime_map_iter(mapping):
@@ -1801,6 +1812,8 @@ class Translator:
         ns["_map_retain"] = _runtime_map_retain
         ns["_map_keys"] = _runtime_map_keys
         ns["_map_values"] = _runtime_map_values
+        ns["_map_iter_mut"] = _runtime_map_iter_mut
+        ns["_map_values_mut"] = _runtime_map_values_mut
         ns["_map_iter"] = _runtime_map_iter
         ns["_map_drain"] = _runtime_map_drain
         ns["_map_extend"] = _runtime_map_extend
@@ -2550,26 +2563,59 @@ class Translator:
                 f.col,
             )
         iter_expr = self.translate_expr(f.iter)
-        if isinstance(f.pattern, PatIdent):
-            name = f.pattern.name
-            previous_numeric_type = self._numeric_types.get(name)
-            previous_binding_type = self._binding_types.get(name)
-            loop_type = self._known_expr_type(f.iter)
-            self._numeric_types.pop(name, None)
-            self._binding_types.pop(name, None)
-            if loop_type in _PRIMITIVE_NUMERIC_TYPES:
-                self._numeric_types[name] = loop_type
-                self._binding_types[name] = loop_type
-            elif loop_type is not None:
-                self._binding_types[name] = loop_type
-            try:
+        slot_name = self._mutable_map_iter_slot(f.pattern, f.iter)
+        slot_was_bound = slot_name is not None and slot_name in self._slot_bindings
+        if slot_name is not None:
+            self._slot_bindings.add(slot_name)
+        try:
+            if isinstance(f.pattern, PatIdent):
+                name = f.pattern.name
+                previous_numeric_type = self._numeric_types.get(name)
+                previous_binding_type = self._binding_types.get(name)
+                loop_type = self._known_expr_type(f.iter)
+                self._numeric_types.pop(name, None)
+                self._binding_types.pop(name, None)
+                if loop_type in _PRIMITIVE_NUMERIC_TYPES:
+                    self._numeric_types[name] = loop_type
+                    self._binding_types[name] = loop_type
+                elif loop_type is not None:
+                    self._binding_types[name] = loop_type
+                try:
+                    body = self.translate_block_as_body(f.body)
+                finally:
+                    self._restore_binding(
+                        self._numeric_types, name, previous_numeric_type
+                    )
+                    self._restore_binding(
+                        self._binding_types, name, previous_binding_type
+                    )
+            else:
                 body = self.translate_block_as_body(f.body)
-            finally:
-                self._restore_binding(self._numeric_types, name, previous_numeric_type)
-                self._restore_binding(self._binding_types, name, previous_binding_type)
-        else:
-            body = self.translate_block_as_body(f.body)
+        finally:
+            if slot_name is not None and not slot_was_bound:
+                self._slot_bindings.discard(slot_name)
         return ast.For(target=target, iter=iter_expr, body=body, orelse=[])
+
+    def _mutable_map_iter_slot(
+        self,
+        pattern: Pattern,
+        iter_expr: Expr,
+    ) -> str | None:
+        """Return the loop variable that holds a mutable map slot, if any."""
+        if not isinstance(iter_expr, MethodCall) or iter_expr.args:
+            return None
+        if not self._is_hashmap_expr(iter_expr.receiver):
+            return None
+        if iter_expr.method == "values_mut" and isinstance(pattern, PatIdent):
+            return pattern.name
+        if (
+            iter_expr.method == "iter_mut"
+            and isinstance(pattern, PatTuple)
+            and len(pattern.elems) == 2
+            and isinstance(pattern.elems[1], PatIdent)
+        ):
+            return pattern.elems[1].name
+        return None
 
     @staticmethod
     def _restore_binding(
@@ -3605,6 +3651,7 @@ class Translator:
         "is_uppercase": ("_handle_string_char_methods", "_handle_tail_methods",),
         "is_whitespace": ("_handle_string_char_methods", "_handle_tail_methods",),
         "iter": ("_handle_collection_methods", "_handle_tail_methods",),
+        "iter_mut": ("_handle_collection_methods", "_handle_tail_methods",),
         "join": ("_handle_tail_methods",),
         "keys": ("_handle_collection_methods", "_handle_tail_methods",),
         "last": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
@@ -3679,6 +3726,7 @@ class Translator:
         "unwrap_or": ("_handle_option_result_methods", "_handle_tail_methods",),
         "unwrap_or_else": ("_handle_option_result_methods", "_handle_tail_methods",),
         "values": ("_handle_collection_methods", "_handle_tail_methods",),
+        "values_mut": ("_handle_collection_methods", "_handle_tail_methods",),
         "windows": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
         "xor": ("_handle_option_result_methods", "_handle_tail_methods",),
         "zip": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
@@ -3759,6 +3807,18 @@ class Translator:
             if e.method == "iter" and not e.args:
                 return ast.Call(
                     func=ast.Name(id="_map_iter", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "iter_mut" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_map_iter_mut", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "values_mut" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_map_values_mut", ctx=ast.Load()),
                     args=[recv],
                     keywords=[],
                 )

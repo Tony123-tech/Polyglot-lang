@@ -203,6 +203,27 @@ fn n6_map_remove_entry(
     values.remove_entry(&key)
 }
 """,
+    "map_iter_mut": """
+fn n7_map_iter_mut_bump(
+    mut values: HashMap<String, i64>,
+) -> Vec<(String, i64)> {
+    for (key, value) in values.iter_mut() {
+        *value += key.len() as i64;
+    }
+    values.iter()
+}
+""",
+    "map_values_mut": """
+fn n7_map_values_mut_scale(
+    mut values: HashMap<String, i64>,
+    factor: i64,
+) -> Vec<i64> {
+    for value in values.values_mut() {
+        *value *= factor;
+    }
+    values.values()
+}
+""",
 }
 
 
@@ -501,3 +522,36 @@ fn n6_bad_closure_slot(mut values: HashMap<String, i64>) {
 """
     with pytest.raises(TranslateError, match="mutable map slot"):
         _run_python(src)
+
+
+@pytest.mark.native
+def test_native_map_iter_mut(native_ns):
+    result = native_ns["n7_map_iter_mut_bump"]({"a": 1, "ab": 2})
+    assert sorted(result) == [("a", 2), ("ab", 4)]
+    assert native_ns["n7_map_iter_mut_bump"]({}) == []
+
+
+def test_python_map_iter_mut():
+    ns = _run_python(SOURCES["map_iter_mut"])
+    assert sorted(ns["n7_map_iter_mut_bump"]({"a": 1, "ab": 2})) == [
+        ("a", 2),
+        ("ab", 4),
+    ]
+    assert ns["n7_map_iter_mut_bump"]({}) == []
+
+
+@pytest.mark.native
+def test_native_map_values_mut(native_ns):
+    assert sorted(native_ns["n7_map_values_mut_scale"]({"a": 1, "b": 2}, 3)) == [
+        3,
+        6,
+    ]
+    assert native_ns["n7_map_values_mut_scale"]({}, 3) == []
+
+
+def test_python_map_values_mut():
+    ns = _run_python(SOURCES["map_values_mut"])
+    values = {"a": 1, "b": 2}
+    assert sorted(ns["n7_map_values_mut_scale"](values, 3)) == [3, 6]
+    assert values == {"a": 3, "b": 6}
+    assert ns["n7_map_values_mut_scale"]({}, 3) == []

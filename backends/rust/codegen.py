@@ -1322,6 +1322,10 @@ class RustCodegen:
                         "(key.clone(), value.clone()))"
                         ".collect::<Vec<_>>()"
                     )
+                if e.method == "iter_mut" and not e.args:
+                    return f"{recv}.iter_mut()"
+                if e.method == "values_mut" and not e.args:
+                    return f"{recv}.values_mut()"
                 if e.method == "drain" and not e.args:
                     return f"{recv}.drain().collect::<Vec<_>>()"
                 if e.method == "extend" and len(e.args) == 1:
