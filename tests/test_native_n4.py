@@ -261,6 +261,11 @@ fn char_is_control(value: char) -> bool {
     value.is_control()
 }
 """,
+    "char_is_ascii_hexdigit": """
+fn char_is_ascii_hexdigit(value: char) -> bool {
+    value.is_ascii_hexdigit()
+}
+""",
 }
 
 
@@ -915,3 +920,22 @@ def test_python_char_is_control_parity():
     assert namespace["char_is_control"]("\x9f") is True
     assert namespace["char_is_control"]("a") is False
     assert namespace["char_is_control"]("é") is False
+
+
+@pytest.mark.native
+def test_native_char_is_ascii_hexdigit(native_ns):
+    assert native_ns["char_is_ascii_hexdigit"]("0") is True
+    assert native_ns["char_is_ascii_hexdigit"]("a") is True
+    assert native_ns["char_is_ascii_hexdigit"]("F") is True
+    assert native_ns["char_is_ascii_hexdigit"]("g") is False
+    assert native_ns["char_is_ascii_hexdigit"]("é") is False
+
+
+def test_python_char_is_ascii_hexdigit_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_ascii_hexdigit"])))
+
+    assert namespace["char_is_ascii_hexdigit"]("0") is True
+    assert namespace["char_is_ascii_hexdigit"]("a") is True
+    assert namespace["char_is_ascii_hexdigit"]("F") is True
+    assert namespace["char_is_ascii_hexdigit"]("g") is False
+    assert namespace["char_is_ascii_hexdigit"]("é") is False
