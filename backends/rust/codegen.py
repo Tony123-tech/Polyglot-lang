@@ -1668,6 +1668,8 @@ class RustCodegen:
                     f"{recv}.eq_ignore_ascii_case("
                     f"&{self.expr_to_rust(e.args[0])})"
                 )
+            if e.method == "is_ascii_control" and not e.args:
+                return f"{recv}.is_ascii_control()"
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return f"{recv}.{e.method}()"
             if e.method == "replace" and len(e.args) == 2:

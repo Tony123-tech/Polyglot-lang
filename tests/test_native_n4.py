@@ -271,6 +271,11 @@ fn char_eq_ignore_ascii_case(value: char, other: char) -> bool {
     value.eq_ignore_ascii_case(&other)
 }
 """,
+    "char_is_ascii_control": """
+fn char_is_ascii_control(value: char) -> bool {
+    value.is_ascii_control()
+}
+""",
 }
 
 
@@ -963,3 +968,22 @@ def test_python_char_eq_ignore_ascii_case_parity():
     assert namespace["char_eq_ignore_ascii_case"]("a", "b") is False
     assert namespace["char_eq_ignore_ascii_case"]("é", "É") is False
     assert namespace["char_eq_ignore_ascii_case"]("é", "é") is True
+
+
+@pytest.mark.native
+def test_native_char_is_ascii_control(native_ns):
+    assert native_ns["char_is_ascii_control"]("\x00") is True
+    assert native_ns["char_is_ascii_control"]("\n") is True
+    assert native_ns["char_is_ascii_control"]("\x7f") is True
+    assert native_ns["char_is_ascii_control"]("\x9f") is False
+    assert native_ns["char_is_ascii_control"]("a") is False
+
+
+def test_python_char_is_ascii_control_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_is_ascii_control"])))
+
+    assert namespace["char_is_ascii_control"]("\x00") is True
+    assert namespace["char_is_ascii_control"]("\n") is True
+    assert namespace["char_is_ascii_control"]("\x7f") is True
+    assert namespace["char_is_ascii_control"]("\x9f") is False
+    assert namespace["char_is_ascii_control"]("a") is False

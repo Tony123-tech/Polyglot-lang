@@ -1205,6 +1205,11 @@ def _runtime_parse(value):
         return _Result.from_err(str(exc))
 
 
+def _runtime_char_is_ascii_control(value):
+    code = ord(value)
+    return code < 0x20 or code == 0x7F
+
+
 def _runtime_char_eq_ignore_ascii_case(value, other):
     if len(value) != 1 or len(other) != 1:
         return False
@@ -1780,6 +1785,7 @@ class Translator:
         ns["_char_is_control"] = _runtime_char_is_control
         ns["_char_is_ascii_hexdigit"] = _runtime_char_is_ascii_hexdigit
         ns["_char_eq_ignore_ascii_case"] = _runtime_char_eq_ignore_ascii_case
+        ns["_char_is_ascii_control"] = _runtime_char_is_ascii_control
         ns["_map_insert"] = _runtime_map_insert
         ns["_map_get"] = _runtime_map_get
         ns["_map_get_mut"] = _runtime_map_get_mut
@@ -4697,6 +4703,15 @@ class Translator:
                         ctx=ast.Load(),
                     ),
                     args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "is_ascii_control" and not e.args:
+                return ast.Call(
+                    func=ast.Name(
+                        id="_char_is_ascii_control",
+                        ctx=ast.Load(),
+                    ),
+                    args=[recv],
                     keywords=[],
                 )
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
