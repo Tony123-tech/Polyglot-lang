@@ -95,6 +95,7 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 |---|---|---|
 | Vec, String, Option, Result | ✅ | ✅ |
 | HashMap (core ops) | ✅ | ✅ |
+| HashMap mutable iterators (`iter_mut`, `values_mut`) | ✅ | ✅ |
 | BTreeMap | ✅ | ✅ |
 | HashSet | ✅ | ✅ |
 | Nested HashMap (depth 1) | ✅ | ✅ |
@@ -125,7 +126,7 @@ iteration order is unspecified; sort before comparing. `get_mut` on
 - **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
 - **N6:** Additional `Vec` methods (`first`, `last`, `get`, `truncate`, `rotate_*`, `fill`, `swap`, `resize`, `split_off`, `partition`, `sort_*`, `is_sorted`, and others) and `String` methods (`find`, `rfind`, `strip_*`, `split_once`, `lines`, `as_bytes`, `is_char_boundary`, and others).
 - **N7:** Distinct `usize`/`isize` types, explicit `as` boundaries, range-loop variable typing, and selectable Python target-width simulation.
-- **N8:** `HashMap<K, V>` construction and supported operations, typed `usize` length, dict conversion, key/value/iteration views, entry insertion, and mutable access.
+- **N8:** `HashMap<K, V>` construction and supported operations, typed `usize` length, dict conversion, key/value/iteration views, mutable iterators, entry insertion, and mutable access.
 - **N9:** Dedicated Python/native coverage for Platform-defined Result/Option combinators and native `Result::and_then`/`or_else`.
 - **M10:** `#[terminates]` enables conservative static termination checks for bounded ranges, decreasing `while` variants, and recursive descent.
 - **M5:** Send-aware `PyFuture`, async `&self` impl methods, drop-based cancellation, and a polling timeout helper for the native backend.

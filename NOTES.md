@@ -891,6 +891,7 @@ N7 adds `HashMap` support on both backends with byte-for-byte parity for the imp
 - Construction: `HashMap::new()` and `HashMap<K, V>`-annotated bindings.
 - Core operations: `insert`, `get`, `get_mut`, `remove`, `contains_key`, `len`, and `is_empty`.
 - Views: `keys`, `values`, and `iter`, each returning an owned `Vec` so iteration can cross the Python boundary.
+- Mutable iterators: `iter_mut` and `values_mut` yield mutable views, so `*value = ...` and `*value += ...` write back to the map.
 - Entry subset: `or_insert`, `or_insert_with`, and `and_modify`.
 - Mutable slots: `*slot = value` and `*slot += value` (plus `-=`, `*=`, `/=`) for values obtained from `get_mut` or the entry API.
 - Struct fields: a `HashMap` field accessed as `self.field` inside an `impl` method is recognized as a map.
@@ -918,9 +919,10 @@ The Python backend represents a Rust `&mut V` with `_MapSlot`, which records the
 ### Follow-ups
 
 - Added `HashMap` receiver resolution for parameters and nested struct fields on both backends, sharing the same `_expr_struct_type` helper used for map detection.
+- Added `iter_mut` and `values_mut`: the Python backend returns `_MapSlot` views, while the native backend iterates with `.iter_mut()`/`.values_mut()`; loop variables are tracked as mutable slots so deref assignments write through.
 - Added entry `key()` and `or_insert_with_key()`.
 - Added `%=` for map-slot mutation and switched `/=`/`%=` to the Rust-compatible integer helpers.
-- New coverage lives in `tests/test_native_n7_map.py` (`map_receivers`, `map_entry_key`).
+- New coverage lives in `tests/test_native_n7_map.py` (`map_receivers`, `map_entry_key`, `map_iter_mut`, `map_values_mut`).
 
 ### Status after N7
 
