@@ -41,6 +41,7 @@ import struct
 import sys
 from copy import copy
 from functools import cmp_to_key, reduce
+from typing import ClassVar
 
 from ast_nodes import (
     ArrayExpr,
@@ -422,7 +423,7 @@ def _runtime_vec_dedup_by(values: list, same_bucket) -> None:
     values[:] = deduped
 
 
-def _runtime_vec_binary_search(values: list, target) -> "_Result":
+def _runtime_vec_binary_search(values: list, target) -> _Result:
     low, high = 0, len(values)
     while low < high:
         middle = (low + high) // 2
@@ -1573,6 +1574,13 @@ class Translator:
         self._return_numeric_type: str | None = None
         self._return_type_name: str | None = None
         self.target_width: int = HOST_TARGET_WIDTH
+        self._method_handlers = {
+            method: tuple(
+                getattr(Translator, handler_name)
+                for handler_name in handler_names
+            )
+            for method, handler_names in self._METHOD_HANDLER_NAMES.items()
+        }
 
     # ---- entry -------------------------------------------------------------
 
@@ -3535,6 +3543,1423 @@ class Translator:
             return self._coerce_numeric(inner, target)
         return inner
 
+    _METHOD_HANDLER_NAMES: ClassVar[dict[str, tuple[str, ...]]] = {
+        "all": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "and": ("_handle_collection_methods", "_handle_option_result_methods", "_handle_tail_methods",),
+        "any": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "as_bytes": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "as_slice": ("_handle_tail_methods",),
+        "binary_search": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "bytes": ("_handle_tail_methods",),
+        "chain": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "char_indices": ("_handle_tail_methods",),
+        "chars": ("_handle_tail_methods",),
+        "chunks": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "chunks_exact": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "clone": ("_handle_tail_methods",),
+        "concat": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "contains": ("_handle_collection_methods", "_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "contains_key": ("_handle_collection_methods", "_handle_tail_methods",),
+        "dedup": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "dedup_by": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "dedup_by_key": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "drain": ("_handle_collection_methods", "_handle_tail_methods",),
+        "ends_with": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "entry": ("_handle_collection_methods", "_handle_tail_methods",),
+        "enumerate": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "eq_ignore_ascii_case": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "extend": ("_handle_collection_methods", "_handle_tail_methods",),
+        "extend_from_slice": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "fill": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "filter": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "find": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "first": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "flatten": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "fold": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "get": ("_handle_collection_methods", "_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "get_key_value": ("_handle_collection_methods", "_handle_tail_methods",),
+        "get_mut": ("_handle_collection_methods", "_handle_tail_methods",),
+        "insert": ("_handle_collection_methods", "_handle_tail_methods",),
+        "into_keys": ("_handle_collection_methods", "_handle_tail_methods",),
+        "into_values": ("_handle_collection_methods", "_handle_tail_methods",),
+        "is_alphabetic": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_alphanumeric": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_alphabetic": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_alphanumeric": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_control": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_digit": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_hexdigit": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_lowercase": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_punctuation": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_uppercase": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_ascii_whitespace": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_char_boundary": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_control": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_empty": ("_handle_collection_methods", "_handle_string_char_methods", "_handle_tail_methods",),
+        "is_lowercase": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_numeric": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_sorted": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "is_sorted_by": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "is_sorted_by_key": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "is_uppercase": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "is_whitespace": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "iter": ("_handle_collection_methods", "_handle_tail_methods",),
+        "join": ("_handle_tail_methods",),
+        "keys": ("_handle_collection_methods", "_handle_tail_methods",),
+        "last": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "len": ("_handle_collection_methods", "_handle_tail_methods",),
+        "len_utf16": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "len_utf8": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "lines": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "map": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "map_err": ("_handle_option_result_methods", "_handle_tail_methods",),
+        "matches": ("_handle_tail_methods",),
+        "max": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "min": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "or": ("_handle_collection_methods", "_handle_option_result_methods", "_handle_tail_methods",),
+        "parse": ("_handle_tail_methods",),
+        "partition": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "position": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "product": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "rchunks": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "rchunks_exact": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "remove": ("_handle_collection_methods", "_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "remove_entry": ("_handle_collection_methods", "_handle_tail_methods",),
+        "repeat": ("_handle_tail_methods",),
+        "replace": ("_handle_tail_methods",),
+        "replacen": ("_handle_tail_methods",),
+        "resize": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "retain": ("_handle_collection_methods", "_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "rev": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "rfind": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "rmatches": ("_handle_tail_methods",),
+        "rotate_left": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "rotate_right": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "rsplit": ("_handle_tail_methods",),
+        "rsplit_once": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "rsplit_terminator": ("_handle_tail_methods",),
+        "rsplitn": ("_handle_tail_methods",),
+        "skip": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "sort_by": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "sort_by_key": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "sort_unstable": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "sort_unstable_by_key": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "split": ("_handle_tail_methods",),
+        "split_at": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "split_first": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "split_last": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "split_off": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "split_once": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "split_terminator": ("_handle_tail_methods",),
+        "split_whitespace": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "splitn": ("_handle_tail_methods",),
+        "starts_with": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "step_by": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "strip_prefix": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "strip_suffix": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "sum": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "swap": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "swap_remove": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "to_ascii_lowercase": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "to_ascii_uppercase": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "to_digit": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "to_lowercase": ("_handle_tail_methods",),
+        "to_string": ("_handle_tail_methods",),
+        "to_uppercase": ("_handle_tail_methods",),
+        "to_vec": ("_handle_tail_methods",),
+        "trim": ("_handle_tail_methods",),
+        "trim_end": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "trim_end_matches": ("_handle_tail_methods",),
+        "trim_matches": ("_handle_tail_methods",),
+        "trim_start": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "trim_start_matches": ("_handle_tail_methods",),
+        "truncate": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "unwrap": ("_handle_option_result_methods", "_handle_tail_methods",),
+        "unwrap_or": ("_handle_option_result_methods", "_handle_tail_methods",),
+        "unwrap_or_else": ("_handle_option_result_methods", "_handle_tail_methods",),
+        "values": ("_handle_collection_methods", "_handle_tail_methods",),
+        "windows": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "xor": ("_handle_option_result_methods", "_handle_tail_methods",),
+        "zip": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+    }
+
+    def _handle_collection_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+        if self._is_hashmap_expr(e.receiver):
+            if e.method == "insert" and len(e.args) == 2:
+                return ast.Call(
+                    func=ast.Name(id="_map_insert", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                        self.translate_expr(e.args[1]),
+                    ],
+                    keywords=[],
+                )
+            if e.method == "get" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_map_get", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "get_mut" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_map_get_mut", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "remove" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_map_remove", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "retain" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_map_retain", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "contains_key" and len(e.args) == 1:
+                return ast.Compare(
+                    left=self.translate_expr(e.args[0]),
+                    ops=[ast.In()],
+                    comparators=[recv],
+                )
+            if e.method == "entry" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_map_entry", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "keys" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_map_keys", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "into_keys" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_map_keys", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "into_values" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_map_values", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "values" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_map_values", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "iter" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_map_iter", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "drain" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_map_drain", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "extend" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_map_extend", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "get_key_value" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_map_get_key_value", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "remove_entry" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_map_remove_entry", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+        if self._is_hashset_expr(e.receiver):
+            if e.method == "insert" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_hashset_insert", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "contains" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_hashset_contains", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "remove" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_hashset_remove", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "get_mut" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_hashset_get_mut", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "len" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_hashset_len", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "is_empty" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_hashset_is_empty", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "iter" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_hashset_iter", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+        if self._is_btreemap_expr(e.receiver):
+            if e.method == "insert" and len(e.args) == 2:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_insert", ctx=ast.Load()),
+                    args=[
+                        recv,
+                        self.translate_expr(e.args[0]),
+                        self.translate_expr(e.args[1]),
+                    ],
+                    keywords=[],
+                )
+            if e.method == "get" and len(e.args) == 1:
+                v = ast.Call(
+                    func=ast.Name(id="_btreemap_get", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+                # return Option-like for parity? but easier to return value/None; keep simple
+                return v
+            if e.method == "remove" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_remove", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "contains_key" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_contains", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "len" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_len", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "is_empty" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_is_empty", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "keys" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_keys", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "values" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_values", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "iter" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_iter", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "entry" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_entry", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "get_mut" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_get_mut", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+        if (
+            e.method == "and"
+            and len(e.args) == 1
+            and self._option_result_type(e.receiver) == "Result"
+        ):
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="and_",
+                    ctx=ast.Load(),
+                ),
+                args=[self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if (
+            e.method == "or"
+            and len(e.args) == 1
+            and self._option_result_type(e.receiver) == "Result"
+        ):
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="or_",
+                    ctx=ast.Load(),
+                ),
+                args=[self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        return None
+
+    def _handle_option_result_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+        if e.method == "map_err" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="map_err",
+                    ctx=ast.Load(),
+                ),
+                args=[self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "unwrap" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="unwrap",
+                    ctx=ast.Load(),
+                ),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "unwrap_or" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="unwrap_or",
+                    ctx=ast.Load(),
+                ),
+                args=[self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "unwrap_or_else" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="unwrap_or_else",
+                    ctx=ast.Load(),
+                ),
+                args=[self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method in ("and", "or", "xor") and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(
+                    id=f"_option_{e.method}",
+                    ctx=ast.Load(),
+                ),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        return None
+
+    def _handle_vec_iterator_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+        if e.method in ("windows", "chunks") and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(
+                    id=f"_vec_{e.method}",
+                    ctx=ast.Load(),
+                ),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "chunks_exact" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_chunks_exact", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "rchunks" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_rchunks", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "rchunks_exact" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_rchunks_exact", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "concat" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_vec_concat", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "swap_remove" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_swap_remove", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "dedup_by_key" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_dedup_by_key", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "is_sorted_by_key" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_is_sorted_by_key", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "position" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_position", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "any" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_any", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "all" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_all", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "min" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_vec_min", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "max" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_vec_max", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "sum" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_vec_sum", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "product" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_vec_product", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "rev" and not e.args and self._is_vec_expr(e.receiver):
+            return ast.Call(
+                func=ast.Name(id="_vec_rev", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if (
+            e.method == "skip"
+            and len(e.args) == 1
+            and self._is_vec_expr(e.receiver)
+        ):
+            return ast.Call(
+                func=ast.Name(id="_vec_skip", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if (
+            e.method == "enumerate"
+            and not e.args
+            and self._is_vec_expr(e.receiver)
+        ):
+            return ast.Call(
+                func=ast.Name(id="_vec_enumerate", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "zip" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
+            return ast.Call(
+                func=ast.Name(id="_vec_zip", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if (
+            e.method == "flatten"
+            and not e.args
+            and self._is_vec_expr(e.receiver)
+        ):
+            return ast.Call(
+                func=ast.Name(id="_vec_flatten", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "chain" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
+            return ast.Call(
+                func=ast.Name(id="_vec_chain", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if (
+            e.method == "step_by"
+            and len(e.args) == 1
+            and self._is_vec_expr(e.receiver)
+        ):
+            return ast.Call(
+                func=ast.Name(id="_vec_step_by", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if (
+            e.method == "split_first"
+            and not e.args
+            and self._is_vec_expr(e.receiver)
+        ):
+            return ast.Call(
+                func=ast.Name(id="_vec_split_first", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if (
+            e.method == "split_last"
+            and not e.args
+            and self._is_vec_expr(e.receiver)
+        ):
+            return ast.Call(
+                func=ast.Name(id="_vec_split_last", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        return None
+
+    def _handle_vec_mutation_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+        if e.method == "retain" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_retain", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "dedup" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_vec_dedup", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "dedup_by" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_dedup_by", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "binary_search" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_binary_search", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "split_at" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_split_at", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "is_sorted_by" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_is_sorted_by", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "remove" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="pop",
+                    ctx=ast.Load(),
+                ),
+                args=[self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "fold" and len(e.args) == 2:
+            return ast.Call(
+                func=ast.Name(id="_reduce", ctx=ast.Load()),
+                args=[
+                    self.translate_expr(e.args[1]),
+                    recv,
+                    self.translate_expr(e.args[0]),
+                ],
+                keywords=[],
+            )
+        if e.method == "map" and len(e.args) == 1:
+            option_kind = self._option_result_type(e.receiver)
+            if option_kind is not None:
+                raise TranslateError(
+                    f"{option_kind}.map is unsupported; use match or "
+                    "if let instead",
+                    e.line,
+                    e.col,
+                )
+            closure = e.args[0]
+            if (
+                not isinstance(closure, Closure)
+                or len(closure.params) != 1
+                or not isinstance(closure.params[0][0], PatIdent)
+            ):
+                raise TranslateError(
+                    "Vec.map expects a single identifier parameter",
+                    e.line,
+                    e.col,
+                )
+            target = ast.Name(
+                id=closure.params[0][0].name,
+                ctx=ast.Store(),
+            )
+            body = (
+                self.translate_expr(closure.body.tail)
+                if isinstance(closure.body, Block) and closure.body.tail is not None
+                else self.translate_expr(closure.body)
+            )
+            return ast.ListComp(
+                elt=body,
+                generators=[
+                    ast.comprehension(
+                        target=target,
+                        iter=recv,
+                        ifs=[],
+                        is_async=0,
+                    ),
+                ],
+            )
+        if e.method == "filter" and len(e.args) == 1:
+            closure = e.args[0]
+            if (
+                not isinstance(closure, Closure)
+                or len(closure.params) != 1
+                or not isinstance(closure.params[0][0], PatIdent)
+            ):
+                raise TranslateError(
+                    "filter expects a single identifier parameter",
+                    e.line,
+                    e.col,
+                )
+            return ast.Call(
+                func=ast.Name(id="_filter", ctx=ast.Load()),
+                args=[recv, self._translate_closure(closure)],
+                keywords=[],
+            )
+        if e.method == "partition" and len(e.args) == 1:
+            closure = e.args[0]
+            if (
+                not isinstance(closure, Closure)
+                or len(closure.params) != 1
+                or not isinstance(closure.params[0][0], PatIdent)
+            ):
+                raise TranslateError(
+                    "partition expects a single identifier parameter",
+                    e.line,
+                    e.col,
+                )
+            return ast.Call(
+                func=ast.Name(id="_vec_partition", ctx=ast.Load()),
+                args=[recv, self._translate_closure(closure)],
+                keywords=[],
+            )
+        if e.method in ("sort_by_key", "sort_unstable_by_key") and len(e.args) == 1:
+            closure = e.args[0]
+            if (
+                not isinstance(closure, Closure)
+                or len(closure.params) != 1
+                or not isinstance(closure.params[0][0], PatIdent)
+            ):
+                raise TranslateError(
+                    f"{e.method} expects a single identifier parameter",
+                    e.line,
+                    e.col,
+                )
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="sort", ctx=ast.Load()),
+                args=[],
+                keywords=[
+                    ast.keyword(
+                        arg="key",
+                        value=self._translate_closure(closure),
+                    ),
+                ],
+            )
+        if e.method == "is_sorted" and not e.args:
+            return ast.Compare(
+                left=recv,
+                ops=[ast.Eq()],
+                comparators=[
+                    ast.Call(
+                        func=ast.Name(id="sorted", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    ),
+                ],
+            )
+        if e.method == "sort_by" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="sort",
+                    ctx=ast.Load(),
+                ),
+                args=[],
+                keywords=[
+                    ast.keyword(
+                        arg="key",
+                        value=ast.Call(
+                            func=ast.Name(
+                                id="_cmp_to_key",
+                                ctx=ast.Load(),
+                            ),
+                            args=[self.translate_expr(e.args[0])],
+                            keywords=[],
+                        ),
+                    ),
+                ],
+            )
+        if e.method == "contains" and len(e.args) == 1:
+            return ast.Compare(
+                left=self.translate_expr(e.args[0]),
+                ops=[ast.In()],
+                comparators=[recv],
+            )
+        if e.method in ("first", "last") and not e.args:
+            index = ast.Constant(value=0 if e.method == "first" else -1)
+            return ast.IfExp(
+                test=ast.Compare(
+                    left=ast.Call(
+                        func=ast.Name(id="len", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    ),
+                    ops=[ast.Gt()],
+                    comparators=[ast.Constant(value=0)],
+                ),
+                body=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id="_Option", ctx=ast.Load()),
+                        attr="some",
+                        ctx=ast.Load(),
+                    ),
+                    args=[
+                        ast.Subscript(
+                            value=recv,
+                            slice=index,
+                            ctx=ast.Load(),
+                        )
+                    ],
+                    keywords=[],
+                ),
+                orelse=ast.Call(
+                    func=ast.Attribute(
+                        value=ast.Name(id="_Option", ctx=ast.Load()),
+                        attr="none",
+                        ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[],
+                ),
+            )
+        if e.method == "get" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_get", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "find" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_find", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "rfind" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_rfind", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_strip", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self.translate_expr(e.args[0]),
+                ],
+                keywords=[
+                    ast.keyword(
+                        arg="prefix",
+                        value=ast.Constant(
+                            value=e.method == "strip_prefix",
+                        ),
+                    ),
+                ],
+            )
+        if e.method in ("split_once", "rsplit_once") and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_split_once", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self.translate_expr(e.args[0]),
+                ],
+                keywords=[
+                    ast.keyword(
+                        arg="reverse",
+                        value=ast.Constant(value=e.method == "rsplit_once"),
+                    ),
+                ],
+            )
+        if e.method == "truncate" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_truncate", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method in ("rotate_left", "rotate_right") and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_rotate", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self.translate_expr(e.args[0]),
+                    ast.Constant(value=e.method == "rotate_right"),
+                ],
+                keywords=[],
+            )
+        if e.method == "fill" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_fill", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "swap" and len(e.args) == 2:
+            return ast.Call(
+                func=ast.Name(id="_vec_swap", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self.translate_expr(e.args[0]),
+                    self.translate_expr(e.args[1]),
+                ],
+                keywords=[],
+            )
+        if e.method == "extend_from_slice" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(
+                    id="_vec_extend_from_slice",
+                    ctx=ast.Load(),
+                ),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "resize" and len(e.args) == 2:
+            return ast.Call(
+                func=ast.Name(id="_vec_resize", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self.translate_expr(e.args[0]),
+                    self.translate_expr(e.args[1]),
+                ],
+                keywords=[],
+            )
+        if e.method == "split_off" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_split_off", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        return None
+
+    def _handle_string_char_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+        if e.method in ("starts_with", "ends_with") and len(e.args) == 1:
+            argument = self.translate_expr(e.args[0])
+            if self._is_vec_expr(e.receiver):
+                return ast.Call(
+                    func=ast.Name(
+                        id=f"_vec_{e.method}",
+                        ctx=ast.Load(),
+                    ),
+                    args=[recv, argument],
+                    keywords=[],
+                )
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="startswith" if e.method == "starts_with" else "endswith",
+                    ctx=ast.Load(),
+                ),
+                args=[argument],
+                keywords=[],
+            )
+        if e.method in ("trim_start", "trim_end") and not e.args:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="lstrip" if e.method == "trim_start" else "rstrip",
+                    ctx=ast.Load(),
+                ),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "is_ascii" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="isascii",
+                    ctx=ast.Load(),
+                ),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "lines" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_string_lines", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "split_whitespace" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="split",
+                    ctx=ast.Load(),
+                ),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "sort_unstable" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="sort", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "as_bytes" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="encode",
+                    ctx=ast.Load(),
+                ),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "is_char_boundary" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(
+                    id="_string_is_char_boundary",
+                    ctx=ast.Load(),
+                ),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "is_alphabetic" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="isalpha", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "is_numeric" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="isnumeric", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "is_alphanumeric" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="isalnum", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "is_whitespace" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="isspace", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "is_uppercase" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="isupper", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "is_lowercase" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="islower", ctx=ast.Load()),
+                args=[],
+                keywords=[],
+            )
+        if e.method == "to_digit" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_char_to_digit", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "is_ascii_alphabetic" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_char_is_ascii_alphabetic", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_ascii_digit" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_char_is_ascii_digit", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_ascii_alphanumeric" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_is_ascii_alphanumeric",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_ascii_whitespace" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_is_ascii_whitespace",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_ascii_uppercase" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_is_ascii_uppercase",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_ascii_lowercase" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_is_ascii_lowercase",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_ascii_punctuation" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_is_ascii_punctuation",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "len_utf8" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_len_utf8",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "len_utf16" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_len_utf16",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_control" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_is_control",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_ascii_hexdigit" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_is_ascii_hexdigit",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "eq_ignore_ascii_case" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_eq_ignore_ascii_case",
+                    ctx=ast.Load(),
+                ),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "is_ascii_control" and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id="_char_is_ascii_control",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
+            return ast.Call(
+                func=ast.Name(
+                    id=f"_string_{e.method}",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "is_empty" and not e.args:
+            return ast.Compare(
+                left=ast.Call(
+                    func=ast.Name(id="len", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                ),
+                ops=[ast.Eq()],
+                comparators=[ast.Constant(value=0)],
+            )
+        return None
+
+    def _handle_tail_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+        if e.method == "repeat" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_repeat", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "clone" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_clone", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "as_slice" and not e.args:
+            return recv
+        if e.method == "to_vec" and not e.args:
+            return recv
+        if e.method == "len" and not e.args:
+            receiver_type = self._known_expr_type(e.receiver)
+            if (
+                receiver_type is None
+                or (receiver_type, "len") not in self._method_return_types
+            ):
+                return ast.Call(
+                    func=ast.Name(id="_rust_len", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+        if e.method == "chars" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="list", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "char_indices" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="_string_char_indices", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "trim_matches" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_trim_matches", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method in ("trim_start_matches", "trim_end_matches") and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_trim_matches_side", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[
+                    ast.keyword(
+                        arg="start",
+                        value=ast.Constant(
+                            value=e.method == "trim_start_matches",
+                        ),
+                    ),
+                ],
+            )
+        if (
+            e.method == "rev"
+            and not e.args
+            and isinstance(e.receiver, MethodCall)
+            and e.receiver.method == "chars"
+        ):
+            return ast.Call(
+                func=ast.Name(id="list", ctx=ast.Load()),
+                args=[
+                    ast.Call(
+                        func=ast.Name(id="reversed", ctx=ast.Load()),
+                        args=[recv],
+                        keywords=[],
+                    )
+                ],
+                keywords=[],
+            )
+        if e.method == "bytes" and not e.args:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="encode",
+                    ctx=ast.Load(),
+                ),
+                args=[ast.Constant(value="utf-8")],
+                keywords=[],
+            )
+        if e.method == "to_string" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="str", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "parse" and not e.args:
+            return ast.Call(
+                func=ast.Name(id="int", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "split" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr="split",
+                    ctx=ast.Load(),
+                ),
+                args=[self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method in ("splitn", "rsplitn") and len(e.args) == 2:
+            return ast.Call(
+                func=ast.Name(id="_string_splitn", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self.translate_expr(e.args[0]),
+                    self.translate_expr(e.args[1]),
+                ],
+                keywords=[
+                    ast.keyword(
+                        arg="reverse",
+                        value=ast.Constant(value=e.method == "rsplitn"),
+                    ),
+                ],
+            )
+        if e.method == "rsplit" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_rsplit", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method in ("matches", "rmatches") and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_matches", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[
+                    ast.keyword(
+                        arg="reverse",
+                        value=ast.Constant(value=e.method == "rmatches"),
+                    ),
+                ],
+            )
+        if e.method == "replacen" and len(e.args) == 3:
+            return ast.Call(
+                func=ast.Name(id="_string_replacen", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self.translate_expr(e.args[0]),
+                    self.translate_expr(e.args[1]),
+                    self.translate_expr(e.args[2]),
+                ],
+                keywords=[],
+            )
+        if (
+            e.method == "split_terminator"
+            and len(e.args) == 1
+        ):
+            return ast.Call(
+                func=ast.Name(id="_string_split_terminator", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "rsplit_terminator" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_string_rsplit_terminator", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "join" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=self.translate_expr(e.args[0]),
+                    attr="join",
+                    ctx=ast.Load(),
+                ),
+                args=[recv],
+                keywords=[],
+            )
+        if e.method == "trim" and not e.args:
+            method = "strip"
+            args: list[ast.expr] = []
+        elif e.method in ("to_uppercase", "to_lowercase"):
+            method = {
+                "to_uppercase": "upper",
+                "to_lowercase": "lower",
+            }[e.method]
+            args = []
+        elif e.method in ("replace", "starts_with", "ends_with"):
+            method = {
+                "starts_with": "startswith",
+                "ends_with": "endswith",
+            }.get(e.method, e.method)
+            args = [self.translate_expr(arg) for arg in e.args]
+        else:
+            method = ""
+            args = []
+        if method:
+            return ast.Call(
+                func=ast.Attribute(
+                    value=recv,
+                    attr=method,
+                    ctx=ast.Load(),
+                ),
+                args=args,
+                keywords=[],
+            )
+        attr = ast.Attribute(value=recv, attr=e.method, ctx=ast.Load())
+        args = [self.translate_expr(a) for a in e.args]
+        return ast.Call(func=attr, args=args, keywords=[])
+        return None
+
     def translate_expr(self, e: Expr) -> ast.expr:
         if isinstance(e, LitInt):
             return ast.Constant(value=e.value)
@@ -3681,1264 +5106,11 @@ class Translator:
             recv = self.translate_expr(e.receiver)
             if e.method == "into_iter" and not e.args:
                 return recv
-            if self._is_hashmap_expr(e.receiver):
-                if e.method == "insert" and len(e.args) == 2:
-                    return ast.Call(
-                        func=ast.Name(id="_map_insert", ctx=ast.Load()),
-                        args=[
-                            recv,
-                            self.translate_expr(e.args[0]),
-                            self.translate_expr(e.args[1]),
-                        ],
-                        keywords=[],
-                    )
-                if e.method == "get" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_map_get", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "get_mut" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_map_get_mut", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "remove" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_map_remove", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "retain" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_map_retain", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "contains_key" and len(e.args) == 1:
-                    return ast.Compare(
-                        left=self.translate_expr(e.args[0]),
-                        ops=[ast.In()],
-                        comparators=[recv],
-                    )
-                if e.method == "entry" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_map_entry", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "keys" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_map_keys", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "into_keys" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_map_keys", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "into_values" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_map_values", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "values" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_map_values", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "iter" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_map_iter", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "drain" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_map_drain", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "extend" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_map_extend", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "get_key_value" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_map_get_key_value", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "remove_entry" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_map_remove_entry", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-            if self._is_hashset_expr(e.receiver):
-                if e.method == "insert" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_hashset_insert", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "contains" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_hashset_contains", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "remove" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_hashset_remove", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "get_mut" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_hashset_get_mut", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "len" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_hashset_len", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "is_empty" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_hashset_is_empty", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "iter" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_hashset_iter", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-            if self._is_btreemap_expr(e.receiver):
-                if e.method == "insert" and len(e.args) == 2:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_insert", ctx=ast.Load()),
-                        args=[
-                            recv,
-                            self.translate_expr(e.args[0]),
-                            self.translate_expr(e.args[1]),
-                        ],
-                        keywords=[],
-                    )
-                if e.method == "get" and len(e.args) == 1:
-                    v = ast.Call(
-                        func=ast.Name(id="_btreemap_get", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                    # return Option-like for parity? but easier to return value/None; keep simple
-                    return v
-                if e.method == "remove" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_remove", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "contains_key" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_contains", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "len" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_len", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "is_empty" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_is_empty", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "keys" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_keys", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "values" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_values", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "iter" and not e.args:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_iter", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-                if e.method == "entry" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_entry", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-                if e.method == "get_mut" and len(e.args) == 1:
-                    return ast.Call(
-                        func=ast.Name(id="_btreemap_get_mut", ctx=ast.Load()),
-                        args=[recv, self.translate_expr(e.args[0])],
-                        keywords=[],
-                    )
-            if (
-                e.method == "and"
-                and len(e.args) == 1
-                and self._option_result_type(e.receiver) == "Result"
-            ):
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="and_",
-                        ctx=ast.Load(),
-                    ),
-                    args=[self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if (
-                e.method == "or"
-                and len(e.args) == 1
-                and self._option_result_type(e.receiver) == "Result"
-            ):
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="or_",
-                        ctx=ast.Load(),
-                    ),
-                    args=[self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "map_err" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="map_err",
-                        ctx=ast.Load(),
-                    ),
-                    args=[self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "unwrap" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="unwrap",
-                        ctx=ast.Load(),
-                    ),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "unwrap_or" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="unwrap_or",
-                        ctx=ast.Load(),
-                    ),
-                    args=[self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "unwrap_or_else" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="unwrap_or_else",
-                        ctx=ast.Load(),
-                    ),
-                    args=[self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method in ("and", "or", "xor") and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(
-                        id=f"_option_{e.method}",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method in ("windows", "chunks") and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(
-                        id=f"_vec_{e.method}",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "chunks_exact" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_chunks_exact", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "rchunks" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_rchunks", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "rchunks_exact" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_rchunks_exact", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "concat" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_vec_concat", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "swap_remove" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_swap_remove", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "dedup_by_key" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_dedup_by_key", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "is_sorted_by_key" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_is_sorted_by_key", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "position" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_position", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "any" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_any", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "all" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_all", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "min" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_vec_min", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "max" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_vec_max", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "sum" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_vec_sum", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "product" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_vec_product", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "rev" and not e.args and self._is_vec_expr(e.receiver):
-                return ast.Call(
-                    func=ast.Name(id="_vec_rev", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if (
-                e.method == "skip"
-                and len(e.args) == 1
-                and self._is_vec_expr(e.receiver)
-            ):
-                return ast.Call(
-                    func=ast.Name(id="_vec_skip", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if (
-                e.method == "enumerate"
-                and not e.args
-                and self._is_vec_expr(e.receiver)
-            ):
-                return ast.Call(
-                    func=ast.Name(id="_vec_enumerate", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "zip" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
-                return ast.Call(
-                    func=ast.Name(id="_vec_zip", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if (
-                e.method == "flatten"
-                and not e.args
-                and self._is_vec_expr(e.receiver)
-            ):
-                return ast.Call(
-                    func=ast.Name(id="_vec_flatten", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "chain" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
-                return ast.Call(
-                    func=ast.Name(id="_vec_chain", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if (
-                e.method == "step_by"
-                and len(e.args) == 1
-                and self._is_vec_expr(e.receiver)
-            ):
-                return ast.Call(
-                    func=ast.Name(id="_vec_step_by", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if (
-                e.method == "split_first"
-                and not e.args
-                and self._is_vec_expr(e.receiver)
-            ):
-                return ast.Call(
-                    func=ast.Name(id="_vec_split_first", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if (
-                e.method == "split_last"
-                and not e.args
-                and self._is_vec_expr(e.receiver)
-            ):
-                return ast.Call(
-                    func=ast.Name(id="_vec_split_last", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "retain" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_retain", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "dedup" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_vec_dedup", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "dedup_by" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_dedup_by", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "binary_search" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_binary_search", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "split_at" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_split_at", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "is_sorted_by" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_is_sorted_by", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "remove" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="pop",
-                        ctx=ast.Load(),
-                    ),
-                    args=[self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "fold" and len(e.args) == 2:
-                return ast.Call(
-                    func=ast.Name(id="_reduce", ctx=ast.Load()),
-                    args=[
-                        self.translate_expr(e.args[1]),
-                        recv,
-                        self.translate_expr(e.args[0]),
-                    ],
-                    keywords=[],
-                )
-            if e.method == "map" and len(e.args) == 1:
-                option_kind = self._option_result_type(e.receiver)
-                if option_kind is not None:
-                    raise TranslateError(
-                        f"{option_kind}.map is unsupported; use match or "
-                        "if let instead",
-                        e.line,
-                        e.col,
-                    )
-                closure = e.args[0]
-                if (
-                    not isinstance(closure, Closure)
-                    or len(closure.params) != 1
-                    or not isinstance(closure.params[0][0], PatIdent)
-                ):
-                    raise TranslateError(
-                        "Vec.map expects a single identifier parameter",
-                        e.line,
-                        e.col,
-                    )
-                target = ast.Name(
-                    id=closure.params[0][0].name,
-                    ctx=ast.Store(),
-                )
-                body = (
-                    self.translate_expr(closure.body.tail)
-                    if isinstance(closure.body, Block) and closure.body.tail is not None
-                    else self.translate_expr(closure.body)
-                )
-                return ast.ListComp(
-                    elt=body,
-                    generators=[
-                        ast.comprehension(
-                            target=target,
-                            iter=recv,
-                            ifs=[],
-                            is_async=0,
-                        ),
-                    ],
-                )
-            if e.method == "filter" and len(e.args) == 1:
-                closure = e.args[0]
-                if (
-                    not isinstance(closure, Closure)
-                    or len(closure.params) != 1
-                    or not isinstance(closure.params[0][0], PatIdent)
-                ):
-                    raise TranslateError(
-                        "filter expects a single identifier parameter",
-                        e.line,
-                        e.col,
-                    )
-                return ast.Call(
-                    func=ast.Name(id="_filter", ctx=ast.Load()),
-                    args=[recv, self._translate_closure(closure)],
-                    keywords=[],
-                )
-            if e.method == "partition" and len(e.args) == 1:
-                closure = e.args[0]
-                if (
-                    not isinstance(closure, Closure)
-                    or len(closure.params) != 1
-                    or not isinstance(closure.params[0][0], PatIdent)
-                ):
-                    raise TranslateError(
-                        "partition expects a single identifier parameter",
-                        e.line,
-                        e.col,
-                    )
-                return ast.Call(
-                    func=ast.Name(id="_vec_partition", ctx=ast.Load()),
-                    args=[recv, self._translate_closure(closure)],
-                    keywords=[],
-                )
-            if e.method in ("sort_by_key", "sort_unstable_by_key") and len(e.args) == 1:
-                closure = e.args[0]
-                if (
-                    not isinstance(closure, Closure)
-                    or len(closure.params) != 1
-                    or not isinstance(closure.params[0][0], PatIdent)
-                ):
-                    raise TranslateError(
-                        f"{e.method} expects a single identifier parameter",
-                        e.line,
-                        e.col,
-                    )
-                return ast.Call(
-                    func=ast.Attribute(value=recv, attr="sort", ctx=ast.Load()),
-                    args=[],
-                    keywords=[
-                        ast.keyword(
-                            arg="key",
-                            value=self._translate_closure(closure),
-                        ),
-                    ],
-                )
-            if e.method == "is_sorted" and not e.args:
-                return ast.Compare(
-                    left=recv,
-                    ops=[ast.Eq()],
-                    comparators=[
-                        ast.Call(
-                            func=ast.Name(id="sorted", ctx=ast.Load()),
-                            args=[recv],
-                            keywords=[],
-                        ),
-                    ],
-                )
-            if e.method == "sort_by" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="sort",
-                        ctx=ast.Load(),
-                    ),
-                    args=[],
-                    keywords=[
-                        ast.keyword(
-                            arg="key",
-                            value=ast.Call(
-                                func=ast.Name(
-                                    id="_cmp_to_key",
-                                    ctx=ast.Load(),
-                                ),
-                                args=[self.translate_expr(e.args[0])],
-                                keywords=[],
-                            ),
-                        ),
-                    ],
-                )
-            if e.method == "contains" and len(e.args) == 1:
-                return ast.Compare(
-                    left=self.translate_expr(e.args[0]),
-                    ops=[ast.In()],
-                    comparators=[recv],
-                )
-            if e.method in ("first", "last") and not e.args:
-                index = ast.Constant(value=0 if e.method == "first" else -1)
-                return ast.IfExp(
-                    test=ast.Compare(
-                        left=ast.Call(
-                            func=ast.Name(id="len", ctx=ast.Load()),
-                            args=[recv],
-                            keywords=[],
-                        ),
-                        ops=[ast.Gt()],
-                        comparators=[ast.Constant(value=0)],
-                    ),
-                    body=ast.Call(
-                        func=ast.Attribute(
-                            value=ast.Name(id="_Option", ctx=ast.Load()),
-                            attr="some",
-                            ctx=ast.Load(),
-                        ),
-                        args=[
-                            ast.Subscript(
-                                value=recv,
-                                slice=index,
-                                ctx=ast.Load(),
-                            )
-                        ],
-                        keywords=[],
-                    ),
-                    orelse=ast.Call(
-                        func=ast.Attribute(
-                            value=ast.Name(id="_Option", ctx=ast.Load()),
-                            attr="none",
-                            ctx=ast.Load(),
-                        ),
-                        args=[],
-                        keywords=[],
-                    ),
-                )
-            if e.method == "get" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_get", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "find" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_find", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "rfind" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_rfind", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method in ("strip_prefix", "strip_suffix") and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_strip", ctx=ast.Load()),
-                    args=[
-                        recv,
-                        self.translate_expr(e.args[0]),
-                    ],
-                    keywords=[
-                        ast.keyword(
-                            arg="prefix",
-                            value=ast.Constant(
-                                value=e.method == "strip_prefix",
-                            ),
-                        ),
-                    ],
-                )
-            if e.method in ("split_once", "rsplit_once") and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_split_once", ctx=ast.Load()),
-                    args=[
-                        recv,
-                        self.translate_expr(e.args[0]),
-                    ],
-                    keywords=[
-                        ast.keyword(
-                            arg="reverse",
-                            value=ast.Constant(value=e.method == "rsplit_once"),
-                        ),
-                    ],
-                )
-            if e.method == "truncate" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_truncate", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method in ("rotate_left", "rotate_right") and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_rotate", ctx=ast.Load()),
-                    args=[
-                        recv,
-                        self.translate_expr(e.args[0]),
-                        ast.Constant(value=e.method == "rotate_right"),
-                    ],
-                    keywords=[],
-                )
-            if e.method == "fill" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_fill", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "swap" and len(e.args) == 2:
-                return ast.Call(
-                    func=ast.Name(id="_vec_swap", ctx=ast.Load()),
-                    args=[
-                        recv,
-                        self.translate_expr(e.args[0]),
-                        self.translate_expr(e.args[1]),
-                    ],
-                    keywords=[],
-                )
-            if e.method == "extend_from_slice" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_vec_extend_from_slice",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "resize" and len(e.args) == 2:
-                return ast.Call(
-                    func=ast.Name(id="_vec_resize", ctx=ast.Load()),
-                    args=[
-                        recv,
-                        self.translate_expr(e.args[0]),
-                        self.translate_expr(e.args[1]),
-                    ],
-                    keywords=[],
-                )
-            if e.method == "split_off" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_vec_split_off", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method in ("starts_with", "ends_with") and len(e.args) == 1:
-                argument = self.translate_expr(e.args[0])
-                if self._is_vec_expr(e.receiver):
-                    return ast.Call(
-                        func=ast.Name(
-                            id=f"_vec_{e.method}",
-                            ctx=ast.Load(),
-                        ),
-                        args=[recv, argument],
-                        keywords=[],
-                    )
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="startswith" if e.method == "starts_with" else "endswith",
-                        ctx=ast.Load(),
-                    ),
-                    args=[argument],
-                    keywords=[],
-                )
-            if e.method in ("trim_start", "trim_end") and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="lstrip" if e.method == "trim_start" else "rstrip",
-                        ctx=ast.Load(),
-                    ),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "is_ascii" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="isascii",
-                        ctx=ast.Load(),
-                    ),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "lines" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_string_lines", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "split_whitespace" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="split",
-                        ctx=ast.Load(),
-                    ),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "sort_unstable" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(value=recv, attr="sort", ctx=ast.Load()),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "as_bytes" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="encode",
-                        ctx=ast.Load(),
-                    ),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "is_char_boundary" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_string_is_char_boundary",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "is_alphabetic" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(value=recv, attr="isalpha", ctx=ast.Load()),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "is_numeric" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(value=recv, attr="isnumeric", ctx=ast.Load()),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "is_alphanumeric" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(value=recv, attr="isalnum", ctx=ast.Load()),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "is_whitespace" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(value=recv, attr="isspace", ctx=ast.Load()),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "is_uppercase" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(value=recv, attr="isupper", ctx=ast.Load()),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "is_lowercase" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(value=recv, attr="islower", ctx=ast.Load()),
-                    args=[],
-                    keywords=[],
-                )
-            if e.method == "to_digit" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_char_to_digit", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_alphabetic" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_char_is_ascii_alphabetic", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_digit" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_char_is_ascii_digit", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_alphanumeric" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_is_ascii_alphanumeric",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_whitespace" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_is_ascii_whitespace",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_uppercase" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_is_ascii_uppercase",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_lowercase" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_is_ascii_lowercase",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_punctuation" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_is_ascii_punctuation",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "len_utf8" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_len_utf8",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "len_utf16" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_len_utf16",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_control" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_is_control",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_hexdigit" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_is_ascii_hexdigit",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "eq_ignore_ascii_case" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_eq_ignore_ascii_case",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "is_ascii_control" and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id="_char_is_ascii_control",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
-                return ast.Call(
-                    func=ast.Name(
-                        id=f"_string_{e.method}",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "is_empty" and not e.args:
-                return ast.Compare(
-                    left=ast.Call(
-                        func=ast.Name(id="len", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    ),
-                    ops=[ast.Eq()],
-                    comparators=[ast.Constant(value=0)],
-                )
-            if e.method == "repeat" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_repeat", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "clone" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_clone", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "as_slice" and not e.args:
-                return recv
-            if e.method == "to_vec" and not e.args:
-                return recv
-            if e.method == "len" and not e.args:
-                receiver_type = self._known_expr_type(e.receiver)
-                if (
-                    receiver_type is None
-                    or (receiver_type, "len") not in self._method_return_types
-                ):
-                    return ast.Call(
-                        func=ast.Name(id="_rust_len", ctx=ast.Load()),
-                        args=[recv],
-                        keywords=[],
-                    )
-            if e.method == "chars" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="list", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "char_indices" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="_string_char_indices", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "trim_matches" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_trim_matches", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method in ("trim_start_matches", "trim_end_matches") and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_trim_matches_side", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[
-                        ast.keyword(
-                            arg="start",
-                            value=ast.Constant(
-                                value=e.method == "trim_start_matches",
-                            ),
-                        ),
-                    ],
-                )
-            if (
-                e.method == "rev"
-                and not e.args
-                and isinstance(e.receiver, MethodCall)
-                and e.receiver.method == "chars"
-            ):
-                return ast.Call(
-                    func=ast.Name(id="list", ctx=ast.Load()),
-                    args=[
-                        ast.Call(
-                            func=ast.Name(id="reversed", ctx=ast.Load()),
-                            args=[recv],
-                            keywords=[],
-                        )
-                    ],
-                    keywords=[],
-                )
-            if e.method == "bytes" and not e.args:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="encode",
-                        ctx=ast.Load(),
-                    ),
-                    args=[ast.Constant(value="utf-8")],
-                    keywords=[],
-                )
-            if e.method == "to_string" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="str", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "parse" and not e.args:
-                return ast.Call(
-                    func=ast.Name(id="int", ctx=ast.Load()),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "split" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr="split",
-                        ctx=ast.Load(),
-                    ),
-                    args=[self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method in ("splitn", "rsplitn") and len(e.args) == 2:
-                return ast.Call(
-                    func=ast.Name(id="_string_splitn", ctx=ast.Load()),
-                    args=[
-                        recv,
-                        self.translate_expr(e.args[0]),
-                        self.translate_expr(e.args[1]),
-                    ],
-                    keywords=[
-                        ast.keyword(
-                            arg="reverse",
-                            value=ast.Constant(value=e.method == "rsplitn"),
-                        ),
-                    ],
-                )
-            if e.method == "rsplit" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_rsplit", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method in ("matches", "rmatches") and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_matches", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[
-                        ast.keyword(
-                            arg="reverse",
-                            value=ast.Constant(value=e.method == "rmatches"),
-                        ),
-                    ],
-                )
-            if e.method == "replacen" and len(e.args) == 3:
-                return ast.Call(
-                    func=ast.Name(id="_string_replacen", ctx=ast.Load()),
-                    args=[
-                        recv,
-                        self.translate_expr(e.args[0]),
-                        self.translate_expr(e.args[1]),
-                        self.translate_expr(e.args[2]),
-                    ],
-                    keywords=[],
-                )
-            if (
-                e.method == "split_terminator"
-                and len(e.args) == 1
-            ):
-                return ast.Call(
-                    func=ast.Name(id="_string_split_terminator", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "rsplit_terminator" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Name(id="_string_rsplit_terminator", ctx=ast.Load()),
-                    args=[recv, self.translate_expr(e.args[0])],
-                    keywords=[],
-                )
-            if e.method == "join" and len(e.args) == 1:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=self.translate_expr(e.args[0]),
-                        attr="join",
-                        ctx=ast.Load(),
-                    ),
-                    args=[recv],
-                    keywords=[],
-                )
-            if e.method == "trim" and not e.args:
-                method = "strip"
-                args: list[ast.expr] = []
-            elif e.method in ("to_uppercase", "to_lowercase"):
-                method = {
-                    "to_uppercase": "upper",
-                    "to_lowercase": "lower",
-                }[e.method]
-                args = []
-            elif e.method in ("replace", "starts_with", "ends_with"):
-                method = {
-                    "starts_with": "startswith",
-                    "ends_with": "endswith",
-                }.get(e.method, e.method)
-                args = [self.translate_expr(arg) for arg in e.args]
-            else:
-                method = ""
-                args = []
-            if method:
-                return ast.Call(
-                    func=ast.Attribute(
-                        value=recv,
-                        attr=method,
-                        ctx=ast.Load(),
-                    ),
-                    args=args,
-                    keywords=[],
-                )
-            attr = ast.Attribute(value=recv, attr=e.method, ctx=ast.Load())
-            args = [self.translate_expr(a) for a in e.args]
-            return ast.Call(func=attr, args=args, keywords=[])
+            for handler in self._method_handlers.get(e.method, ()):
+                result = handler(self, e, recv)
+                if result is not None:
+                    return result
+            return self._handle_tail_methods(e, recv)
         if isinstance(e, Field):
             recv = self.translate_expr(e.receiver)
             return ast.Attribute(value=recv, attr=e.name, ctx=ast.Load())
