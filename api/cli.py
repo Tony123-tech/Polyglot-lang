@@ -200,6 +200,12 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_lsp(args: argparse.Namespace) -> int:
+    from api.lsp import main as lsp_main
+
+    return lsp_main()
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     if getattr(args, "all_errors", False):
         source = _read_source(args.file)
@@ -354,6 +360,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_error_format(check_p)
     check_p.set_defaults(func=cmd_check)
+
+    lsp_p = sub.add_parser(
+        "lsp",
+        help="Run the language server over stdio",
+        description=(
+            "Start a JSON-RPC language server on stdin/stdout with document "
+            "sync, go-to-definition, and completion."
+        ),
+    )
+    lsp_p.set_defaults(func=cmd_lsp)
 
     compile_p = sub.add_parser(
         "compile",
