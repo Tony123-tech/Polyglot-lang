@@ -178,6 +178,25 @@ CAST_PREC = 9
 
 
 class Parser:
+    _ITEM_STARTS = frozenset(
+        {
+            TokenType.FN,
+            TokenType.STRUCT,
+            TokenType.ENUM,
+            TokenType.IMPL,
+            TokenType.TRAIT,
+            TokenType.USE,
+            TokenType.MOD,
+            TokenType.CONST,
+            TokenType.STATIC,
+            TokenType.TYPE,
+            TokenType.PUB,
+            TokenType.ASYNC,
+            TokenType.UNSAFE,
+            TokenType.HASH,
+        }
+    )
+
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
         self.i = 0
@@ -234,6 +253,34 @@ class Parser:
             if token.source_line_text is not None
         }
         return Program(first.line, first.col, items, source_lines)
+
+    def recover_to_item_boundary(self) -> None:
+        """Skip a broken item and stop at the next plausible item start.
+
+        Recovery is panic-mode: after a parse error the parser advances past
+        the offending token, tracks bracket depth, and resumes at the next
+        top-level item keyword. This keeps one syntax error from hiding the
+        rest of the file.
+        """
+        if not self.at_end():
+            self.advance()
+        depth = 0
+        while not self.at_end():
+            token = self.peek()
+            if token.type in (TokenType.LBRACE, TokenType.LPAREN, TokenType.LBRACKET):
+                depth += 1
+            elif token.type in (
+                TokenType.RBRACE,
+                TokenType.RPAREN,
+                TokenType.RBRACKET,
+            ):
+                if depth == 0:
+                    self.advance()
+                    continue
+                depth -= 1
+            elif depth == 0 and token.type in self._ITEM_STARTS:
+                return
+            self.advance()
 
     # ---- attributes --------------------------------------------------------
 
@@ -1624,3 +1671,30 @@ def parse(tokens: list[Token]) -> Program:
     program = Parser(tokens).parse_program()
     _fill_node_spans(program)
     return program
+
+
+def parse_recovering(tokens: list[Token]) -> tuple[Program, list[ParseError]]:
+    """Parse as much as possible, returning collected syntax errors.
+
+    Unlike :func:`parse`, which stops at the first error, this entry point
+    skips broken top-level items and continues. The returned program contains
+    only the items that parsed successfully.
+    """
+    parser = Parser(tokens)
+    items: list[Item] = []
+    errors: list[ParseError] = []
+    while not parser.at_end():
+        try:
+            items.append(parser.parse_item())
+        except ParseError as error:
+            errors.append(error)
+            parser.recover_to_item_boundary()
+    first = parser.tokens[0] if parser.tokens else Token(TokenType.EOF, "", 1, 1, 0)
+    source_lines = {
+        token.line: token.source_line_text
+        for token in parser.tokens
+        if token.source_line_text is not None
+    }
+    program = Program(first.line, first.col, items, source_lines)
+    _fill_node_spans(program)
+    return program, errors

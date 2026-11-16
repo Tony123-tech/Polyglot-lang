@@ -28,7 +28,7 @@ from include_expander import (
     load_program,
 )
 from lexer import lex
-from parser import parse
+from parser import parse, parse_recovering
 from termination import TerminationError
 
 
@@ -201,7 +201,15 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
-    program = load_program(args.file)
+    if getattr(args, "all_errors", False):
+        source = _read_source(args.file)
+        program, errors = parse_recovering(lex(source))
+        if errors:
+            for error in errors:
+                print(_format_five_line(error), file=sys.stderr)
+            return 1
+    else:
+        program = load_program(args.file)
     # Translation/codegen runs termination checks for #[terminates] functions.
     from backends.python.translator import Translator
 
@@ -338,6 +346,11 @@ def build_parser() -> argparse.ArgumentParser:
     check_p.add_argument("file", help="Path to the .poly file")
     check_p.add_argument(
         "--verbose", action="store_true", help="Print full tracebacks on error"
+    )
+    check_p.add_argument(
+        "--all-errors",
+        action="store_true",
+        help="Recover after syntax errors and report every top-level error",
     )
     _add_error_format(check_p)
     check_p.set_defaults(func=cmd_check)
