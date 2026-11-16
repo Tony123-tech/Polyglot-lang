@@ -1205,6 +1205,14 @@ def _runtime_parse(value):
         return _Result.from_err(str(exc))
 
 
+def _runtime_char_eq_ignore_ascii_case(value, other):
+    if len(value) != 1 or len(other) != 1:
+        return False
+    if value.isascii() and other.isascii():
+        return value.lower() == other.lower()
+    return value == other
+
+
 def _runtime_char_is_ascii_hexdigit(value):
     return len(value) == 1 and (
         "0" <= value <= "9"
@@ -1771,6 +1779,7 @@ class Translator:
         ns["_char_len_utf16"] = _runtime_char_len_utf16
         ns["_char_is_control"] = _runtime_char_is_control
         ns["_char_is_ascii_hexdigit"] = _runtime_char_is_ascii_hexdigit
+        ns["_char_eq_ignore_ascii_case"] = _runtime_char_eq_ignore_ascii_case
         ns["_map_insert"] = _runtime_map_insert
         ns["_map_get"] = _runtime_map_get
         ns["_map_get_mut"] = _runtime_map_get_mut
@@ -4679,6 +4688,15 @@ class Translator:
                         ctx=ast.Load(),
                     ),
                     args=[recv],
+                    keywords=[],
+                )
+            if e.method == "eq_ignore_ascii_case" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(
+                        id="_char_eq_ignore_ascii_case",
+                        ctx=ast.Load(),
+                    ),
+                    args=[recv, self.translate_expr(e.args[0])],
                     keywords=[],
                 )
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:

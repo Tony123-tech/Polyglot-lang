@@ -266,6 +266,11 @@ fn char_is_ascii_hexdigit(value: char) -> bool {
     value.is_ascii_hexdigit()
 }
 """,
+    "char_eq_ignore_ascii_case": """
+fn char_eq_ignore_ascii_case(value: char, other: char) -> bool {
+    value.eq_ignore_ascii_case(&other)
+}
+""",
 }
 
 
@@ -939,3 +944,22 @@ def test_python_char_is_ascii_hexdigit_parity():
     assert namespace["char_is_ascii_hexdigit"]("F") is True
     assert namespace["char_is_ascii_hexdigit"]("g") is False
     assert namespace["char_is_ascii_hexdigit"]("é") is False
+
+
+@pytest.mark.native
+def test_native_char_eq_ignore_ascii_case(native_ns):
+    assert native_ns["char_eq_ignore_ascii_case"]("a", "A") is True
+    assert native_ns["char_eq_ignore_ascii_case"]("a", "a") is True
+    assert native_ns["char_eq_ignore_ascii_case"]("a", "b") is False
+    assert native_ns["char_eq_ignore_ascii_case"]("é", "É") is False
+    assert native_ns["char_eq_ignore_ascii_case"]("é", "é") is True
+
+
+def test_python_char_eq_ignore_ascii_case_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_eq_ignore_ascii_case"])))
+
+    assert namespace["char_eq_ignore_ascii_case"]("a", "A") is True
+    assert namespace["char_eq_ignore_ascii_case"]("a", "a") is True
+    assert namespace["char_eq_ignore_ascii_case"]("a", "b") is False
+    assert namespace["char_eq_ignore_ascii_case"]("é", "É") is False
+    assert namespace["char_eq_ignore_ascii_case"]("é", "é") is True

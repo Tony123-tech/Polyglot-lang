@@ -1663,6 +1663,11 @@ class RustCodegen:
                 return f"{recv}.is_control()"
             if e.method == "is_ascii_hexdigit" and not e.args:
                 return f"{recv}.is_ascii_hexdigit()"
+            if e.method == "eq_ignore_ascii_case" and len(e.args) == 1:
+                return (
+                    f"{recv}.eq_ignore_ascii_case("
+                    f"&{self.expr_to_rust(e.args[0])})"
+                )
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
                 return f"{recv}.{e.method}()"
             if e.method == "replace" and len(e.args) == 2:
