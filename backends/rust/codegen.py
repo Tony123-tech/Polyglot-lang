@@ -13,7 +13,8 @@ Supports (v2 native, N2b):
 from __future__ import annotations
 
 import re
-from dataclasses import fields as dataclass_fields, is_dataclass
+from dataclasses import fields as dataclass_fields
+from dataclasses import is_dataclass
 
 from ast_nodes import (
     ArrayExpr,
@@ -926,13 +927,12 @@ class RustCodegen:
                     node.line,
                     node.col,
                 )
-        elif target == "char":
-            if source != "u8":
-                raise InvalidCastError(
-                    f"only `u8` can be cast as `char`, not `{source or 'unknown'}`",
-                    node.line,
-                    node.col,
-                )
+        elif target == "char" and source != "u8":
+            raise InvalidCastError(
+                f"only `u8` can be cast as `char`, not `{source or 'unknown'}`",
+                node.line,
+                node.col,
+            )
         return f"({self.expr_to_rust(node.expr)} as {target})"
 
     def _emit_usize_arg(self, expr: Expr) -> str:
