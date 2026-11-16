@@ -281,6 +281,11 @@ fn char_to_ascii_uppercase(value: char) -> char {
     value.to_ascii_uppercase()
 }
 """,
+    "char_to_ascii_lowercase": """
+fn char_to_ascii_lowercase(value: char) -> char {
+    value.to_ascii_lowercase()
+}
+""",
 }
 
 
@@ -1009,3 +1014,20 @@ def test_python_char_to_ascii_uppercase_parity():
     assert namespace["char_to_ascii_uppercase"]("z") == "Z"
     assert namespace["char_to_ascii_uppercase"]("é") == "é"
     assert namespace["char_to_ascii_uppercase"]("1") == "1"
+
+
+@pytest.mark.native
+def test_native_char_to_ascii_lowercase(native_ns):
+    assert native_ns["char_to_ascii_lowercase"]("A") == "a"
+    assert native_ns["char_to_ascii_lowercase"]("Z") == "z"
+    assert native_ns["char_to_ascii_lowercase"]("É") == "É"
+    assert native_ns["char_to_ascii_lowercase"]("1") == "1"
+
+
+def test_python_char_to_ascii_lowercase_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_to_ascii_lowercase"])))
+
+    assert namespace["char_to_ascii_lowercase"]("A") == "a"
+    assert namespace["char_to_ascii_lowercase"]("Z") == "z"
+    assert namespace["char_to_ascii_lowercase"]("É") == "É"
+    assert namespace["char_to_ascii_lowercase"]("1") == "1"
