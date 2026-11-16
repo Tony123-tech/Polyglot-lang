@@ -129,8 +129,12 @@ def test_incremental_change_replaces_range() -> None:
 
 def test_json_rpc_round_trip() -> None:
     stdin = io.BytesIO()
-    write_message(stdin, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-    write_message(stdin, {"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": {}})
+    write_message(
+        stdin, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    )
+    write_message(
+        stdin, {"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": {}}
+    )
     write_message(stdin, {"jsonrpc": "2.0", "method": "exit", "params": {}})
     stdin.seek(0)
     stdout = io.BytesIO()

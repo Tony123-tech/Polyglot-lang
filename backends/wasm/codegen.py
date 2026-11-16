@@ -205,7 +205,11 @@ class WasmCodegen:
                     raise WasmUnsupportedError(
                         f"cannot infer the type of local {name!r}", stmt
                     )
-                if declared is not None and inferred is not None and declared != inferred:
+                if (
+                    declared is not None
+                    and inferred is not None
+                    and declared != inferred
+                ):
                     raise WasmUnsupportedError(
                         f"local {name!r} is {declared} but its value is {inferred}",
                         stmt,
@@ -236,7 +240,6 @@ class WasmCodegen:
         elif isinstance(expr, Return) and isinstance(expr.value, Block):
             self._scan_locals(expr.value)
 
-
     def _scan_branch(self, branch: Any) -> None:
         if isinstance(branch, Block):
             self._scan_locals(branch)
@@ -254,9 +257,7 @@ class WasmCodegen:
             return BOOL
         if isinstance(expr, Ident):
             if expr.name not in self._locals:
-                raise WasmUnsupportedError(
-                    f"unknown local {expr.name!r}", expr
-                )
+                raise WasmUnsupportedError(f"unknown local {expr.name!r}", expr)
             return self._locals[expr.name][1]
         if isinstance(expr, Paren):
             return self._infer(expr.inner, expr)
@@ -288,9 +289,7 @@ class WasmCodegen:
                 raise WasmUnsupportedError("indirect calls are not supported", expr)
             signature = self._signatures.get(expr.func.name)
             if signature is None:
-                raise WasmUnsupportedError(
-                    f"unknown function {expr.func.name!r}", expr
-                )
+                raise WasmUnsupportedError(f"unknown function {expr.func.name!r}", expr)
             if len(expr.args) != len(signature.params):
                 raise WasmUnsupportedError(
                     f"{expr.func.name!r} expects {len(signature.params)} arguments, "
@@ -313,13 +312,9 @@ class WasmCodegen:
             return self._infer_block(expr, expr)
         if isinstance(expr, (Assign, CompoundAssign)):
             if not isinstance(expr.target, Ident):
-                raise WasmUnsupportedError(
-                    "only local assignments are supported", expr
-                )
+                raise WasmUnsupportedError("only local assignments are supported", expr)
             if expr.target.name not in self._locals:
-                raise WasmUnsupportedError(
-                    f"unknown local {expr.target.name!r}", expr
-                )
+                raise WasmUnsupportedError(f"unknown local {expr.target.name!r}", expr)
             return self._locals[expr.target.name][1]
         if isinstance(expr, Return):
             return None
@@ -350,9 +345,7 @@ class WasmCodegen:
             if param_name == "_":
                 param_name = f"__ignored_{index}"
             if param_name in self._locals:
-                raise WasmUnsupportedError(
-                    f"duplicate parameter {param_name!r}", param
-                )
+                raise WasmUnsupportedError(f"duplicate parameter {param_name!r}", param)
             ty = signature.params[index]
             self._locals[param_name] = (index, ty)
 
@@ -421,9 +414,7 @@ class WasmCodegen:
                 value, ty = self._expr(stmt.value, want_value=False)
                 return f"(drop {value})" if _is_value(ty) else value
             if stmt.value is None:
-                raise WasmUnsupportedError(
-                    f"local {name!r} has no initializer", stmt
-                )
+                raise WasmUnsupportedError(f"local {name!r} has no initializer", stmt)
             index, ty = self._locals[name]
             value, value_ty = self._expr(stmt.value, want_value=True)
             if value_ty != ty:
@@ -493,9 +484,7 @@ class WasmCodegen:
             if ty != I64:
                 raise WasmUnsupportedError("unary '-' expects an i64 operand", expr)
             return f"(i64.sub (i64.const 0) {operand})", I64
-        raise WasmUnsupportedError(
-            f"unary operator {expr.op!r} is not supported", expr
-        )
+        raise WasmUnsupportedError(f"unary operator {expr.op!r} is not supported", expr)
 
     def _binary(self, expr: Binary) -> tuple[str, str | None]:
         left, left_ty = self._expr(expr.left, want_value=True)
@@ -503,9 +492,7 @@ class WasmCodegen:
 
         if expr.op in {"&&", "||"}:
             if left_ty != BOOL or right_ty != BOOL:
-                raise WasmUnsupportedError(
-                    f"{expr.op!r} expects bool operands", expr
-                )
+                raise WasmUnsupportedError(f"{expr.op!r} expects bool operands", expr)
             if expr.op == "&&":
                 code = f"(if (result i32) {left} (then {right}) (else (i32.const 0)))"
             else:
@@ -537,9 +524,7 @@ class WasmCodegen:
             raise WasmUnsupportedError("indirect calls are not supported", expr)
         signature = self._signatures.get(expr.func.name)
         if signature is None:
-            raise WasmUnsupportedError(
-                f"unknown function {expr.func.name!r}", expr
-            )
+            raise WasmUnsupportedError(f"unknown function {expr.func.name!r}", expr)
         if len(expr.args) != len(signature.params):
             raise WasmUnsupportedError(
                 f"{expr.func.name!r} expects {len(signature.params)} arguments, "
@@ -556,7 +541,9 @@ class WasmCodegen:
                 )
             args.append(code)
         rendered = " ".join(args)
-        call = f"(call $fn{signature.function_id}" + (f" {rendered}" if rendered else "")
+        call = f"(call $fn{signature.function_id}" + (
+            f" {rendered}" if rendered else ""
+        )
         call += ")"
         return call, signature.ret
 
@@ -571,19 +558,14 @@ class WasmCodegen:
             else_code = self._branch_statement(expr.else_branch)
             return f"(if {cond} (then {then_code}) (else {else_code}))", None
         if expr.else_branch is None:
-            raise WasmUnsupportedError(
-                "an if expression needs an else branch", expr
-            )
+            raise WasmUnsupportedError("an if expression needs an else branch", expr)
         else_code, else_ty = self._branch_value(expr.else_branch)
         if then_ty != else_ty:
             raise WasmUnsupportedError(
                 f"if branches have different types {then_ty} and {else_ty}", expr
             )
         return (
-            (
-                f"(if (result {then_ty}) {cond} (then {then_code}) "
-                f"(else {else_code}))"
-            ),
+            (f"(if (result {then_ty}) {cond} (then {then_code}) (else {else_code}))"),
             then_ty,
         )
 
@@ -593,9 +575,7 @@ class WasmCodegen:
         else:
             code, ty = self._expr(branch, want_value=True)
         if ty is None:
-            raise WasmUnsupportedError(
-                "if branch does not produce a value", branch
-            )
+            raise WasmUnsupportedError("if branch does not produce a value", branch)
         return code, ty
 
     def _branch_statement(self, branch: Any) -> str:
@@ -607,13 +587,9 @@ class WasmCodegen:
 
     def _assign(self, expr: Assign) -> tuple[str, str | None]:
         if not isinstance(expr.target, Ident):
-            raise WasmUnsupportedError(
-                "only local assignments are supported", expr
-            )
+            raise WasmUnsupportedError("only local assignments are supported", expr)
         if expr.target.name not in self._locals:
-            raise WasmUnsupportedError(
-                f"unknown local {expr.target.name!r}", expr
-            )
+            raise WasmUnsupportedError(f"unknown local {expr.target.name!r}", expr)
         index, ty = self._locals[expr.target.name]
         value, value_ty = self._expr(expr.value, want_value=True)
         if value_ty != ty:
@@ -625,13 +601,9 @@ class WasmCodegen:
 
     def _compound_assign(self, expr: CompoundAssign) -> tuple[str, str | None]:
         if not isinstance(expr.target, Ident):
-            raise WasmUnsupportedError(
-                "only local assignments are supported", expr
-            )
+            raise WasmUnsupportedError("only local assignments are supported", expr)
         if expr.target.name not in self._locals:
-            raise WasmUnsupportedError(
-                f"unknown local {expr.target.name!r}", expr
-            )
+            raise WasmUnsupportedError(f"unknown local {expr.target.name!r}", expr)
         index, ty = self._locals[expr.target.name]
         if ty != I64:
             raise WasmUnsupportedError(
@@ -715,9 +687,7 @@ def _wrap_export(
 ) -> Any:
     def wrapper(*args: Any) -> Any:
         if len(args) != len(params):
-            raise TypeError(
-                f"expected {len(params)} arguments, got {len(args)}"
-            )
+            raise TypeError(f"expected {len(params)} arguments, got {len(args)}")
         converted = []
         for value, param_type in zip(args, params):
             if param_type == BOOL:

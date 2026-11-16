@@ -444,8 +444,7 @@ def _runtime_vec_split_at(values: list, index: int) -> tuple[list, list]:
 
 def _runtime_vec_is_sorted_by(values: list, compare) -> bool:
     return all(
-        compare(values[index], values[index + 1])
-        for index in range(len(values) - 1)
+        compare(values[index], values[index + 1]) for index in range(len(values) - 1)
     )
 
 
@@ -477,8 +476,7 @@ def _runtime_vec_chunks_exact(values: list, size: int) -> list[list]:
     if size <= 0:
         raise ValueError("chunk size must be positive")
     return [
-        values[start : start + size]
-        for start in range(0, len(values) - size + 1, size)
+        values[start : start + size] for start in range(0, len(values) - size + 1, size)
     ]
 
 
@@ -535,8 +533,7 @@ def _runtime_vec_dedup_by_key(values: list, key) -> None:
 
 def _runtime_vec_is_sorted_by_key(values: list, key) -> bool:
     return all(
-        key(values[index]) <= key(values[index + 1])
-        for index in range(len(values) - 1)
+        key(values[index]) <= key(values[index + 1]) for index in range(len(values) - 1)
     )
 
 
@@ -1232,9 +1229,7 @@ def _runtime_char_eq_ignore_ascii_case(value, other):
 
 def _runtime_char_is_ascii_hexdigit(value):
     return len(value) == 1 and (
-        "0" <= value <= "9"
-        or "a" <= value <= "f"
-        or "A" <= value <= "F"
+        "0" <= value <= "9" or "a" <= value <= "f" or "A" <= value <= "F"
     )
 
 
@@ -1282,9 +1277,7 @@ def _runtime_char_is_ascii_digit(value):
 
 
 def _runtime_char_is_ascii_alphabetic(value):
-    return len(value) == 1 and (
-        "A" <= value <= "Z" or "a" <= value <= "z"
-    )
+    return len(value) == 1 and ("A" <= value <= "Z" or "a" <= value <= "z")
 
 
 def _runtime_char_to_digit(value, radix):
@@ -1587,8 +1580,7 @@ class Translator:
         self.target_width: int = HOST_TARGET_WIDTH
         self._method_handlers = {
             method: tuple(
-                getattr(Translator, handler_name)
-                for handler_name in handler_names
+                getattr(Translator, handler_name) for handler_name in handler_names
             )
             for method, handler_names in self._METHOD_HANDLER_NAMES.items()
         }
@@ -3590,149 +3582,500 @@ class Translator:
         return inner
 
     _METHOD_HANDLER_NAMES: ClassVar[dict[str, tuple[str, ...]]] = {
-        "all": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "and": ("_handle_collection_methods", "_handle_option_result_methods", "_handle_tail_methods",),
-        "any": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "as_bytes": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "all": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "and": (
+            "_handle_collection_methods",
+            "_handle_option_result_methods",
+            "_handle_tail_methods",
+        ),
+        "any": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "as_bytes": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
         "as_slice": ("_handle_tail_methods",),
-        "binary_search": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "binary_search": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "bytes": ("_handle_tail_methods",),
-        "chain": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "chain": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
         "char_indices": ("_handle_tail_methods",),
         "chars": ("_handle_tail_methods",),
-        "chunks": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "chunks_exact": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "chunks": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "chunks_exact": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
         "clone": ("_handle_tail_methods",),
-        "concat": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "contains": ("_handle_collection_methods", "_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "contains_key": ("_handle_collection_methods", "_handle_tail_methods",),
-        "dedup": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "dedup_by": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "dedup_by_key": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "drain": ("_handle_collection_methods", "_handle_tail_methods",),
-        "ends_with": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "entry": ("_handle_collection_methods", "_handle_tail_methods",),
-        "enumerate": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "eq_ignore_ascii_case": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "extend": ("_handle_collection_methods", "_handle_tail_methods",),
-        "extend_from_slice": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "fill": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "filter": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "find": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "first": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "flatten": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "fold": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "get": ("_handle_collection_methods", "_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "get_key_value": ("_handle_collection_methods", "_handle_tail_methods",),
-        "get_mut": ("_handle_collection_methods", "_handle_tail_methods",),
-        "insert": ("_handle_collection_methods", "_handle_tail_methods",),
-        "into_keys": ("_handle_collection_methods", "_handle_tail_methods",),
-        "into_values": ("_handle_collection_methods", "_handle_tail_methods",),
-        "is_alphabetic": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_alphanumeric": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_alphabetic": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_alphanumeric": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_control": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_digit": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_hexdigit": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_lowercase": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_punctuation": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_uppercase": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_ascii_whitespace": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_char_boundary": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_control": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_empty": ("_handle_collection_methods", "_handle_string_char_methods", "_handle_tail_methods",),
-        "is_lowercase": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_numeric": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_sorted": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "is_sorted_by": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "is_sorted_by_key": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "is_uppercase": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "is_whitespace": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "iter": ("_handle_collection_methods", "_handle_tail_methods",),
-        "iter_mut": ("_handle_collection_methods", "_handle_tail_methods",),
+        "concat": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "contains": (
+            "_handle_collection_methods",
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "contains_key": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "dedup": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "dedup_by": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "dedup_by_key": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "drain": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "ends_with": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "entry": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "enumerate": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "eq_ignore_ascii_case": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "extend": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "extend_from_slice": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "fill": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "filter": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "find": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "first": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "flatten": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "fold": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "get": (
+            "_handle_collection_methods",
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "get_key_value": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "get_mut": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "insert": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "into_keys": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "into_values": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "is_alphabetic": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_alphanumeric": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_alphabetic": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_alphanumeric": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_control": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_digit": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_hexdigit": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_lowercase": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_punctuation": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_uppercase": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_ascii_whitespace": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_char_boundary": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_control": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_empty": (
+            "_handle_collection_methods",
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_lowercase": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_numeric": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_sorted": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "is_sorted_by": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "is_sorted_by_key": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "is_uppercase": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "is_whitespace": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "iter": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "iter_mut": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
         "join": ("_handle_tail_methods",),
-        "keys": ("_handle_collection_methods", "_handle_tail_methods",),
-        "last": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "len": ("_handle_collection_methods", "_handle_tail_methods",),
-        "len_utf16": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "len_utf8": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "lines": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "map": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "map_err": ("_handle_option_result_methods", "_handle_tail_methods",),
+        "keys": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "last": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "len": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "len_utf16": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "len_utf8": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "lines": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "map": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "map_err": (
+            "_handle_option_result_methods",
+            "_handle_tail_methods",
+        ),
         "matches": ("_handle_tail_methods",),
-        "max": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "min": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "or": ("_handle_collection_methods", "_handle_option_result_methods", "_handle_tail_methods",),
+        "max": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "min": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "or": (
+            "_handle_collection_methods",
+            "_handle_option_result_methods",
+            "_handle_tail_methods",
+        ),
         "parse": ("_handle_tail_methods",),
-        "partition": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "position": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "product": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "rchunks": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "rchunks_exact": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "remove": ("_handle_collection_methods", "_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "remove_entry": ("_handle_collection_methods", "_handle_tail_methods",),
+        "partition": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "position": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "product": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "rchunks": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "rchunks_exact": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "remove": (
+            "_handle_collection_methods",
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "remove_entry": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
         "repeat": ("_handle_tail_methods",),
         "replace": ("_handle_tail_methods",),
         "replacen": ("_handle_tail_methods",),
-        "resize": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "retain": ("_handle_collection_methods", "_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "rev": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "rfind": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "resize": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "retain": (
+            "_handle_collection_methods",
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "rev": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "rfind": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "rmatches": ("_handle_tail_methods",),
-        "rotate_left": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "rotate_right": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "rotate_left": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "rotate_right": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "rsplit": ("_handle_tail_methods",),
-        "rsplit_once": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "rsplit_once": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "rsplit_terminator": ("_handle_tail_methods",),
         "rsplitn": ("_handle_tail_methods",),
-        "skip": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "sort_by": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "sort_by_key": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "sort_unstable": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "sort_unstable_by_key": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "skip": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "sort_by": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "sort_by_key": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "sort_unstable": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "sort_unstable_by_key": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "split": ("_handle_tail_methods",),
-        "split_at": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "split_first": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "split_last": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "split_off": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "split_once": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
+        "split_at": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "split_first": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "split_last": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "split_off": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "split_once": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "split_terminator": ("_handle_tail_methods",),
-        "split_whitespace": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "split_whitespace": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
         "splitn": ("_handle_tail_methods",),
-        "starts_with": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "step_by": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "strip_prefix": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "strip_suffix": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "sum": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "swap": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "swap_remove": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "to_ascii_lowercase": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "to_ascii_uppercase": ("_handle_string_char_methods", "_handle_tail_methods",),
-        "to_digit": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "starts_with": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "step_by": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "strip_prefix": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "strip_suffix": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "sum": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "swap": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "swap_remove": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "to_ascii_lowercase": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "to_ascii_uppercase": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "to_digit": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
         "to_lowercase": ("_handle_tail_methods",),
         "to_string": ("_handle_tail_methods",),
         "to_uppercase": ("_handle_tail_methods",),
         "to_vec": ("_handle_tail_methods",),
         "trim": ("_handle_tail_methods",),
-        "trim_end": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "trim_end": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
         "trim_end_matches": ("_handle_tail_methods",),
         "trim_matches": ("_handle_tail_methods",),
-        "trim_start": ("_handle_string_char_methods", "_handle_tail_methods",),
+        "trim_start": (
+            "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
         "trim_start_matches": ("_handle_tail_methods",),
-        "truncate": ("_handle_vec_mutation_methods", "_handle_tail_methods",),
-        "unwrap": ("_handle_option_result_methods", "_handle_tail_methods",),
-        "unwrap_or": ("_handle_option_result_methods", "_handle_tail_methods",),
-        "unwrap_or_else": ("_handle_option_result_methods", "_handle_tail_methods",),
-        "values": ("_handle_collection_methods", "_handle_tail_methods",),
-        "values_mut": ("_handle_collection_methods", "_handle_tail_methods",),
-        "windows": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
-        "xor": ("_handle_option_result_methods", "_handle_tail_methods",),
-        "zip": ("_handle_vec_iterator_methods", "_handle_tail_methods",),
+        "truncate": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "unwrap": (
+            "_handle_option_result_methods",
+            "_handle_tail_methods",
+        ),
+        "unwrap_or": (
+            "_handle_option_result_methods",
+            "_handle_tail_methods",
+        ),
+        "unwrap_or_else": (
+            "_handle_option_result_methods",
+            "_handle_tail_methods",
+        ),
+        "values": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "values_mut": (
+            "_handle_collection_methods",
+            "_handle_tail_methods",
+        ),
+        "windows": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "xor": (
+            "_handle_option_result_methods",
+            "_handle_tail_methods",
+        ),
+        "zip": (
+            "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
     }
 
-    def _handle_collection_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+    def _handle_collection_methods(
+        self, e: MethodCall, recv: ast.expr
+    ) -> ast.expr | None:
         if self._is_hashmap_expr(e.receiver):
             if e.method == "insert" and len(e.args) == 2:
                 return ast.Call(
@@ -3992,7 +4335,9 @@ class Translator:
             )
         return None
 
-    def _handle_option_result_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+    def _handle_option_result_methods(
+        self, e: MethodCall, recv: ast.expr
+    ) -> ast.expr | None:
         if e.method == "map_err" and len(e.args) == 1:
             return ast.Call(
                 func=ast.Attribute(
@@ -4044,7 +4389,9 @@ class Translator:
             )
         return None
 
-    def _handle_vec_iterator_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+    def _handle_vec_iterator_methods(
+        self, e: MethodCall, recv: ast.expr
+    ) -> ast.expr | None:
         if e.method in ("windows", "chunks") and len(e.args) == 1:
             return ast.Call(
                 func=ast.Name(
@@ -4144,21 +4491,13 @@ class Translator:
                 args=[recv],
                 keywords=[],
             )
-        if (
-            e.method == "skip"
-            and len(e.args) == 1
-            and self._is_vec_expr(e.receiver)
-        ):
+        if e.method == "skip" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
             return ast.Call(
                 func=ast.Name(id="_vec_skip", ctx=ast.Load()),
                 args=[recv, self.translate_expr(e.args[0])],
                 keywords=[],
             )
-        if (
-            e.method == "enumerate"
-            and not e.args
-            and self._is_vec_expr(e.receiver)
-        ):
+        if e.method == "enumerate" and not e.args and self._is_vec_expr(e.receiver):
             return ast.Call(
                 func=ast.Name(id="_vec_enumerate", ctx=ast.Load()),
                 args=[recv],
@@ -4170,11 +4509,7 @@ class Translator:
                 args=[recv, self.translate_expr(e.args[0])],
                 keywords=[],
             )
-        if (
-            e.method == "flatten"
-            and not e.args
-            and self._is_vec_expr(e.receiver)
-        ):
+        if e.method == "flatten" and not e.args and self._is_vec_expr(e.receiver):
             return ast.Call(
                 func=ast.Name(id="_vec_flatten", ctx=ast.Load()),
                 args=[recv],
@@ -4186,31 +4521,19 @@ class Translator:
                 args=[recv, self.translate_expr(e.args[0])],
                 keywords=[],
             )
-        if (
-            e.method == "step_by"
-            and len(e.args) == 1
-            and self._is_vec_expr(e.receiver)
-        ):
+        if e.method == "step_by" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
             return ast.Call(
                 func=ast.Name(id="_vec_step_by", ctx=ast.Load()),
                 args=[recv, self.translate_expr(e.args[0])],
                 keywords=[],
             )
-        if (
-            e.method == "split_first"
-            and not e.args
-            and self._is_vec_expr(e.receiver)
-        ):
+        if e.method == "split_first" and not e.args and self._is_vec_expr(e.receiver):
             return ast.Call(
                 func=ast.Name(id="_vec_split_first", ctx=ast.Load()),
                 args=[recv],
                 keywords=[],
             )
-        if (
-            e.method == "split_last"
-            and not e.args
-            and self._is_vec_expr(e.receiver)
-        ):
+        if e.method == "split_last" and not e.args and self._is_vec_expr(e.receiver):
             return ast.Call(
                 func=ast.Name(id="_vec_split_last", ctx=ast.Load()),
                 args=[recv],
@@ -4218,7 +4541,9 @@ class Translator:
             )
         return None
 
-    def _handle_vec_mutation_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+    def _handle_vec_mutation_methods(
+        self, e: MethodCall, recv: ast.expr
+    ) -> ast.expr | None:
         if e.method == "retain" and len(e.args) == 1:
             return ast.Call(
                 func=ast.Name(id="_vec_retain", ctx=ast.Load()),
@@ -4279,8 +4604,7 @@ class Translator:
             option_kind = self._option_result_type(e.receiver)
             if option_kind is not None:
                 raise TranslateError(
-                    f"{option_kind}.map is unsupported; use match or "
-                    "if let instead",
+                    f"{option_kind}.map is unsupported; use match or if let instead",
                     e.line,
                     e.col,
                 )
@@ -4555,7 +4879,9 @@ class Translator:
             )
         return None
 
-    def _handle_string_char_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+    def _handle_string_char_methods(
+        self, e: MethodCall, recv: ast.expr
+    ) -> ast.expr | None:
         if e.method in ("starts_with", "ends_with") and len(e.args) == 1:
             argument = self.translate_expr(e.args[0])
             if self._is_vec_expr(e.receiver):
@@ -4962,10 +5288,7 @@ class Translator:
                 ],
                 keywords=[],
             )
-        if (
-            e.method == "split_terminator"
-            and len(e.args) == 1
-        ):
+        if e.method == "split_terminator" and len(e.args) == 1:
             return ast.Call(
                 func=ast.Name(id="_string_split_terminator", ctx=ast.Load()),
                 args=[recv, self.translate_expr(e.args[0])],
