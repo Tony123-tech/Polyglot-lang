@@ -23,7 +23,7 @@ class Backend(Protocol):
     """A backend that can compile a Polyglot Program into a usable namespace."""
 
     name: str
-    """Backend name ("python" or "native")."""
+    """Backend name ("python", "native", or "wasm")."""
 
     trusted: bool
     """Whether compilation of untrusted input is allowed. See SECURITY.md."""
@@ -66,12 +66,13 @@ def get_backend(
     """Return a backend by name.
 
     Args:
-        name: "python" (transpile to Python AST) or "native" (compile
-            to a Rust/PyO3 extension). Default: "python".
+        name: "python" (transpile to Python AST), "native" (compile
+            to a Rust/PyO3 extension), or "wasm" (emit WAT and run it
+            through wasmtime). Default: "python".
         trusted: Allow compilation of untrusted input. If None, read
             from POLYGLOT_TRUSTED (default: "0"). See SECURITY.md.
         target_width: Simulate a 32- or 64-bit usize/isize target.
-            Python backend only; must be None for native.
+            Python backend only; must be None for native and wasm.
 
     Returns:
         A Backend with a .compile(program) method that returns a
@@ -94,6 +95,12 @@ def get_backend(
         from backends.rust.compiler import NativeBackend
 
         return NativeBackend(trusted=trusted)
+    if name == "wasm":
+        if target_width is not None:
+            raise ValueError("target_width is supported only by the Python backend")
+        from backends.wasm.codegen import WasmBackend
+
+        return WasmBackend(trusted=trusted)
     raise ValueError(f"Unknown backend: {name!r}")
 
 

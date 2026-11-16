@@ -2,8 +2,8 @@
 Backend registry for Polyglot.
 
 Public API:
-    get_backend(name="python" | "native", *, trusted=None, target_width=None)
-        -> Backend
+    get_backend(name="python" | "native" | "wasm", *, trusted=None,
+                target_width=None) -> Backend
         Return a backend. Call backend.compile(program) to get a
         namespace dict.
 

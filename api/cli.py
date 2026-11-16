@@ -171,6 +171,17 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(str(source_path))
         return 0
 
+    if backend_name == "wasm":
+        from backends.wasm.codegen import WasmCodegen
+
+        wat = WasmCodegen().generate(program)
+        out_dir = Path(args.out_dir) if args.out_dir else source_path.parent
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dest = out_dir / f"{source_path.stem}.wat"
+        dest.write_text(wat, encoding="utf-8")
+        print(str(dest))
+        return 0
+
     backend = get_backend("native", trusted=True)
     module_name = source_path.stem
     backend.compile(program, module_name=module_name)
@@ -283,7 +294,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("file", help="Path to the .poly file")
     run_p.add_argument(
         "--backend",
-        choices=["python", "native"],
+        choices=["python", "native", "wasm"],
         default="python",
         help="Backend to use (default: python)",
     )
@@ -305,7 +316,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compile a file",
         description=(
             "Compile a .poly file. The native backend produces a Python "
-            "extension module and prints its path."
+            "extension module, the wasm backend writes a .wat module, and "
+            "both print the artifact path."
         ),
         epilog=(
             "Examples:\n"
@@ -317,7 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
     build_p.add_argument("file", help="Path to the .poly file")
     build_p.add_argument(
         "--backend",
-        choices=["python", "native"],
+        choices=["python", "native", "wasm"],
         default="native",
         help="Backend to use (default: native)",
     )
@@ -376,7 +388,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compatibility compile command",
         description="Compile and print the exported names. Used by api.executor.",
     )
-    compile_p.add_argument("--backend", choices=["python", "native"], required=True)
+    compile_p.add_argument(
+        "--backend", choices=["python", "native", "wasm"], required=True
+    )
     src = compile_p.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true")
     src.add_argument("--file", type=str)

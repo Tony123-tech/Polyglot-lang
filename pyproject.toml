@@ -21,6 +21,9 @@ dev = [
     "pytest-xdist>=3.0",
     "ruff>=0.8",
 ]
+wasm = [
+    "wasmtime>=20.0",
+]
 
 [project.scripts]
 polyglot = "api.cli:main"
