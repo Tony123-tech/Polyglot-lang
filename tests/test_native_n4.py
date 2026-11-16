@@ -276,6 +276,11 @@ fn char_is_ascii_control(value: char) -> bool {
     value.is_ascii_control()
 }
 """,
+    "char_to_ascii_uppercase": """
+fn char_to_ascii_uppercase(value: char) -> char {
+    value.to_ascii_uppercase()
+}
+""",
 }
 
 
@@ -987,3 +992,20 @@ def test_python_char_is_ascii_control_parity():
     assert namespace["char_is_ascii_control"]("\x7f") is True
     assert namespace["char_is_ascii_control"]("\x9f") is False
     assert namespace["char_is_ascii_control"]("a") is False
+
+
+@pytest.mark.native
+def test_native_char_to_ascii_uppercase(native_ns):
+    assert native_ns["char_to_ascii_uppercase"]("a") == "A"
+    assert native_ns["char_to_ascii_uppercase"]("z") == "Z"
+    assert native_ns["char_to_ascii_uppercase"]("é") == "é"
+    assert native_ns["char_to_ascii_uppercase"]("1") == "1"
+
+
+def test_python_char_to_ascii_uppercase_parity():
+    namespace = compile_rust(parse(lex(SOURCES["char_to_ascii_uppercase"])))
+
+    assert namespace["char_to_ascii_uppercase"]("a") == "A"
+    assert namespace["char_to_ascii_uppercase"]("z") == "Z"
+    assert namespace["char_to_ascii_uppercase"]("é") == "é"
+    assert namespace["char_to_ascii_uppercase"]("1") == "1"
