@@ -184,29 +184,21 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     backend = get_backend("native", trusted=True)
     module_name = source_path.stem
-    backend.compile(program, module_name=module_name)
-    # NativeBackend stores the built extension in its cache; copy it out.
-    cache_dir = getattr(backend, "cache_dir", None)
-    if cache_dir is None:
-        raise RuntimeError("native backend did not expose a build cache")
-    # Recompute the cache key the same way NativeBackend does.
-    from backends.rust.codegen import RustCodegen
-
-    source_rs = RustCodegen(module_name=module_name).generate(program)
-    import hashlib
-
-    key = hashlib.sha256(source_rs.encode()).hexdigest()[:16]
-    build_dir = Path(cache_dir) / key
-    ext = backend._find_extension(build_dir)
+    extension = backend.build(
+        program,
+        module_name=module_name,
+        incremental=getattr(args, "incremental", False),
+        cache_scope=str(source_path.resolve()),
+    )
     out_dir = Path(args.out_dir) if args.out_dir else source_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     # On macOS, Python imports extension modules from ``.so`` files. Cargo
     # produces a ``.dylib``; the copied artifact gets the importable suffix.
-    suffix = ext.suffix
+    suffix = extension.suffix
     if sys.platform == "darwin" and suffix == ".dylib":
         suffix = ".so"
     dest = out_dir / f"{source_path.stem}{suffix}"
-    shutil.copy2(ext, dest)
+    shutil.copy2(extension, dest)
     print(str(dest))
     return 0
 
@@ -344,6 +336,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="out_dir",
         default=None,
         help="Directory for the built extension (default: source directory)",
+    )
+    build_p.add_argument(
+        "--incremental",
+        action="store_true",
+        help=(
+            "Reuse per-function Rust compilation fragments when rebuilding "
+            "the native backend (faster edit/rebuild cycles)"
+        ),
     )
     build_p.add_argument(
         "--verbose", action="store_true", help="Print full tracebacks on error"

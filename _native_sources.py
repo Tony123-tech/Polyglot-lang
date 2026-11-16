@@ -107,7 +107,7 @@ def compile_sources(sources: dict[str, str]) -> dict[str, Any]:
     combined = "\n".join(src for _, src in ordered)
     program: Program = parse(lex(combined))
     backend = get_backend("native", trusted=True)
-    return backend.compile(program)
+    return backend.compile(program, incremental=True, cache_scope="native-tests")
 
 
 # ---------------------------------------------------------------------------

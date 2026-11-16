@@ -12,6 +12,7 @@ Supports (v2 native, N2b):
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
@@ -327,6 +328,12 @@ class RustCodegen:
         self._current_return_type: str | None = None
         self._self_field_aliases: dict[str, str] | None = None
         self._payload_enum_names: set[str] = set()
+        # Content-addressed top-level fragments. ``fragments`` maps a stable
+        # key such as ``fn:add`` to the Rust text that implements it.
+        self.fragments: dict[str, str] = {}
+        self.fragment_hashes: dict[str, str] = {}
+        self.fragment_spans: dict[str, tuple[int, int]] = {}
+        self.header_source = ""
 
     # ---- helpers ----------------------------------------------------------
 
@@ -350,8 +357,52 @@ class RustCodegen:
     def dedent(self) -> None:
         self.indent_level = max(0, self.indent_level - 1)
 
+    # ---- fragments --------------------------------------------------------
+
+    def _begin_fragment(self) -> int:
+        """Return the line index where the next top-level fragment starts."""
+        return len(self.lines)
+
+    def _end_fragment(self, key: str, start: int) -> None:
+        """Record ``self.lines[start:]`` as a named, content-addressed fragment."""
+        unique = key
+        suffix = 2
+        while unique in self.fragment_spans:
+            unique = f"{key}#{suffix}"
+            suffix += 1
+        end = len(self.lines)
+        text = "\n".join(self.lines[start:end])
+        self.fragment_spans[unique] = (start, end)
+        self.fragments[unique] = text
+        self.fragment_hashes[unique] = hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def _item_fragment_key(self, item: Item) -> str:
+        if isinstance(item, FnDecl):
+            return f"fn:{item.name}"
+        if isinstance(item, StructDecl):
+            return f"struct:{item.name}"
+        if isinstance(item, ImplBlock):
+            return f"impl:{self.type_to_rust(item.ty)}"
+        if isinstance(item, EnumDecl):
+            return f"enum:{item.name}"
+        if isinstance(item, ConstDecl):
+            return f"const:{item.name}"
+        if isinstance(item, UseDecl):
+            return f"use:{item.path}"
+        if isinstance(item, ModDecl):
+            return f"mod:{item.name}"
+        if isinstance(item, TypeAlias):
+            return f"type:{item.name}"
+        if isinstance(item, TraitDecl):
+            return f"trait:{item.name}"
+        return type(item).__name__
+
     def generate(self, program: Program) -> str:
         self.lines = []
+        self.fragments = {}
+        self.fragment_hashes = {}
+        self.fragment_spans = {}
+        self.header_source = ""
         self.exported_fns = []
         self.exported_classes = []
         self.struct_names = set()
@@ -416,6 +467,9 @@ class RustCodegen:
         # Suppress warnings from aggressive `mut` / stub bodies.
         self.emit("#![allow(unused_mut, unused_variables, dead_code, unused_imports)]")
         self.emit()
+        self.header_source = "\n".join(self.lines)
+
+        runtime_start = self._begin_fragment()
         self.emit("use pyo3::prelude::*;")
         self.emit("use std::collections::{BTreeMap, HashMap, HashSet};")
         self.emit("use std::fmt::Write as FmtWrite;")
@@ -423,10 +477,13 @@ class RustCodegen:
         for line in _RUNTIME_PREFIX.strip().splitlines():
             self.emit(line)
         self.emit()
+        self._end_fragment("runtime", runtime_start)
 
         structs = [item for item in program.items if isinstance(item, StructDecl)]
         for struct in order_struct_declarations(structs):
+            start = self._begin_fragment()
             self.generate_struct(struct)
+            self._end_fragment(f"struct:{struct.name}", start)
         emitted_impls: set[str] = set()
         for item in program.items:
             if not isinstance(item, StructDecl):
@@ -440,11 +497,16 @@ class RustCodegen:
                         if isinstance(candidate, ImplBlock)
                         and self.type_to_rust(candidate.ty) == target
                     ]
+                    start = self._begin_fragment()
                     self.generate_impls(impls)
+                    self._end_fragment(f"impl:{target}", start)
                     emitted_impls.add(target)
                 else:
+                    start = self._begin_fragment()
                     self.generate_item(item)
+                    self._end_fragment(self._item_fragment_key(item), start)
 
+        start = self._begin_fragment()
         self.emit()
         self.emit("#[pymodule]")
         self.emit(f"fn {self.module_name}(m: &Bound<'_, PyModule>) -> PyResult<()> {{")
@@ -456,6 +518,7 @@ class RustCodegen:
         self.emit("Ok(())")
         self.dedent()
         self.emit("}")
+        self._end_fragment(f"module:{self.module_name}", start)
 
         return "\n".join(self.lines)
 
@@ -1304,10 +1367,7 @@ class RustCodegen:
                 if e.method == "keys" and not e.args:
                     return f"{recv}.keys().cloned().collect::<Vec<_>>()"
                 if e.method == "into_keys" and not e.args:
-                    return (
-                        f"{recv}.into_iter().map(|(key, _)| key)"
-                        ".collect::<Vec<_>>()"
-                    )
+                    return f"{recv}.into_iter().map(|(key, _)| key).collect::<Vec<_>>()"
                 if e.method == "into_values" and not e.args:
                     return (
                         f"{recv}.into_iter().map(|(_, value)| value)"
@@ -1478,14 +1538,14 @@ class RustCodegen:
                 return f"{inner}.chars().rev().collect::<Vec<char>>()"
             if e.method == "rev" and not e.args:
                 return f"{recv}.iter().rev().cloned().collect::<Vec<_>>()"
-            if e.method == "skip" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
-                arg = self.expr_to_rust(e.args[0])
-                return f"{recv}.iter().skip({arg}).cloned().collect::<Vec<_>>()"
             if (
-                e.method == "enumerate"
-                and not e.args
+                e.method == "skip"
+                and len(e.args) == 1
                 and self._is_vec_expr(e.receiver)
             ):
+                arg = self.expr_to_rust(e.args[0])
+                return f"{recv}.iter().skip({arg}).cloned().collect::<Vec<_>>()"
+            if e.method == "enumerate" and not e.args and self._is_vec_expr(e.receiver):
                 return (
                     f"{recv}.iter().enumerate()"
                     ".map(|(index, value)| (index as i64, value.clone()))"
@@ -1498,17 +1558,16 @@ class RustCodegen:
                     ".map(|(left, right)| (left.clone(), right.clone()))"
                     ".collect::<Vec<_>>()"
                 )
+            if e.method == "flatten" and not e.args and self._is_vec_expr(e.receiver):
+                return f"{recv}.iter().flatten().cloned().collect::<Vec<_>>()"
             if (
-                e.method == "flatten"
-                and not e.args
+                e.method == "chain"
+                and len(e.args) == 1
                 and self._is_vec_expr(e.receiver)
             ):
-                return f"{recv}.iter().flatten().cloned().collect::<Vec<_>>()"
-            if e.method == "chain" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
                 other = self.expr_to_rust(e.args[0])
                 return (
-                    f"{recv}.iter().chain({other}.iter())"
-                    ".cloned().collect::<Vec<_>>()"
+                    f"{recv}.iter().chain({other}.iter()).cloned().collect::<Vec<_>>()"
                 )
             if (
                 e.method == "step_by"
@@ -1516,28 +1575,21 @@ class RustCodegen:
                 and self._is_vec_expr(e.receiver)
             ):
                 step = self.expr_to_rust(e.args[0])
-                return (
-                    f"{recv}.iter().step_by({step})"
-                    ".cloned().collect::<Vec<_>>()"
-                )
+                return f"{recv}.iter().step_by({step}).cloned().collect::<Vec<_>>()"
             if (
                 e.method == "split_first"
                 and not e.args
                 and self._is_vec_expr(e.receiver)
             ):
                 return (
-                    f"{recv}.split_first()"
-                    ".map(|(first, rest)| (*first, rest.to_vec()))"
+                    f"{recv}.split_first().map(|(first, rest)| (*first, rest.to_vec()))"
                 )
             if (
                 e.method == "split_last"
                 and not e.args
                 and self._is_vec_expr(e.receiver)
             ):
-                return (
-                    f"{recv}.split_last()"
-                    ".map(|(last, rest)| (*last, rest.to_vec()))"
-                )
+                return f"{recv}.split_last().map(|(last, rest)| (*last, rest.to_vec()))"
             if e.method == "bytes" and not e.args:
                 return f"{recv}.bytes().collect::<Vec<u8>>()"
             if e.method == "parse" and not e.args:
@@ -1571,8 +1623,7 @@ class RustCodegen:
             if e.method == "rsplit" and len(e.args) == 1:
                 separator = self.expr_to_rust(e.args[0])
                 return (
-                    f"{recv}.rsplit(&{separator})"
-                    ".map(String::from).collect::<Vec<_>>()"
+                    f"{recv}.rsplit(&{separator}).map(String::from).collect::<Vec<_>>()"
                 )
             if e.method == "split_terminator" and len(e.args) == 1:
                 separator = self.expr_to_rust(e.args[0])
@@ -1608,10 +1659,11 @@ class RustCodegen:
                 return (
                     f"{recv}.trim_matches({self.expr_to_rust(e.args[0])}).to_string()"
                 )
-            if e.method in ("trim_start_matches", "trim_end_matches") and len(e.args) == 1:
-                return (
-                    f"{recv}.{e.method}({self.expr_to_rust(e.args[0])}).to_string()"
-                )
+            if (
+                e.method in ("trim_start_matches", "trim_end_matches")
+                and len(e.args) == 1
+            ):
+                return f"{recv}.{e.method}({self.expr_to_rust(e.args[0])}).to_string()"
             if e.method == "is_ascii" and not e.args:
                 return f"{recv}.is_ascii()"
             if e.method == "lines" and not e.args:
@@ -1668,10 +1720,7 @@ class RustCodegen:
             if e.method == "is_ascii_hexdigit" and not e.args:
                 return f"{recv}.is_ascii_hexdigit()"
             if e.method == "eq_ignore_ascii_case" and len(e.args) == 1:
-                return (
-                    f"{recv}.eq_ignore_ascii_case("
-                    f"&{self.expr_to_rust(e.args[0])})"
-                )
+                return f"{recv}.eq_ignore_ascii_case(&{self.expr_to_rust(e.args[0])})"
             if e.method == "is_ascii_control" and not e.args:
                 return f"{recv}.is_ascii_control()"
             if e.method in ("to_ascii_lowercase", "to_ascii_uppercase") and not e.args:
@@ -1774,15 +1823,9 @@ class RustCodegen:
                     ".map(|index| index as i64)"
                 )
             if e.method == "any" and len(e.args) == 1:
-                return (
-                    f"{recv}.clone().into_iter().any("
-                    f"{self.expr_to_rust(e.args[0])})"
-                )
+                return f"{recv}.clone().into_iter().any({self.expr_to_rust(e.args[0])})"
             if e.method == "all" and len(e.args) == 1:
-                return (
-                    f"{recv}.clone().into_iter().all("
-                    f"{self.expr_to_rust(e.args[0])})"
-                )
+                return f"{recv}.clone().into_iter().all({self.expr_to_rust(e.args[0])})"
             if e.method == "min" and not e.args:
                 return f"{recv}.iter().min().cloned()"
             if e.method == "max" and not e.args:

@@ -16,14 +16,21 @@ from __future__ import annotations
 import hashlib
 import importlib.machinery
 import importlib.util
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+try:  # pragma: no cover - fcntl is unavailable on Windows
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 from ast_nodes import Program
 from backends.base import BackendBase
@@ -171,10 +178,21 @@ class TypeErrorForBoundary(RustCompileError):
 
 _ERROR_HEAD_RE = re.compile(r"(?m)^\s*error(?:\[(?P<code>E\d+)\])?:\s*(?P<msg>[^\n]+)")
 _ERROR_LOCATION_RE = re.compile(
-    r"(?m)^\s*-->\s*src/lib\.rs:(?P<line>\d+):(?P<col>\d+)\s*$"
+    r"(?m)^\s*-->\s*(?P<file>[^\n]+?):(?P<line>\d+):(?P<col>\d+)\s*$"
 )
 _WARNING_RE = re.compile(r"(?m)^\s*warning(?:\[[^\]]+\])?:\s*(?P<msg>[^\n]+)")
 _DIAGNOSTIC_START_RE = re.compile(r"^(?:error(?:\[[^\]]+\])?:|warning(?:\[[^\]]+\])?:)")
+
+_EXTENSION_PATTERNS = ("*.so", "*.pyd", "*.dylib")
+_MACOS_CARGO_CONFIG = (
+    "[target.aarch64-apple-darwin]\n"
+    'rustflags = ["-C", "link-arg=-undefined", '
+    '"-C", "link-arg=dynamic_lookup"]\n'
+    "\n"
+    "[target.x86_64-apple-darwin]\n"
+    'rustflags = ["-C", "link-arg=-undefined", '
+    '"-C", "link-arg=dynamic_lookup"]\n'
+)
 
 
 # ---------------------------------------------------------------------------
@@ -198,12 +216,44 @@ class NativeBackend(BackendBase):
             self.cache_dir.chmod(0o700)
         except OSError:
             pass
+        # Diagnostics for the most recent build (useful to tests/tools).
+        self.last_build: dict[str, Any] = {}
 
     # ---- public API --------------------------------------------------------
 
     def compile(
-        self, program: Program, module_name: str = "polyglot_native"
+        self,
+        program: Program,
+        module_name: str = "polyglot_native",
+        *,
+        incremental: bool = False,
+        cache_scope: str | None = None,
     ) -> dict[str, Any]:
+        self._check_trust()
+        extension = self.build(
+            program,
+            module_name=module_name,
+            incremental=incremental,
+            cache_scope=cache_scope,
+        )
+        mod = self._load_extension(extension, module_name=module_name)
+        return mod.__dict__
+
+    def build(
+        self,
+        program: Program,
+        module_name: str = "polyglot_native",
+        *,
+        incremental: bool = False,
+        cache_scope: str | None = None,
+    ) -> Path:
+        """Compile ``program`` and return the built extension module path.
+
+        Builds are content-addressed by the full generated Rust source. With
+        ``incremental=True`` a stable per-scope working directory is kept so
+        Cargo can reuse per-function compilation artifacts when only one
+        top-level item changes.
+        """
         self._check_trust()
         codegen = RustCodegen(module_name=module_name)
         try:
@@ -228,30 +278,261 @@ class NativeBackend(BackendBase):
         key = hashlib.sha256(source.encode()).hexdigest()[:16]
         build_dir = self.cache_dir / key
 
-        if not self._is_built(build_dir):
-            self._build(
+        if self._is_built(build_dir):
+            self.last_build = {
+                "source_hash": key,
+                "reused": True,
+                "incremental": incremental,
+            }
+            return self._find_extension(build_dir, module_name=module_name)
+
+        if incremental:
+            return self._build_incremental(
                 source,
-                build_dir,
-                codegen.line_map,
-                codegen.source_line_text_map,
+                codegen,
                 module_name=module_name,
+                key=key,
+                cache_scope=cache_scope,
             )
 
-        ext = self._find_extension(build_dir)
-        mod = self._load_extension(ext, module_name=module_name)
-        return mod.__dict__
+        self._build(
+            source,
+            build_dir,
+            codegen.line_map,
+            codegen.source_line_text_map,
+            module_name=module_name,
+        )
+        self.last_build = {
+            "source_hash": key,
+            "reused": False,
+            "incremental": False,
+        }
+        return self._find_extension(build_dir, module_name=module_name)
 
     # ---- build steps -------------------------------------------------------
 
     def _is_built(self, build_dir: Path) -> bool:
-        release = build_dir / "target" / "release"
-        if not release.exists():
-            return False
-        return (
-            any(release.glob("*.so"))
-            or any(release.glob("*.dylib"))
-            or any(release.glob("*.pyd"))
-        )
+        if _find_extension_path(build_dir) is not None:
+            return True
+        return _find_extension_path(build_dir / "target" / "release") is not None
+
+    # ---- incremental build -------------------------------------------------
+
+    def _incremental_scope_dir(self, scope: str) -> Path:
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", scope).strip("._-") or "scope"
+        digest = hashlib.sha256(scope.encode()).hexdigest()[:8]
+        return self.cache_dir / "incremental" / f"{safe[:40]}-{digest}"
+
+    @contextmanager
+    def _scope_lock(self, scope_dir: Path):
+        scope_dir.mkdir(parents=True, exist_ok=True)
+        with open(scope_dir / ".lock", "a+", encoding="utf-8") as handle:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _build_incremental(
+        self,
+        source: str,
+        codegen: RustCodegen,
+        *,
+        module_name: str,
+        key: str,
+        cache_scope: str | None,
+    ) -> Path:
+        scope_dir = self._incremental_scope_dir(cache_scope or module_name)
+        with self._scope_lock(scope_dir):
+            # Another process may have finished this exact build while we
+            # waited for the lock.
+            build_dir = self.cache_dir / key
+            if self._is_built(build_dir):
+                self.last_build = {
+                    "source_hash": key,
+                    "reused": True,
+                    "incremental": True,
+                }
+                return self._find_extension(build_dir, module_name=module_name)
+
+            manifest_path = scope_dir / ".polyglot-manifest.json"
+            previous = _read_json(manifest_path)
+            previous_fragments = previous.get("fragments")
+            if not isinstance(previous_fragments, dict):
+                previous_fragments = {}
+            changed = sorted(
+                name
+                for name, digest in codegen.fragment_hashes.items()
+                if previous_fragments.get(name) != digest
+            )
+            removed = sorted(set(previous_fragments) - set(codegen.fragment_hashes))
+
+            if not (scope_dir / "target").is_dir():
+                self._seed_incremental_target(scope_dir)
+            self._write_project_files(scope_dir, module_name)
+            fragment_starts = self._write_fragments(scope_dir, codegen)
+            lib_rs = self._assemble_lib_rs(codegen)
+            _write_if_changed(scope_dir / "src" / "lib.rs", lib_rs)
+
+            env = _build_env()
+            # sccache refuses to run with CARGO_INCREMENTAL=1. Incremental
+            # builds trade wrapper caching for sub-second local rebuilds; the
+            # seed step above keeps prebuilt dependencies warm.
+            env.pop("RUSTC_WRAPPER", None)
+            env["CARGO_INCREMENTAL"] = "1"
+            result = subprocess.run(
+                ["cargo", "build", "--release"],
+                cwd=scope_dir,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            if result.returncode != 0:
+                raise _parse_cargo_error(
+                    result.stdout,
+                    result.stderr,
+                    source,
+                    codegen.line_map,
+                    codegen.source_line_text_map,
+                    fragment_starts=fragment_starts,
+                )
+
+            extension = self._find_extension(scope_dir, module_name=module_name)
+            build_dir.mkdir(parents=True, exist_ok=True)
+            artifact = build_dir / extension.name
+            temporary = build_dir / f".{extension.name}.{os.getpid()}.tmp"
+            shutil.copy2(extension, temporary)
+            os.replace(temporary, artifact)
+
+            manifest = {
+                "source_hash": key,
+                "module": module_name,
+                "fragments": dict(codegen.fragment_hashes),
+                "extension": extension.name,
+            }
+            _write_json(build_dir / ".polyglot-manifest.json", manifest)
+            _write_json(
+                manifest_path,
+                {**manifest, "changed": changed, "removed": removed},
+            )
+            self.last_build = {
+                "source_hash": key,
+                "reused": False,
+                "incremental": True,
+                "scope": scope_dir.name,
+                "changed": changed,
+                "removed": removed,
+            }
+            return artifact
+
+    def _write_project_files(self, scope_dir: Path, module_name: str) -> None:
+        _write_if_changed(scope_dir / "Cargo.toml", self._cargo_toml(module_name))
+        if sys.platform == "darwin":
+            cargo_dir = scope_dir / ".cargo"
+            cargo_dir.mkdir(exist_ok=True)
+            _write_if_changed(cargo_dir / "config.toml", _MACOS_CARGO_CONFIG)
+
+    def _write_fragments(self, scope_dir: Path, codegen: RustCodegen) -> dict[str, int]:
+        """Write each content-addressed fragment and return diagnostic offsets.
+
+        Fragment files whose hash is already present are left untouched, so
+        Cargo sees stable inputs for the functions that did not change.
+        """
+        fragment_dir = scope_dir / "src" / "fragments"
+        fragment_dir.mkdir(parents=True, exist_ok=True)
+        starts: dict[str, int] = {}
+        for name, text in codegen.fragments.items():
+            filename = _fragment_filename(name, codegen.fragment_hashes[name])
+            path = fragment_dir / filename
+            if not path.exists():
+                path.write_text(text + "\n", encoding="utf-8")
+            start = codegen.fragment_spans[name][0]
+            rel = path.relative_to(scope_dir).as_posix()
+            starts[rel] = start
+            starts[filename] = start
+            starts[path.as_posix()] = start
+            starts[str(path.resolve())] = start
+        return starts
+
+    @staticmethod
+    def _assemble_lib_rs(codegen: RustCodegen) -> str:
+        lines = [codegen.header_source, ""]
+        for name in codegen.fragments:
+            filename = _fragment_filename(name, codegen.fragment_hashes[name])
+            lines.append(f'include!("fragments/{filename}");')
+        lines.append("")
+        return "\n".join(lines) + "\n"
+
+    def _seed_incremental_target(self, scope_dir: Path) -> None:
+        """Best-effort copy of an existing ``target/`` to warm dependencies.
+
+        Cargo will still rebuild the crate itself, but prebuilt dependency
+        artifacts (PyO3 and friends) are reused. This only runs once per
+        incremental scope and is deliberately silent on failure.
+        """
+        target = scope_dir / "target"
+        if target.exists():
+            return
+        candidates: list[tuple[float, Path]] = []
+        try:
+            children = list(self.cache_dir.iterdir())
+        except OSError:
+            return
+        for child in children:
+            if child == scope_dir:
+                continue
+            if child.name == "incremental":
+                try:
+                    nested = list(child.iterdir())
+                except OSError:
+                    nested = []
+                for path in nested:
+                    if path != scope_dir:
+                        candidate = _target_candidate(path)
+                        if candidate is not None:
+                            candidates.append(candidate)
+                continue
+            candidate = _target_candidate(child)
+            if candidate is not None:
+                candidates.append(candidate)
+        if not candidates:
+            return
+        _, source_target = max(candidates)
+        lock_source = source_target.parent / "Cargo.lock"
+        if lock_source.is_file() and not (scope_dir / "Cargo.lock").exists():
+            try:
+                shutil.copy2(lock_source, scope_dir / "Cargo.lock")
+            except OSError:
+                pass
+        seed = scope_dir / ".target-seed"
+        shutil.rmtree(seed, ignore_errors=True)
+        try:
+            if sys.platform == "darwin":
+                command = ["cp", "-Rc", str(source_target), str(seed)]
+            else:
+                command = [
+                    "cp",
+                    "-a",
+                    "--reflink=auto",
+                    str(source_target),
+                    str(seed),
+                ]
+            subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except OSError, subprocess.CalledProcessError:
+            shutil.rmtree(seed, ignore_errors=True)
+            return
+        if seed.is_dir() and not target.exists():
+            seed.rename(target)
+        else:
+            shutil.rmtree(seed, ignore_errors=True)
 
     def _build(
         self,
@@ -323,12 +604,14 @@ futures = "0.3"
 
     # ---- load steps --------------------------------------------------------
 
-    def _find_extension(self, build_dir: Path) -> Path:
+    def _find_extension(self, build_dir: Path, module_name: str | None = None) -> Path:
+        found = _find_extension_path(build_dir, module_name)
+        if found is not None:
+            return found
         release = build_dir / "target" / "release"
-        for pattern in ("*.so", "*.pyd", "*.dylib"):
-            matches = list(release.glob(pattern))
-            if matches:
-                return matches[0]
+        found = _find_extension_path(release, module_name)
+        if found is not None:
+            return found
         raise RuntimeError(f"No extension module found in {release}")
 
     def _load_extension(self, path: Path, module_name: str = "polyglot_native"):
@@ -361,12 +644,77 @@ def _build_env() -> dict[str, str]:
     return env
 
 
+def _find_extension_path(
+    directory: Path, module_name: str | None = None
+) -> Path | None:
+    if not directory.is_dir():
+        return None
+    expected = {module_name, f"lib{module_name}"} if module_name is not None else None
+    for pattern in _EXTENSION_PATTERNS:
+        matches = sorted(directory.glob(pattern))
+        if expected is not None:
+            matches = [path for path in matches if path.stem in expected]
+        if matches:
+            return matches[0]
+    return None
+
+
+def _target_candidate(directory: Path) -> tuple[float, Path] | None:
+    target = directory / "target"
+    if not target.is_dir():
+        return None
+    try:
+        return (target.stat().st_mtime, target)
+    except OSError:
+        return None
+
+
+def _fragment_filename(name: str, digest: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._-") or "fragment"
+    return f"{safe[:80]}-{digest}.rs"
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_if_changed(path: Path, text: str) -> None:
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return
+    except OSError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _lookup_fragment_start(file: str, starts: dict[str, int]) -> int | None:
+    normalized = file.replace("\\", "/")
+    for candidate in (normalized, normalized.removeprefix("./")):
+        if candidate in starts:
+            return starts[candidate]
+    return starts.get(normalized.rsplit("/", 1)[-1])
+
+
 def _parse_cargo_error(
     stdout: str,
     stderr: str,
     source: str,
     line_map: dict[int, tuple[int, int]] | None = None,
     source_line_text_map: dict[int, str] | None = None,
+    fragment_starts: dict[str, int] | None = None,
 ) -> RustCompileError:
     combined = _deduplicate_error_blocks(f"{stdout}\n{stderr}".strip())
     head = _ERROR_HEAD_RE.search(combined)
@@ -374,7 +722,12 @@ def _parse_cargo_error(
         combined,
         head.end() if head is not None else 0,
     )
+    location_file = location.group("file") if location else None
     rust_line = int(location.group("line")) if location else None
+    if rust_line is not None and location_file is not None and fragment_starts:
+        fragment_start = _lookup_fragment_start(location_file, fragment_starts)
+        if fragment_start is not None:
+            rust_line += fragment_start
     rust_col = int(location.group("col")) if location else None
     source_origin = (
         line_map.get(rust_line)
