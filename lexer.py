@@ -121,6 +121,7 @@ class TokenType(Enum):
     DOTDOTEQ = auto()
     DOTDOTDOT = auto()
     PIPE = auto()
+    CARET = auto()
     AMP = auto()
     HASH = auto()
     AT = auto()
@@ -247,6 +248,7 @@ OPERATORS: list[tuple[str, TokenType]] = [
     (":", TokenType.COLON),
     (".", TokenType.DOT),
     ("|", TokenType.PIPE),
+    ("^", TokenType.CARET),
     ("&", TokenType.AMP),
     ("#", TokenType.HASH),
     ("@", TokenType.AT),

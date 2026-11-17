@@ -148,6 +148,11 @@ class ParseError(Exception):
 # Precedence tables (Pratt)
 # ---------------------------------------------------------------------------
 
+# Higher numbers bind tighter.  Bitwise operators sit between the
+# comparisons and the arithmetic operators, matching Rust:
+#
+#     ||  <  &&  <  comparisons  <  |  <  ^  <  &  <  + -  <  * / %  <  as
+#
 INFIX_PREC: dict[TokenType, int] = {
     TokenType.OROR: 1,
     TokenType.ANDAND: 2,
@@ -157,19 +162,20 @@ INFIX_PREC: dict[TokenType, int] = {
     TokenType.GT: 4,
     TokenType.LE: 4,
     TokenType.GE: 4,
-    TokenType.PIPE: 3,
-    TokenType.AMP: 4,
-    TokenType.PLUS: 5,
-    TokenType.MINUS: 5,
-    TokenType.STAR: 6,
-    TokenType.SLASH: 6,
-    TokenType.PERCENT: 6,
+    TokenType.PIPE: 5,
+    TokenType.CARET: 6,
+    TokenType.AMP: 7,
+    TokenType.PLUS: 8,
+    TokenType.MINUS: 8,
+    TokenType.STAR: 9,
+    TokenType.SLASH: 9,
+    TokenType.PERCENT: 9,
 }
 
-PREFIX_PREC = 7
-POSTFIX_PREC = 8
+PREFIX_PREC = 10
+POSTFIX_PREC = 11
 ASSIGN_PREC = 0
-CAST_PREC = 9
+CAST_PREC = 12
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +208,10 @@ class Parser:
         self.i = 0
         self._parsing_for_iter = False
         self._parsing_iflet_value = False
+        # Rust-style restriction: a `{` in a control-flow condition starts the
+        # body, never a struct literal. Without this, `if a < b { a } else { b }`
+        # parses the `b { a }` part as a struct literal.
+        self._no_struct_literal = 0
 
     # ---- token helpers -----------------------------------------------------
 
@@ -362,7 +372,7 @@ class Parser:
         if (
             tok.type == TokenType.IDENT
             and tok.value == "include"
-            and self.peek(1).type == TokenType.BANG
+            and self.peek(1).type in (TokenType.BANG, TokenType.LPAREN)
         ):
             return self.parse_include_item()
 
@@ -607,7 +617,7 @@ class Parser:
         from ast_nodes import IncludeDecl
 
         tok = self.expect(TokenType.IDENT)
-        self.expect(TokenType.BANG)
+        self.eat(TokenType.BANG)
         self.expect(TokenType.LPAREN)
         path_tok = self.expect(TokenType.STRING, "include path string")
         self.expect(TokenType.RPAREN)
@@ -1020,6 +1030,22 @@ class Parser:
             ):
                 break
 
+            # A block-form statement without an `else` branch cannot be a
+            # postfix target: `if c { return x; } (a - 1) / 2` must parse as a
+            # statement followed by an expression, not as a call on the `if`.
+            if (
+                isinstance(left, (IfExpr, IfLet))
+                and left.else_branch is None
+                and tok.type
+                in (
+                    TokenType.LPAREN,
+                    TokenType.DOT,
+                    TokenType.LBRACKET,
+                    TokenType.QUESTION,
+                )
+            ):
+                break
+
             # Assignment (right-associative, lowest precedence)
             if (
                 tok.type
@@ -1159,6 +1185,7 @@ class Parser:
             TokenType.ANDAND: "&&",
             TokenType.OROR: "||",
             TokenType.AMP: "&",
+            TokenType.CARET: "^",
             TokenType.PIPE: "|",
         }[ttype]
 
@@ -1244,7 +1271,11 @@ class Parser:
         # while
         if tok.type == TokenType.WHILE:
             self.advance()
-            cond = self.parse_expr()
+            self._no_struct_literal += 1
+            try:
+                cond = self.parse_expr()
+            finally:
+                self._no_struct_literal -= 1
             body = self.parse_block()
             return While(tok.line, tok.col, cond, body)
 
@@ -1255,10 +1286,12 @@ class Parser:
             self.expect(TokenType.IN)
             was_parsing_for_iter = self._parsing_for_iter
             self._parsing_for_iter = True
+            self._no_struct_literal += 1
             try:
                 iter_expr = self.parse_expr()
             finally:
                 self._parsing_for_iter = was_parsing_for_iter
+                self._no_struct_literal -= 1
             body = self.parse_block()
             return For(tok.line, tok.col, pattern, iter_expr, body)
 
@@ -1303,6 +1336,16 @@ class Parser:
         if tok.type == TokenType.IDENT and tok.value == "None":
             self.advance()
             return OptionNone(tok.line, tok.col)
+        # include(...) without the macro bang is also item-position only.
+        if (
+            tok.type == TokenType.IDENT
+            and tok.value == "include"
+            and self.peek(1).type == TokenType.LPAREN
+        ):
+            self.error(
+                "include is only allowed at item position, not inside a block",
+                tok,
+            )
         # macro: name ! ( ... ) / [ ... ] / { ... }
         if tok.type == TokenType.IDENT and self.peek(1).type == TokenType.BANG:
             name = tok.value
@@ -1456,6 +1499,8 @@ class Parser:
         raise AssertionError("unreachable")
 
     def _looks_like_struct_literal(self) -> bool:
+        if self._no_struct_literal:
+            return False
         if self._parsing_iflet_value:
             return False
         if not self.check(TokenType.LBRACE):
@@ -1516,10 +1561,12 @@ class Parser:
             self.expect(TokenType.EQ)
             was_iflet = self._parsing_iflet_value
             self._parsing_iflet_value = True
+            self._no_struct_literal += 1
             try:
                 value = self.parse_expr()
             finally:
                 self._parsing_iflet_value = was_iflet
+                self._no_struct_literal -= 1
             then_block = self.parse_block()
             else_branch: Expr | Block | IfExpr | IfLet | None = None
             if self.eat(TokenType.ELSE):
@@ -1535,7 +1582,11 @@ class Parser:
                 then_block,
                 else_branch,
             )
-        cond = self.parse_expr()
+        self._no_struct_literal += 1
+        try:
+            cond = self.parse_expr()
+        finally:
+            self._no_struct_literal -= 1
         then_block = self.parse_block()
         else_branch: Expr | Block | IfExpr | None = None
         if self.eat(TokenType.ELSE):
@@ -1547,7 +1598,11 @@ class Parser:
 
     def parse_match(self) -> MatchExpr:
         tok = self.expect(TokenType.MATCH)
-        scrutinee = self.parse_expr()
+        self._no_struct_literal += 1
+        try:
+            scrutinee = self.parse_expr()
+        finally:
+            self._no_struct_literal -= 1
         self.expect(TokenType.LBRACE)
         arms: list[MatchArm] = []
         while not self.check(TokenType.RBRACE):

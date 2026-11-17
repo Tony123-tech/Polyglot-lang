@@ -286,9 +286,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("file", help="Path to the .poly file")
     run_p.add_argument(
         "--backend",
-        choices=["python", "native", "wasm"],
+        choices=["python", "native", "wasm", "jit"],
         default="python",
-        help="Backend to use (default: python)",
+        help=(
+            "Backend to use (default: python). `jit` emits AArch64 machine "
+            "code directly and requires macOS on Apple Silicon."
+        ),
     )
     run_p.add_argument(
         "--target-width",
@@ -389,7 +392,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Compile and print the exported names. Used by api.executor.",
     )
     compile_p.add_argument(
-        "--backend", choices=["python", "native", "wasm"], required=True
+        "--backend", choices=["python", "native", "wasm", "jit"], required=True
     )
     src = compile_p.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true")
@@ -414,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
             error_format=getattr(args, "error_format", "text"),
         )
         return 2 if args.command == "compile" else 1
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         _print_error(
             error,
             verbose=getattr(args, "verbose", False),
