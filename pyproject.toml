@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polyglot-lang"
-version = "0.3.0"
+version = "0.3.8"
 description = "A Rust-like language with Python and native PyO3 backends."
 readme = "README.md"
 license = "MIT"
@@ -47,14 +47,19 @@ py-modules = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["api*", "backends*"]
+include = ["api*", "backends*", "stdlib*"]
+
+[tool.setuptools.package-data]
+stdlib = ["*.poly"]
 
 [tool.pytest.ini_options]
 markers = [
     "native: marks tests that require a compiled native backend",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "generated: marks generated edge-case grids (python backend, no cargo)",
+    "generated_heavy: marks optional generated grids that are too slow by default",
 ]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow and not generated_heavy'"
 
-[tool.ruff.lint.per-file-ignores]
-"tests/test_rust_compile_error.py" = ["ISC004"]
+[tool.ruff.lint]
+ignore = ["ISC004", "BLE001", "B017"]
