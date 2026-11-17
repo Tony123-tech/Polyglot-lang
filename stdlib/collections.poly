@@ -1,0 +1,167 @@
+// std:collections — small vector-backed containers.
+//
+// Every container stores plain `Vec` values so the same code runs on the
+// Python and native backends without extra runtime support.
+
+#[derive(Clone)]
+struct Stack {
+    items: Vec<i64>,
+}
+
+impl Stack {
+    fn new() -> Stack {
+        Stack { items: [].to_vec() }
+    }
+    fn push(&mut self, value: i64) {
+        self.items.push(value);
+    }
+    fn pop(&mut self) -> Option<i64> {
+        self.items.pop()
+    }
+    fn peek(&self) -> Option<i64> {
+        if self.items.is_empty() { return None; }
+        Some(self.items[self.items.len() - 1])
+    }
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+    fn to_vec(&self) -> Vec<i64> {
+        self.items.clone()
+    }
+}
+
+#[derive(Clone)]
+struct Queue {
+    items: Vec<i64>,
+}
+
+impl Queue {
+    fn new() -> Queue {
+        Queue { items: [].to_vec() }
+    }
+    fn enqueue(&mut self, value: i64) {
+        self.items.push(value);
+    }
+    fn dequeue(&mut self) -> Option<i64> {
+        if self.items.is_empty() { return None; }
+        Some(self.items.remove(0))
+    }
+    fn peek(&self) -> Option<i64> {
+        if self.items.is_empty() { return None; }
+        Some(self.items[0])
+    }
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+    fn to_vec(&self) -> Vec<i64> {
+        self.items.clone()
+    }
+}
+
+#[derive(Clone)]
+struct SetI64 {
+    items: Vec<i64>,
+}
+
+impl SetI64 {
+    fn new() -> SetI64 {
+        SetI64 { items: [].to_vec() }
+    }
+    fn insert(&mut self, value: i64) -> bool {
+        if self.contains(value) { return false; }
+        self.items.push(value);
+        true
+    }
+    fn contains(&self, value: i64) -> bool {
+        let mut i = 0;
+        while i < self.items.len() {
+            if self.items[i] == value { return true; }
+            i = i + 1;
+        }
+        false
+    }
+    fn remove(&mut self, value: i64) -> bool {
+        let mut i = 0;
+        while i < self.items.len() {
+            if self.items[i] == value {
+                self.items.remove(i);
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+    fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+    fn to_vec(&self) -> Vec<i64> {
+        self.items.clone()
+    }
+}
+
+#[derive(Clone)]
+struct Counter {
+    names: Vec<String>,
+    counts: Vec<i64>,
+}
+
+impl Counter {
+    fn new() -> Counter {
+        Counter { names: [].to_vec(), counts: [].to_vec() }
+    }
+    fn add(&mut self, key: String) {
+        let mut i = 0;
+        while i < self.names.len() {
+            if self.names[i] == key {
+                self.counts[i] = self.counts[i] + 1;
+                return;
+            }
+            i = i + 1;
+        }
+        self.names.push(key);
+        self.counts.push(1);
+    }
+    fn get(&self, key: String) -> i64 {
+        let mut i = 0;
+        while i < self.names.len() {
+            if self.names[i] == key { return self.counts[i]; }
+            i = i + 1;
+        }
+        0
+    }
+    fn contains(&self, key: String) -> bool {
+        let mut i = 0;
+        while i < self.names.len() {
+            if self.names[i] == key { return true; }
+            i = i + 1;
+        }
+        false
+    }
+    fn len(&self) -> usize {
+        self.names.len()
+    }
+    fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+    fn keys(&self) -> Vec<String> {
+        self.names.clone()
+    }
+    fn total(&self) -> i64 {
+        let mut total = 0;
+        let mut i = 0;
+        while i < self.counts.len() {
+            total = total + self.counts[i];
+            i = i + 1;
+        }
+        total
+    }
+}

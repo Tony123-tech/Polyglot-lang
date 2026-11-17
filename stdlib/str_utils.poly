@@ -1,0 +1,105 @@
+// std:str_utils — string helpers built on the methods both backends support.
+
+fn trim(text: String) -> String {
+    text.trim().to_string()
+}
+
+fn trim_start(text: String) -> String {
+    text.trim_start().to_string()
+}
+
+fn trim_end(text: String) -> String {
+    text.trim_end().to_string()
+}
+
+fn starts_with(text: String, prefix: String) -> bool {
+    text.starts_with(prefix)
+}
+
+fn ends_with(text: String, suffix: String) -> bool {
+    text.ends_with(suffix)
+}
+
+fn contains(text: String, needle: String) -> bool {
+    text.contains(needle)
+}
+
+fn repeat(text: String, times: usize) -> String {
+    text.repeat(times)
+}
+
+fn replace_all(text: String, needle: String, replacement: String) -> String {
+    text.replace(needle, replacement)
+}
+
+fn split(text: String, separator: String) -> Vec<String> {
+    text.split(separator)
+}
+
+fn join(parts: Vec<String>, separator: String) -> String {
+    parts.join(separator)
+}
+
+fn to_upper(text: String) -> String {
+    text.to_uppercase()
+}
+
+fn to_lower(text: String) -> String {
+    text.to_lowercase()
+}
+
+fn count_substring(text: String, needle: String) -> i64 {
+    if needle.is_empty() { return 0; }
+    let stripped = text.replace(needle.clone(), "");
+    let removed = text.len() - stripped.len();
+    (removed / needle.len()) as i64
+}
+
+fn count_byte(text: String, target: String) -> i64 {
+    if target.is_empty() { return 0; }
+    let needle = target.as_bytes()[0];
+    let bytes = text.as_bytes();
+    let mut count = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == needle { count = count + 1; }
+        i = i + 1;
+    }
+    count
+}
+
+fn pad_left(text: String, width: usize, fill: String) -> String {
+    if text.len() >= width { return text; }
+    if fill.is_empty() { return text; }
+    let padding = fill.repeat(width - text.len());
+    format!("{}{}", padding, text)
+}
+
+fn pad_right(text: String, width: usize, fill: String) -> String {
+    if text.len() >= width { return text; }
+    if fill.is_empty() { return text; }
+    let padding = fill.repeat(width - text.len());
+    format!("{}{}", text, padding)
+}
+
+fn reverse_text(text: String) -> String {
+    let bytes = text.as_bytes();
+    let mut out = "".to_string();
+    let mut i = bytes.len();
+    while i > 0 {
+        i = i - 1;
+        out = format!("{}{}", out, &text[i..i + 1]);
+    }
+    out
+}
+
+fn is_palindrome(text: String) -> bool {
+    let bytes = text.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    while i < n / 2 {
+        if bytes[i] != bytes[n - 1 - i] { return false; }
+        i = i + 1;
+    }
+    true
+}

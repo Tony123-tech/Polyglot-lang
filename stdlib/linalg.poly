@@ -1,0 +1,239 @@
+// std:linalg — Gauss-Jordan inverse and Gaussian-elimination solve.
+
+include!("std:numpy");
+
+fn _augment(matrix: &NdArray) -> Result<Vec<f64>, String> {
+    if matrix.nrows() != matrix.ncols() {
+        return Err("inv: matrix is not square".to_string());
+    }
+    let n = matrix.nrows();
+    let mut data: Vec<f64> = [].to_vec();
+    let mut i = 0;
+    while i < n {
+        let mut j = 0;
+        while j < n {
+            data.push(matrix.at(i, j));
+            j = j + 1;
+        }
+        let mut k = 0;
+        while k < n {
+            if k == i { data.push(1.0); } else { data.push(0.0); }
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    Ok(data)
+}
+
+fn _invert(mut data: Vec<f64>, n: usize) -> Result<Vec<f64>, String> {
+    let width = 2 * n;
+    let mut col = 0;
+    while col < n {
+        let mut pivot = col;
+        let mut row = col + 1;
+        while row < n {
+            let candidate = abs_f64(data[row * width + col]);
+            let best = abs_f64(data[pivot * width + col]);
+            if candidate > best { pivot = row; }
+            row = row + 1;
+        }
+        if abs_f64(data[pivot * width + col]) < 1e-12 {
+            return Err("inv: matrix is singular".to_string());
+        }
+        if pivot != col {
+            let mut c = 0;
+            while c < width {
+                let tmp = data[col * width + c];
+                data[col * width + c] = data[pivot * width + c];
+                data[pivot * width + c] = tmp;
+                c = c + 1;
+            }
+        }
+        let divisor = data[col * width + col];
+        let mut c = 0;
+        while c < width {
+            data[col * width + c] = data[col * width + c] / divisor;
+            c = c + 1;
+        }
+        let mut other = 0;
+        while other < n {
+            if other != col {
+                let factor = data[other * width + col];
+                let mut c2 = 0;
+                while c2 < width {
+                    data[other * width + c2] =
+                        data[other * width + c2] - factor * data[col * width + c2];
+                    c2 = c2 + 1;
+                }
+            }
+            other = other + 1;
+        }
+        col = col + 1;
+    }
+    let mut out: Vec<f64> = [].to_vec();
+    let mut r = 0;
+    while r < n {
+        let mut c = n;
+        while c < width {
+            out.push(data[r * width + c]);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    Ok(out)
+}
+
+fn _solve_matrix(matrix: &NdArray, rhs: &NdArray) -> Result<Vec<f64>, String> {
+    if matrix.nrows() != matrix.ncols() {
+        return Err("solve: matrix is not square".to_string());
+    }
+    let n = matrix.nrows();
+    if rhs.size() != n {
+        return Err("solve: right-hand side has the wrong length".to_string());
+    }
+    let width = n + 1;
+    let target = rhs.to_vec();
+    let mut data: Vec<f64> = [].to_vec();
+    let mut i = 0;
+    while i < n {
+        let mut j = 0;
+        while j < n {
+            data.push(matrix.at(i, j));
+            j = j + 1;
+        }
+        data.push(target[i]);
+        i = i + 1;
+    }
+    let mut col = 0;
+    while col < n {
+        let mut pivot = col;
+        let mut row = col + 1;
+        while row < n {
+            if abs_f64(data[row * width + col]) > abs_f64(data[pivot * width + col]) {
+                pivot = row;
+            }
+            row = row + 1;
+        }
+        if abs_f64(data[pivot * width + col]) < 1e-12 {
+            return Err("solve: matrix is singular".to_string());
+        }
+        if pivot != col {
+            let mut c = col;
+            while c < width {
+                let tmp = data[col * width + c];
+                data[col * width + c] = data[pivot * width + c];
+                data[pivot * width + c] = tmp;
+                c = c + 1;
+            }
+        }
+        let mut row2 = col + 1;
+        while row2 < n {
+            let factor = data[row2 * width + col] / data[col * width + col];
+            let mut c2 = col;
+            while c2 < width {
+                data[row2 * width + c2] =
+                    data[row2 * width + c2] - factor * data[col * width + c2];
+                c2 = c2 + 1;
+            }
+            row2 = row2 + 1;
+        }
+        col = col + 1;
+    }
+    let mut solution: Vec<f64> = [].to_vec();
+    let mut k = 0;
+    while k < n {
+        solution.push(0.0);
+        k = k + 1;
+    }
+    let mut back = n;
+    while back > 0 {
+        back = back - 1;
+        let mut total = data[back * width + n];
+        let mut j = back + 1;
+        while j < n {
+            total = total - data[back * width + j] * solution[j];
+            j = j + 1;
+        }
+        solution[back] = total / data[back * width + back];
+    }
+    Ok(solution)
+}
+
+impl NdArray {
+    fn inv(&self) -> Result<NdArray, String> {
+        let n = self.nrows();
+        let data = _augment(self)?;
+        let inverted = _invert(data, n)?;
+        NdArray::from_vec(inverted, n, n)
+    }
+
+    // Solves `self * x = rhs` and returns a column vector.
+    fn solve(&self, rhs: &NdArray) -> Result<NdArray, String> {
+        let n = self.nrows();
+        let solution = _solve_matrix(self, rhs)?;
+        NdArray::from_vec(solution, n, 1)
+    }
+}
+
+fn inv(matrix: &NdArray) -> Result<NdArray, String> {
+    matrix.inv()
+}
+
+fn solve(matrix: &NdArray, rhs: &NdArray) -> Result<NdArray, String> {
+    matrix.solve(rhs)
+}
+
+fn determinant(matrix: &NdArray) -> Result<f64, String> {
+    if matrix.nrows() != matrix.ncols() {
+        return Err("determinant: matrix is not square".to_string());
+    }
+    let n = matrix.nrows();
+    if n == 1 { return Ok(matrix.at(0, 0)); }
+    let width = n;
+    let mut data = matrix.to_vec();
+    let mut sign = 1.0;
+    let mut col = 0;
+    while col < n {
+        let mut pivot = col;
+        let mut row = col + 1;
+        while row < n {
+            if abs_f64(data[row * width + col]) > abs_f64(data[pivot * width + col]) {
+                pivot = row;
+            }
+            row = row + 1;
+        }
+        if abs_f64(data[pivot * width + col]) < 1e-12 {
+            return Ok(0.0);
+        }
+        if pivot != col {
+            let mut c = 0;
+            while c < width {
+                let tmp = data[col * width + c];
+                data[col * width + c] = data[pivot * width + c];
+                data[pivot * width + c] = tmp;
+                c = c + 1;
+            }
+            sign = -sign;
+        }
+        let pivot_value = data[col * width + col];
+        let mut row2 = col + 1;
+        while row2 < n {
+            let factor = data[row2 * width + col] / pivot_value;
+            let mut c2 = col;
+            while c2 < width {
+                data[row2 * width + c2] =
+                    data[row2 * width + c2] - factor * data[col * width + c2];
+                c2 = c2 + 1;
+            }
+            row2 = row2 + 1;
+        }
+        col = col + 1;
+    }
+    let mut product = sign;
+    let mut k = 0;
+    while k < n {
+        product = product * data[k * width + k];
+        k = k + 1;
+    }
+    Ok(product)
+}

@@ -1,0 +1,12 @@
+// std:prelude — the whole standard library in one include.
+//
+// Includes are deduplicated by resolved path, so including `std:numpy` and
+// then `std:prelude` (or the other way round) defines `NdArray` only once.
+
+include!("std:math");
+include!("std:algo");
+include!("std:str_utils");
+include!("std:collections");
+include!("std:numpy");
+include!("std:linalg");
+include!("std:random");

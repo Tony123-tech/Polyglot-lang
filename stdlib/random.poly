@@ -1,0 +1,128 @@
+// std:random — deterministic Xoshiro256** generator.
+//
+// The language has no `^`, `<<`, or `>>` operators, so XOR and shifts are
+// expressed through arithmetic that behaves identically on both backends.
+// All state transitions use wrapping `u64` arithmetic via `u128` casts.
+
+fn _wadd(a: u64, b: u64) -> u64 {
+    ((a as u128) + (b as u128)) as u64
+}
+
+fn _wmul(a: u64, b: u64) -> u64 {
+    ((a as u128) * (b as u128)) as u64
+}
+
+fn _xor(a: u64, b: u64) -> u64 {
+    (a | b) - (a & b)
+}
+
+fn _pow2(n: u64) -> u64 {
+    let mut result = 1u64;
+    let mut i = 0u64;
+    while i < n {
+        result = _wmul(result, 2u64);
+        i = i + 1u64;
+    }
+    result
+}
+
+fn _shl(x: u64, n: u64) -> u64 {
+    _wmul(x, _pow2(n))
+}
+
+fn _shr(x: u64, n: u64) -> u64 {
+    x / _pow2(n)
+}
+
+fn _rotl(x: u64, n: u64) -> u64 {
+    _xor(_shl(x, n), _shr(x, 64u64 - n))
+}
+
+fn _splitmix(value: u64) -> u64 {
+    let z1 = _wmul(_xor(value, _shr(value, 30u64)), 0xBF58476D1CE4E5B9u64);
+    let z2 = _wmul(_xor(z1, _shr(z1, 27u64)), 0x94D049BB133111EBu64);
+    _xor(z2, _shr(z2, 31u64))
+}
+
+#[derive(Clone)]
+struct Rng {
+    state: Vec<u64>,
+}
+
+impl Rng {
+    fn seed(seed: u64) -> Rng {
+        let mut state: Vec<u64> = [].to_vec();
+        let mut mixer = seed;
+        let mut i = 0;
+        while i < 4 {
+            mixer = _wadd(mixer, 0x9E3779B97F4A7C15u64);
+            state.push(_splitmix(mixer));
+            i = i + 1;
+        }
+        let mut all_zero = true;
+        let mut j = 0;
+        while j < state.len() {
+            if state[j] != 0u64 { all_zero = false; }
+            j = j + 1;
+        }
+        if all_zero { state[0] = 1u64; }
+        Rng { state: state }
+    }
+
+    fn from_seed(seed: u64) -> Rng {
+        Rng::seed(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let result = _wmul(_rotl(_wmul(self.state[1], 5u64), 7u64), 9u64);
+        let t = _shl(self.state[1], 17u64);
+        self.state[2] = _xor(self.state[2], self.state[0]);
+        self.state[3] = _xor(self.state[3], self.state[1]);
+        self.state[1] = _xor(self.state[1], self.state[2]);
+        self.state[0] = _xor(self.state[0], self.state[3]);
+        self.state[2] = _xor(self.state[2], t);
+        self.state[3] = _rotl(self.state[3], 45u64);
+        result
+    }
+
+    fn next_f64(&mut self) -> f64 {
+        let bits = _shr(self.next_u64(), 11u64);
+        (bits as f64) * (1.0 / 9007199254740992.0)
+    }
+
+    fn next_bool(&mut self) -> bool {
+        self.next_u64() % 2u64 == 1u64
+    }
+
+    // Uniform in `low..high`.
+    fn range_i64(&mut self, low: i64, high: i64) -> i64 {
+        if high <= low { return low; }
+        let span = (high - low) as u64;
+        let offset = self.next_u64() % span;
+        low + (offset as i64)
+    }
+
+    fn roll_d6(&mut self) -> i64 {
+        self.range_i64(1, 7)
+    }
+
+    fn shuffle(&mut self, values: Vec<i64>) -> Vec<i64> {
+        let mut out = values.clone();
+        let n = out.len();
+        if n < 2 { return out; }
+        let mut i = n - 1;
+        loop {
+            let j = self.range_i64(0, (i + 1) as i64) as usize;
+            let tmp = out[i];
+            out[i] = out[j];
+            out[j] = tmp;
+            if i == 0 { break; }
+            i = i - 1;
+        }
+        out
+    }
+}
+
+fn seed_rng(seed: u64) -> Rng {
+    Rng::seed(seed)
+}

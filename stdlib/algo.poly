@@ -1,0 +1,147 @@
+// std:algo — sorting, searching, and small sequence helpers.
+//
+// All functions are pure: they take a vector, work on a clone, and return a
+// new vector. Callers keep ownership of their input.
+
+fn bubble_sort(values: Vec<i64>) -> Vec<i64> {
+    let mut out = values.clone();
+    let n = out.len();
+    if n < 2 { return out; }
+    let mut i = 0;
+    while i < n {
+        let mut j = 0;
+        while j + 1 < n - i {
+            if out[j] > out[j + 1] {
+                let tmp = out[j];
+                out[j] = out[j + 1];
+                out[j + 1] = tmp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    out
+}
+
+fn insertion_sort(values: Vec<i64>) -> Vec<i64> {
+    let mut out = values.clone();
+    let n = out.len();
+    let mut i = 1;
+    while i < n {
+        let key = out[i];
+        let mut j = i;
+        while j > 0 && out[j - 1] > key {
+            out[j] = out[j - 1];
+            j = j - 1;
+        }
+        out[j] = key;
+        i = i + 1;
+    }
+    out
+}
+
+fn selection_sort(values: Vec<i64>) -> Vec<i64> {
+    let mut out = values.clone();
+    let n = out.len();
+    let mut i = 0;
+    while i < n {
+        let mut best = i;
+        let mut j = i + 1;
+        while j < n {
+            if out[j] < out[best] { best = j; }
+            j = j + 1;
+        }
+        if best != i {
+            let tmp = out[i];
+            out[i] = out[best];
+            out[best] = tmp;
+        }
+        i = i + 1;
+    }
+    out
+}
+
+fn binary_search(values: Vec<i64>, target: i64) -> Option<usize> {
+    let mut low = 0;
+    let mut high = values.len();
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if values[mid] == target { return Some(mid); }
+        if values[mid] < target { low = mid + 1; } else { high = mid; }
+    }
+    None
+}
+
+fn linear_search(values: Vec<i64>, target: i64) -> Option<usize> {
+    let mut i = 0;
+    while i < values.len() {
+        if values[i] == target { return Some(i); }
+        i = i + 1;
+    }
+    None
+}
+
+fn is_sorted(values: Vec<i64>) -> bool {
+    let mut i = 1;
+    while i < values.len() {
+        if values[i - 1] > values[i] { return false; }
+        i = i + 1;
+    }
+    true
+}
+
+fn sum(values: Vec<i64>) -> i64 {
+    let mut total = 0;
+    let mut i = 0;
+    while i < values.len() {
+        total = total + values[i];
+        i = i + 1;
+    }
+    total
+}
+
+fn max_value(values: Vec<i64>) -> Option<i64> {
+    if values.is_empty() { return None; }
+    let mut best = values[0];
+    let mut i = 1;
+    while i < values.len() {
+        if values[i] > best { best = values[i]; }
+        i = i + 1;
+    }
+    Some(best)
+}
+
+fn min_value(values: Vec<i64>) -> Option<i64> {
+    if values.is_empty() { return None; }
+    let mut best = values[0];
+    let mut i = 1;
+    while i < values.len() {
+        if values[i] < best { best = values[i]; }
+        i = i + 1;
+    }
+    Some(best)
+}
+
+fn reverse_values(values: Vec<i64>) -> Vec<i64> {
+    let mut out = values.clone();
+    out.reverse();
+    out
+}
+
+// Sorted unique elements; duplicates collapse.
+fn unique(values: Vec<i64>) -> Vec<i64> {
+    let mut out = values.clone();
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn count_occurrences(values: Vec<i64>, target: i64) -> i64 {
+    let mut count = 0;
+    let mut i = 0;
+    while i < values.len() {
+        if values[i] == target { count = count + 1; }
+        i = i + 1;
+    }
+    count
+}
