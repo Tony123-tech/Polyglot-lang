@@ -39,7 +39,7 @@ import itertools
 import math
 import struct
 import sys
-from copy import copy
+from copy import deepcopy
 from functools import cmp_to_key, reduce
 from typing import ClassVar
 
@@ -170,6 +170,9 @@ from backends.python.runtime import (
     hashset_len,
     hashset_new,
     hashset_remove,
+)
+from backends.python.runtime import (
+    _Option as _RuntimeOption,
 )
 from match_diagnostics import missing_match_variants, warn_match_issues
 from struct_order import order_struct_declarations
@@ -640,6 +643,16 @@ def _runtime_filter(values, predicate):
     if isinstance(values, _Option):
         return values.filter(predicate)
     return [value for value in values if predicate(value)]
+
+
+def _runtime_vec_push(values, value):
+    values.append(value)
+
+
+def _runtime_vec_pop(values):
+    if not values:
+        return _Option.none()
+    return _Option.some(values.pop())
 
 
 def _runtime_vec_get(values, index):
@@ -1331,6 +1344,11 @@ class _Option:
     def unwrap_or(self, default):
         return self._value if self._is_some else default
 
+    def map(self, f):
+        if self._is_some:
+            return _Option.some(f(self._value))
+        return _Option.none()
+
     def unwrap_or_else(self, f):
         return self._value if self._is_some else f()
 
@@ -1462,6 +1480,11 @@ class _Result:
             return self
         return _Result.from_err(f(self._value))
 
+    def map(self, f):
+        if self._is_ok:
+            return _Result.from_ok(f(self._value))
+        return self
+
     def unwrap(self):
         if not self._is_ok:
             raise RuntimeError(
@@ -1568,11 +1591,13 @@ class Translator:
         self.constant_names: set[str] = set()
         self.impl_blocks: dict[str, list[ImplBlock]] = {}
         self._function_signatures: dict[str, list[str | None]] = {}
+        self._function_return_types: dict[str, str | None] = {}
         self._method_return_types: dict[tuple[str, str], str | None] = {}
         self.generic_struct_names: set[str] = set()
         self.generic_type_names: set[str] = set()
         self._temp_counter = 0
         self._binding_types: dict[str, str] = {}
+        self._immutable_bindings: set[str] = set()
         self._slot_bindings: set[str] = set()
         self._numeric_types: dict[str, str] = {}
         self._return_numeric_type: str | None = None
@@ -1599,11 +1624,13 @@ class Translator:
         self.generic_type_names.clear()
         self._temp_counter = 0
         self._binding_types.clear()
+        self._immutable_bindings.clear()
         self._slot_bindings.clear()
         self._numeric_types.clear()
         self._return_numeric_type = None
         self._return_type_name = None
         self._function_signatures.clear()
+        self._function_return_types.clear()
         self._method_return_types.clear()
         self.impl_blocks.clear()
         # Pass 1: collect struct / enum / impl names.
@@ -1634,6 +1661,9 @@ class Translator:
                 self._function_signatures[item.name] = [
                     self._binding_type_name(param.ty) for param in item.params
                 ]
+                self._function_return_types[item.name] = self._binding_type_name(
+                    item.ret
+                )
             elif isinstance(item, ImplBlock):
                 target = self._type_name_of(item.ty)
                 self.impl_blocks.setdefault(target, []).append(item)
@@ -1711,11 +1741,12 @@ class Translator:
         ns["_rust_len"] = _runtime_rust_len
         ns["_rust_slice"] = _runtime_rust_slice
         ns["_Option"] = _Option
+        ns["_OptionTypes"] = (_Option, _RuntimeOption)
         ns["_iflet_match"] = _iflet_match
         ns["_Result"] = _Result
         ns["_ResultErrSentinel"] = _ResultErrSentinel
         ns["_PythonEnumVariant"] = _PythonEnumVariant
-        ns["_clone"] = copy
+        ns["_clone"] = deepcopy
         ns["_cmp_to_key"] = cmp_to_key
         ns["_reduce"] = reduce
         ns["_vec_retain"] = _runtime_vec_retain
@@ -1756,6 +1787,8 @@ class Translator:
         ns["_vec_split_last"] = _runtime_vec_split_last
         ns["_filter"] = _runtime_filter
         ns["_vec_get"] = _runtime_vec_get
+        ns["_vec_push"] = _runtime_vec_push
+        ns["_vec_pop"] = _runtime_vec_pop
         ns["_vec_truncate"] = _runtime_vec_truncate
         ns["_vec_rotate"] = _runtime_vec_rotate
         ns["_vec_fill"] = _runtime_vec_fill
@@ -1957,6 +1990,12 @@ class Translator:
             for name in [self._binding_type_name(param.ty)]
             if name is not None
         }
+        previous_immutable_bindings = self._immutable_bindings
+        self._immutable_bindings = {
+            param.pattern.name
+            for param in fn.params
+            if isinstance(param.pattern, PatIdent) and not param.pattern.mutable
+        }
         previous_slot_bindings = self._slot_bindings
         self._slot_bindings = set(previous_slot_bindings)
         previous_numeric_types = self._numeric_types
@@ -1976,6 +2015,7 @@ class Translator:
                 body = self.translate_block_as_fn_body(fn.body)
         finally:
             self._binding_types = previous_binding_types
+            self._immutable_bindings = previous_immutable_bindings
             self._slot_bindings = previous_slot_bindings
             self._numeric_types = previous_numeric_types
             self._return_numeric_type = previous_return_numeric
@@ -2312,7 +2352,7 @@ class Translator:
             if isinstance(expr, Loop):
                 return [self.translate_loop(expr)]
             if isinstance(expr, MatchExpr):
-                return [self.translate_match_stmt(expr)]
+                return self.translate_match_stmt(expr)
             if isinstance(expr, Return):
                 if expr.value is not None:
                     self._check_type_boundary(
@@ -2379,6 +2419,13 @@ class Translator:
         )
 
     def _translate_assign_stmt(self, e: Assign) -> ast.stmt:
+        if isinstance(e.target, Ident) and e.target.name in self._immutable_bindings:
+            raise TranslateError(
+                f"cannot assign to immutable binding `{e.target.name}`; "
+                f"declare it with `let mut`",
+                e.line,
+                e.col,
+            )
         value = self.translate_expr(e.value)
         if isinstance(e.target, Unary) and e.target.op == "*":
             if not self._is_map_slot_expr(e.target.operand):
@@ -2413,6 +2460,13 @@ class Translator:
         self,
         e: CompoundAssign,
     ) -> ast.stmt:
+        if isinstance(e.target, Ident) and e.target.name in self._immutable_bindings:
+            raise TranslateError(
+                f"cannot assign to immutable binding `{e.target.name}`; "
+                f"declare it with `let mut`",
+                e.line,
+                e.col,
+            )
         value = self.translate_expr(e.value)
         op_map: dict[str, type[ast.operator]] = {
             "+=": ast.Add,
@@ -2492,6 +2546,10 @@ class Translator:
                 s.col,
             )
         target = ast.Name(id=s.pattern.name, ctx=ast.Store())
+        if s.mutable or s.pattern.mutable:
+            self._immutable_bindings.discard(s.pattern.name)
+        else:
+            self._immutable_bindings.add(s.pattern.name)
         numeric_type = self._numeric_type_name(s.ty)
         inferred_type = self._known_expr_type(s.value) if s.value is not None else None
         self._check_type_boundary(
@@ -2522,6 +2580,11 @@ class Translator:
             if isinstance(s.ty, TypeName)
             else self._expr_variant_type(s.value)
         )
+        if binding_type is None and s.value is not None:
+            # `let s = Stack::new();` has no annotation, but knowing the struct
+            # type lets later method calls resolve as user methods instead of
+            # falling back to built-in collection rewrites.
+            binding_type = self._expr_struct_type(s.value)
         if binding_type is None and s.value is not None and self._is_vec_expr(s.value):
             binding_type = "Vec"
         if binding_type in {"Option", "Result", "HashMap"} or binding_type is not None:
@@ -2780,13 +2843,15 @@ class Translator:
             ast.If(test=test, body=body, orelse=orelse),
         ]
 
-    def translate_match_stmt(self, m: MatchExpr) -> ast.If:
+    def translate_match_stmt(self, m: MatchExpr) -> list[ast.stmt]:
         scrutinee_type = self._match_scrutinee_type(m)
         warn_match_issues(
             m,
             scrutinee_type=scrutinee_type,
         )
-        subject = self.translate_expr(m.scrutinee)
+        temp_name = f"_polyglot_match_{self._temp_counter}"
+        self._temp_counter += 1
+        subject = ast.Name(id=temp_name, ctx=ast.Load())
         missing = missing_match_variants(m, scrutinee_type)
         node: ast.stmt | None = (
             ast.Expr(
@@ -2804,7 +2869,11 @@ class Translator:
         )
         for arm in reversed(m.arms):
             self._validate_pattern_bindings(arm.pattern)
-            test, bindings = self._pattern_test_bindings(arm.pattern, subject)
+            test, bindings = self._pattern_test_bindings(
+                arm.pattern,
+                subject,
+                scrutinee_type,
+            )
             body: list[ast.stmt] = self._translate_match_body(arm.body)
             for name, value in reversed(list(bindings.items())):
                 body.insert(
@@ -2834,12 +2903,18 @@ class Translator:
                     orelse=[node] if node is not None else [],
                 )
         if node is None:
-            return ast.If(
+            node = ast.If(
                 test=ast.Constant(value=False),
                 body=[ast.Pass()],
                 orelse=[],
             )
-        return node
+        return [
+            ast.Assign(
+                targets=[ast.Name(id=temp_name, ctx=ast.Store())],
+                value=self.translate_expr(m.scrutinee),
+            ),
+            node,
+        ]
 
     def _pattern_test(
         self,
@@ -2848,11 +2923,117 @@ class Translator:
     ) -> ast.expr | None:
         return self._pattern_test_bindings(pat, subject)[0]
 
+    def _builtin_option_result_pattern(
+        self,
+        path: str,
+        scrutinee_type: str | None,
+    ) -> tuple[str, str] | None:
+        """Return the built-in Option/Result variant described by ``path``.
+
+        Bare ``Some``/``None``/``Ok``/``Err`` arms are treated as the built-in
+        prelude variants unless the scrutinee is statically known to be a
+        different enum. User enums can always use a qualified pattern such as
+        ``Maybe::Some(x)``.
+        """
+        parts = path.split("::")
+        variant = parts[-1]
+        if len(parts) >= 2:
+            qualifier = parts[-2]
+            if qualifier == "Option" and variant in {"Some", "None"}:
+                return "Option", variant
+            if qualifier == "Result" and variant in {"Ok", "Err"}:
+                return "Result", variant
+            return None
+        if variant in {"Some", "None"} and scrutinee_type in {None, "Option"}:
+            return "Option", variant
+        if variant in {"Ok", "Err"} and scrutinee_type in {None, "Result"}:
+            return "Result", variant
+        return None
+
+    def _option_result_variant_test(
+        self,
+        container: str,
+        variant: str,
+        subject: ast.expr,
+    ) -> ast.expr:
+        method = {
+            ("Option", "Some"): "is_some",
+            ("Option", "None"): "is_none",
+            ("Result", "Ok"): "is_ok",
+            ("Result", "Err"): "is_err",
+        }[(container, variant)]
+        type_name = "_OptionTypes" if container == "Option" else f"_{container}"
+        return ast.BoolOp(
+            op=ast.And(),
+            values=[
+                ast.Call(
+                    func=ast.Name(id="isinstance", ctx=ast.Load()),
+                    args=[subject, ast.Name(id=type_name, ctx=ast.Load())],
+                    keywords=[],
+                ),
+                ast.Call(
+                    func=ast.Attribute(
+                        value=subject,
+                        attr=method,
+                        ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[],
+                ),
+            ],
+        )
+
     def _pattern_test_bindings(
         self,
         pat: Pattern,
         subject: ast.expr,
+        scrutinee_type: str | None = None,
     ) -> tuple[ast.expr, dict[str, ast.expr]]:
+        if isinstance(pat, (PatPath, PatEnum)):
+            builtin = self._builtin_option_result_pattern(pat.path, scrutinee_type)
+            if builtin is not None:
+                container, variant = builtin
+                args = pat.args if isinstance(pat, PatEnum) else []
+                payload_variants = {
+                    ("Option", "Some"),
+                    ("Result", "Ok"),
+                    ("Result", "Err"),
+                }
+                if (container, variant) in payload_variants:
+                    if len(args) != 1:
+                        raise TranslateError(
+                            f"{variant} pattern requires exactly one payload",
+                            pat.line,
+                            pat.col,
+                        )
+                elif args:
+                    raise TranslateError(
+                        f"{variant} pattern does not take a payload",
+                        pat.line,
+                        pat.col,
+                    )
+                test = self._option_result_variant_test(container, variant, subject)
+                if not args:
+                    return test, {}
+                payload = ast.Call(
+                    func=ast.Attribute(
+                        value=subject,
+                        attr="unwrap" if variant != "Err" else "unwrap_err",
+                        ctx=ast.Load(),
+                    ),
+                    args=[],
+                    keywords=[],
+                )
+                child_test, bindings = self._pattern_test_bindings(
+                    args[0],
+                    payload,
+                )
+                if isinstance(child_test, ast.Constant) and child_test.value is True:
+                    return test, bindings
+                return ast.BoolOp(
+                    op=ast.And(),
+                    values=[test, child_test],
+                ), bindings
         if isinstance(pat, PatWildcard):
             return ast.Constant(value=True), {}
         if isinstance(pat, PatIdent):
@@ -3351,6 +3532,10 @@ class Translator:
         if isinstance(expr, Binary):
             left_type = self._known_expr_type(expr.left)
             right_type = self._known_expr_type(expr.right)
+            if expr.op in {"&&", "||"}:
+                # Logical operators combine two `bool` operands; their
+                # operands' own types must not leak into the result type.
+                return "bool"
             if left_type is not None and right_type is not None:
                 self._check_type_boundary(
                     right_type,
@@ -3359,6 +3544,8 @@ class Translator:
                     expr.col,
                     getattr(expr, "span", None),
                 )
+            if expr.op in {"==", "!=", "<", ">", "<=", ">="}:
+                return "bool"
             return left_type or right_type
         return None
 
@@ -3516,7 +3703,21 @@ class Translator:
             return True
         if isinstance(expr, MethodCall):
             return self._is_vec_expr(expr.receiver)
+        if isinstance(expr, Field):
+            return self._expr_struct_type(expr) == "Vec"
+        if isinstance(expr, Paren):
+            return self._is_vec_expr(expr.inner)
         return False
+
+    def _is_user_method_call(self, e: MethodCall) -> bool:
+        """True when ``e`` resolves to a method declared in an ``impl`` block."""
+        receiver_type = self._expr_struct_type(e.receiver)
+        if receiver_type is None:
+            receiver_type = self._known_expr_type(e.receiver)
+        return (
+            receiver_type is not None
+            and (receiver_type, e.method) in self._method_return_types
+        )
 
     def _unwrap_paren(self, expr: Expr) -> Expr:
         while isinstance(expr, Paren):
@@ -3871,12 +4072,20 @@ class Translator:
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
+        "pop": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "position": (
             "_handle_vec_iterator_methods",
             "_handle_tail_methods",
         ),
         "product": (
             "_handle_vec_iterator_methods",
+            "_handle_tail_methods",
+        ),
+        "push": (
+            "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
         "rchunks": (
@@ -4544,6 +4753,18 @@ class Translator:
     def _handle_vec_mutation_methods(
         self, e: MethodCall, recv: ast.expr
     ) -> ast.expr | None:
+        if e.method == "push" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
+            return ast.Call(
+                func=ast.Name(id="_vec_push", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "pop" and not e.args and self._is_vec_expr(e.receiver):
+            return ast.Call(
+                func=ast.Name(id="_vec_pop", ctx=ast.Load()),
+                args=[recv],
+                keywords=[],
+            )
         if e.method == "retain" and len(e.args) == 1:
             return ast.Call(
                 func=ast.Name(id="_vec_retain", ctx=ast.Load()),
@@ -4602,22 +4823,27 @@ class Translator:
             )
         if e.method == "map" and len(e.args) == 1:
             option_kind = self._option_result_type(e.receiver)
-            if option_kind is not None:
-                raise TranslateError(
-                    f"{option_kind}.map is unsupported; use match or if let instead",
-                    e.line,
-                    e.col,
-                )
             closure = e.args[0]
             if (
                 not isinstance(closure, Closure)
                 or len(closure.params) != 1
                 or not isinstance(closure.params[0][0], PatIdent)
             ):
+                receiver_name = option_kind or "Vec"
                 raise TranslateError(
-                    "Vec.map expects a single identifier parameter",
+                    f"{receiver_name}.map expects a single identifier parameter",
                     e.line,
                     e.col,
+                )
+            if option_kind is not None:
+                return ast.Call(
+                    func=ast.Attribute(
+                        value=recv,
+                        attr="map",
+                        ctx=ast.Load(),
+                    ),
+                    args=[self.translate_expr(closure)],
+                    keywords=[],
                 )
             target = ast.Name(
                 id=closure.params[0][0].name,
@@ -5343,6 +5569,82 @@ class Translator:
         return ast.Call(func=attr, args=args, keywords=[])
         return None
 
+    def _translate_block_expr(self, block: Block) -> ast.expr:
+        """Translate ``{ stmt* tail? }`` used in expression position.
+
+        Python has no block expressions, so statement results are chained with
+        the walrus operator inside a tuple, and the final element yields the
+        block's tail value.
+        """
+        if not block.stmts:
+            if block.tail is None:
+                return ast.Constant(value=None)
+            return self.translate_expr(block.tail)
+
+        previous_binding_types = self._binding_types
+        previous_slot_bindings = self._slot_bindings
+        previous_numeric_types = self._numeric_types
+        previous_immutable_bindings = self._immutable_bindings
+        self._binding_types = dict(previous_binding_types)
+        self._slot_bindings = set(previous_slot_bindings)
+        self._numeric_types = dict(previous_numeric_types)
+        self._immutable_bindings = set(previous_immutable_bindings)
+        try:
+            values: list[ast.expr] = []
+            for stmt in block.stmts:
+                translated = self.translate_stmt(stmt)
+                if len(translated) != 1:
+                    raise TranslateError(
+                        "unsupported statement in block expression",
+                        stmt.line,
+                        stmt.col,
+                    )
+                node = translated[0]
+                if (
+                    isinstance(node, ast.Assign)
+                    and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                ):
+                    values.append(
+                        ast.NamedExpr(
+                            target=node.targets[0],
+                            value=node.value,
+                        )
+                    )
+                elif isinstance(node, ast.AnnAssign) and isinstance(
+                    node.target, ast.Name
+                ):
+                    values.append(
+                        ast.NamedExpr(
+                            target=ast.Name(id=node.target.id, ctx=ast.Store()),
+                            value=node.value or ast.Constant(value=None),
+                        )
+                    )
+                elif isinstance(node, ast.Expr):
+                    values.append(node.value)
+                else:
+                    raise TranslateError(
+                        "unsupported statement in block expression",
+                        stmt.line,
+                        stmt.col,
+                    )
+            if block.tail is not None:
+                values.append(self.translate_expr(block.tail))
+            else:
+                values.append(ast.Constant(value=None))
+        finally:
+            self._binding_types = previous_binding_types
+            self._slot_bindings = previous_slot_bindings
+            self._numeric_types = previous_numeric_types
+            self._immutable_bindings = previous_immutable_bindings
+        if len(values) == 1:
+            return values[0]
+        return ast.Subscript(
+            value=ast.Tuple(elts=values, ctx=ast.Load()),
+            slice=ast.Constant(value=-1),
+            ctx=ast.Load(),
+        )
+
     def translate_expr(self, e: Expr) -> ast.expr:
         if isinstance(e, LitInt):
             return ast.Constant(value=e.value)
@@ -5489,6 +5791,12 @@ class Translator:
             recv = self.translate_expr(e.receiver)
             if e.method == "into_iter" and not e.args:
                 return recv
+            if self._is_user_method_call(e):
+                return ast.Call(
+                    func=ast.Attribute(value=recv, attr=e.method, ctx=ast.Load()),
+                    args=[self.translate_expr(a) for a in e.args],
+                    keywords=[],
+                )
             for handler in self._method_handlers.get(e.method, ()):
                 result = handler(self, e, recv)
                 if result is not None:
@@ -5612,9 +5920,7 @@ class Translator:
                 keywords=[],
             )
         if isinstance(e, Block):
-            if e.tail is not None:
-                return self.translate_expr(e.tail)
-            return ast.Constant(value=None)
+            return self._translate_block_expr(e)
         raise TranslateError(
             f"unsupported expression {type(e).__name__}",
             getattr(e, "line", 0),
@@ -5632,6 +5938,26 @@ class Translator:
         raise TranslateError(f"unknown unary op {e.op}", e.line, e.col)
 
     def _translate_binary(self, e: Binary) -> ast.expr:
+        node = self._translate_binary_raw(e)
+        # Fixed-width arithmetic wraps to its declared width.  Ops on i64 /
+        # usize stay arbitrary precision in the Python backend (SPEC 8.1.1),
+        # but narrower types have explicit wrapping tests and must match the
+        # native/JIT behaviour.
+        if e.op in {"+", "-", "*", "/", "%", "&", "|", "^"}:
+            operand_type = self._known_expr_type(e.left) or self._known_expr_type(
+                e.right
+            )
+            if operand_type in _INT_TYPE_BITS:
+                bits, _signed = _INT_TYPE_BITS[operand_type]
+                if bits < 64:
+                    return ast.Call(
+                        func=ast.Name(id=f"_cast_{operand_type}", ctx=ast.Load()),
+                        args=[node],
+                        keywords=[],
+                    )
+        return node
+
+    def _translate_binary_raw(self, e: Binary) -> ast.expr:
         left = self.translate_expr(e.left)
         right = self.translate_expr(e.right)
         if e.op == "+":
@@ -5672,6 +5998,8 @@ class Translator:
             return ast.BinOp(left=left, op=ast.BitAnd(), right=right)
         if e.op == "|":
             return ast.BinOp(left=left, op=ast.BitOr(), right=right)
+        if e.op == "^":
+            return ast.BinOp(left=left, op=ast.BitXor(), right=right)
         raise TranslateError(f"unknown binary op {e.op}", e.line, e.col)
 
     def _translate_struct_literal(self, e: StructLiteral) -> ast.expr:
@@ -5725,7 +6053,9 @@ class Translator:
             m,
             scrutinee_type=scrutinee_type,
         )
-        subject = self.translate_expr(m.scrutinee)
+        temp_name = f"_polyglot_match_{self._temp_counter}"
+        self._temp_counter += 1
+        subject = ast.Name(id=temp_name, ctx=ast.Load())
         missing = missing_match_variants(m, scrutinee_type)
         node: ast.expr = (
             ast.Call(
@@ -5741,7 +6071,11 @@ class Translator:
         )
         for arm in reversed(m.arms):
             self._validate_pattern_bindings(arm.pattern)
-            test, bindings = self._pattern_test_bindings(arm.pattern, subject)
+            test, bindings = self._pattern_test_bindings(
+                arm.pattern,
+                subject,
+                scrutinee_type,
+            )
             if isinstance(arm.body, Block):
                 body: ast.expr = (
                     self.translate_expr(arm.body.tail)
@@ -5782,7 +6116,20 @@ class Translator:
                         ]
                     )
                 node = ast.IfExp(test=test, body=body, orelse=node)
-        return node
+        return ast.Call(
+            func=ast.Lambda(
+                args=ast.arguments(
+                    posonlyargs=[],
+                    args=[ast.arg(arg=temp_name)],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=node,
+            ),
+            args=[self.translate_expr(m.scrutinee)],
+            keywords=[],
+        )
 
     def _match_scrutinee_type(self, match: MatchExpr) -> str | None:
         if isinstance(match.scrutinee, Ident):
@@ -5804,6 +6151,14 @@ class Translator:
             return "Option"
         if isinstance(expr, (ResultOk, ResultErr)):
             return "Result"
+        if isinstance(expr, Call) and isinstance(expr.func, Ident):
+            return self._function_return_types.get(expr.func.name)
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and len(expr.func.segments) == 1
+        ):
+            return self._function_return_types.get(expr.func.segments[0])
         if isinstance(expr, MethodCall) and expr.method in {"pop", "next"}:
             return "Option"
         if isinstance(expr, Path) and expr.segments[:1] == ["HashMap"]:
@@ -5814,7 +6169,23 @@ class Translator:
             and expr.func.segments == ["HashMap", "new"]
         ):
             return "HashMap"
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and expr.func.segments == ["BTreeMap", "new"]
+        ):
+            return "BTreeMap"
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and expr.func.segments == ["HashSet", "new"]
+        ):
+            return "HashSet"
         if isinstance(expr, MethodCall):
+            if expr.method in {"map", "map_err", "and_then", "or_else", "filter"}:
+                kind = self._option_result_type(expr.receiver)
+                if kind is not None:
+                    return kind
             inferred = self.infer_type(expr)
             if inferred is not None:
                 return inferred
@@ -5835,6 +6206,13 @@ class Translator:
             if owner is None:
                 return None
             return self.struct_field_types.get(owner, {}).get(expr.name)
+        if isinstance(expr, Call) and isinstance(expr.func, Path):
+            segments = expr.func.segments
+            if len(segments) >= 2:
+                target = segments[-2]
+                if target == "Self" and self._current_impl_type is not None:
+                    target = self._current_impl_type
+                return self._method_return_types.get((target, segments[-1]))
         return None
 
     def _is_hashmap_expr(self, expr: Expr) -> bool:

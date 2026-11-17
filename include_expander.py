@@ -62,14 +62,110 @@ class IncludeNotFoundError(IncludeError):
     code = "E006"
 
 
+STDLIB_DIR = Path(__file__).resolve().parent / "stdlib"
+_STD_PREFIX = "std:"
+
+
+def is_std_include(raw: str) -> bool:
+    """Return True when an include path names a built-in standard library module."""
+    return raw.startswith(_STD_PREFIX)
+
+
+def resolve_std_include(raw: str) -> Path:
+    """Resolve ``std:<name>`` to a file inside the bundled ``stdlib/`` directory.
+
+    The name is always interpreted relative to :data:`STDLIB_DIR` and must stay
+    inside it. Traversal, absolute paths, and missing modules raise
+    :class:`IncludeNotFoundError` (E006).
+    """
+    name = raw[len(_STD_PREFIX) :]
+    root = STDLIB_DIR.resolve()
+
+    def reject(reason: str, help_text: str) -> IncludeNotFoundError:
+        return IncludeNotFoundError(
+            f"std include not found: {raw}",
+            reason,
+            help_text,
+            f"stdlib root: {root}",
+            1,
+            1,
+        )
+
+    if not name:
+        raise reject(
+            "empty std module name",
+            'write an include such as include!("std:math");',
+        )
+    if "\x00" in name:
+        raise reject(
+            "std module name contains a NUL byte",
+            "use a module name such as math or numpy",
+        )
+
+    relative = Path(name)
+    if relative.is_absolute():
+        raise reject(
+            "std include paths are relative to the bundled stdlib directory",
+            "remove the leading path separator",
+        )
+
+    target = relative if name.endswith(".poly") else Path(f"{name}.poly")
+    candidate = (root / target).resolve()
+    if not candidate.is_relative_to(root):
+        raise reject(
+            "std include escapes the bundled stdlib directory",
+            "use a plain module name such as math or numpy",
+        )
+    if not candidate.is_file():
+        raise reject(
+            f"missing std module: {name}",
+            "check the module name; stdlib modules live under stdlib/",
+        )
+    return candidate
+
+
 def _read_source(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def load_program(path: str | Path, *, _stack: list[Path] | None = None) -> Program:
+def _wrap_include_error(
+    error: IncludeError,
+    item: IncludeDecl,
+    source: Path,
+) -> IncludeError:
+    cls = type(error)
+    return cls(
+        error.message,
+        error.reason,
+        error.help_text,
+        error.note,
+        item.line,
+        item.col,
+        source,
+        span=getattr(item, "span", None),
+    )
+
+
+def _resolve_include_path(item: IncludeDecl, abs_path: Path) -> tuple[Path, bool]:
+    """Return the resolved include target and whether it is a std module."""
+    if is_std_include(item.path):
+        return resolve_std_include(item.path), True
+    include_path = Path(item.path)
+    if not include_path.is_absolute():
+        include_path = abs_path.parent / include_path
+    return include_path, False
+
+
+def load_program(
+    path: str | Path,
+    *,
+    _stack: list[Path] | None = None,
+    _std_included: set[Path] | None = None,
+) -> Program:
     """Parse and expand includes starting from a file path."""
     abs_path = Path(path).expanduser().resolve()
     stack = list(_stack or [])
+    std_included = set() if _std_included is None else _std_included
     for i, seen in enumerate(stack):
         if seen == abs_path:
             chain = " -> ".join(str(p) for p in stack[i:] + [abs_path])
@@ -84,19 +180,38 @@ def load_program(path: str | Path, *, _stack: list[Path] | None = None) -> Progr
                 source,
             )
 
-    if not abs_path.exists():
+    if not abs_path.exists() or not abs_path.is_file():
         parent = stack[-1] if stack else None
+        reason = (
+            f"missing include target: {abs_path}"
+            if not abs_path.exists()
+            else f"include target is not a regular file: {abs_path}"
+        )
         raise IncludeNotFoundError(
-            f"include file not found: {abs_path}",
-            f"missing include target: {abs_path}",
-            "check that the include path exists and is readable",
+            f"include file not found: {abs_path}"
+            if not abs_path.exists()
+            else f"include target is not a file: {abs_path}",
+            reason,
+            "check that the include path exists, is a regular file, and is readable",
             f"resolved path: {abs_path}",
             1,
             1,
             parent,
         )
 
-    source = _read_source(abs_path)
+    try:
+        source = _read_source(abs_path)
+    except OSError as error:
+        parent = stack[-1] if stack else None
+        raise IncludeNotFoundError(
+            f"include file cannot be read: {abs_path}",
+            f"unreadable include target: {error}",
+            "check that the include path exists, is a regular file, and is readable",
+            f"resolved path: {abs_path}",
+            1,
+            1,
+            parent,
+        ) from error
     program = parse(lex(source))
     expanded_items: list[Item] = []
     merged_lines = dict(program.source_lines)
@@ -104,11 +219,18 @@ def load_program(path: str | Path, *, _stack: list[Path] | None = None) -> Progr
 
     for item in program.items:
         if isinstance(item, IncludeDecl):
-            include_path = Path(item.path)
-            if not include_path.is_absolute():
-                include_path = abs_path.parent / include_path
             try:
-                included = load_program(include_path, _stack=next_stack)
+                include_path, is_std = _resolve_include_path(item, abs_path)
+            except IncludeNotFoundError as e:
+                raise _wrap_include_error(e, item, abs_path) from e
+            if is_std and include_path in std_included:
+                continue
+            try:
+                included = load_program(
+                    include_path,
+                    _stack=next_stack,
+                    _std_included=std_included,
+                )
             except IncludeCycleError as e:
                 # Ensure location/chain includes the include site if needed.
                 if (
@@ -116,28 +238,12 @@ def load_program(path: str | Path, *, _stack: list[Path] | None = None) -> Progr
                     and e.col == 1
                     and e.source_path in (None, abs_path, Path(include_path).resolve())
                 ):
-                    raise IncludeCycleError(
-                        e.message,
-                        e.reason,
-                        e.help_text,
-                        e.note,
-                        item.line,
-                        item.col,
-                        abs_path,
-                        span=getattr(item, "span", None),
-                    ) from e
+                    raise _wrap_include_error(e, item, abs_path) from e
                 raise
             except IncludeNotFoundError as e:
-                raise IncludeNotFoundError(
-                    e.message,
-                    e.reason,
-                    e.help_text,
-                    e.note,
-                    item.line,
-                    item.col,
-                    abs_path,
-                    span=getattr(item, "span", None),
-                ) from e
+                raise _wrap_include_error(e, item, abs_path) from e
+            if is_std:
+                std_included.add(include_path)
             expanded_items.extend(included.items)
             merged_lines.update(included.source_lines)
         else:
@@ -148,41 +254,38 @@ def load_program(path: str | Path, *, _stack: list[Path] | None = None) -> Progr
     )
 
 
-def expand_includes(program: Program, source_path: str | Path) -> Program:
+def expand_includes(
+    program: Program,
+    source_path: str | Path,
+    *,
+    _std_included: set[Path] | None = None,
+) -> Program:
     """Expand IncludeDecl items in an already-parsed program."""
     abs_path = Path(source_path).expanduser().resolve()
     expanded_items: list[Item] = []
     merged_lines = dict(program.source_lines)
     stack = [abs_path]
+    std_included = set() if _std_included is None else _std_included
     for item in program.items:
         if isinstance(item, IncludeDecl):
-            include_path = Path(item.path)
-            if not include_path.is_absolute():
-                include_path = abs_path.parent / include_path
             try:
-                included = load_program(include_path, _stack=stack)
-            except IncludeCycleError as e:
-                raise IncludeCycleError(
-                    e.message,
-                    e.reason,
-                    e.help_text,
-                    e.note,
-                    item.line,
-                    item.col,
-                    abs_path,
-                    span=getattr(item, "span", None),
-                ) from e
+                include_path, is_std = _resolve_include_path(item, abs_path)
             except IncludeNotFoundError as e:
-                raise IncludeNotFoundError(
-                    e.message,
-                    e.reason,
-                    e.help_text,
-                    e.note,
-                    item.line,
-                    item.col,
-                    abs_path,
-                    span=getattr(item, "span", None),
-                ) from e
+                raise _wrap_include_error(e, item, abs_path) from e
+            if is_std and include_path in std_included:
+                continue
+            try:
+                included = load_program(
+                    include_path,
+                    _stack=stack,
+                    _std_included=std_included,
+                )
+            except IncludeCycleError as e:
+                raise _wrap_include_error(e, item, abs_path) from e
+            except IncludeNotFoundError as e:
+                raise _wrap_include_error(e, item, abs_path) from e
+            if is_std:
+                std_included.add(include_path)
             expanded_items.extend(included.items)
             merged_lines.update(included.source_lines)
         else:

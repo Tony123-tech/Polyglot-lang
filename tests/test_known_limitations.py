@@ -25,42 +25,6 @@ def _rust_source(src: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Option.map collision with Vec.map
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "src",
-    [
-        "fn f() -> i64 { Some(1).map(|x| x + 1).unwrap_or(0) }",
-        "fn f() -> i64 { let x: Option<i64> = Some(1); x.map(|v| v + 1).unwrap_or(0) }",
-        "fn f(mut xs: Vec<i64>) -> i64 { xs.pop().map(|v| v + 1).unwrap_or(0) }",
-    ],
-)
-def test_option_map_is_rejected_in_python(src):
-    with pytest.raises(TranslateError, match="Option.map is unsupported"):
-        _run_python(src)
-
-
-@pytest.mark.parametrize(
-    "src",
-    [
-        "fn f() -> i64 { Some(1).map(|x| x + 1).unwrap_or(0) }",
-        "fn f() -> i64 { let x: Option<i64> = Some(1); x.map(|v| v + 1).unwrap_or(0) }",
-        "fn f(mut xs: Vec<i64>) -> i64 { xs.pop().map(|v| v + 1).unwrap_or(0) }",
-    ],
-)
-def test_option_map_is_rejected_in_rust_codegen(src):
-    with pytest.raises(NotImplementedError, match="Option.map is unsupported"):
-        _rust_source(src)
-
-
-def test_vec_map_still_lowers():
-    ns = _run_python("fn f(xs: Vec<i64>) -> Vec<i64> { xs.map(|v| v + 1) }")
-    assert ns["f"]([1, 2, 3]) == [2, 3, 4]
-
-
-# ---------------------------------------------------------------------------
 # Result combinators are Python-only inside let-bindings
 # ---------------------------------------------------------------------------
 

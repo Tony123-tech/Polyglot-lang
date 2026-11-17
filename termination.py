@@ -148,16 +148,53 @@ def _condition_lower_bounds(expr: Expr) -> dict[str, int]:
     return {}
 
 
-def _decreasing_integer_assignment(expr: Expr, name: str) -> bool:
+def _decreasing_integer_step(expr: Expr, name: str) -> int | None:
+    """Return the positive amount subtracted from ``name``, if any."""
     expr = _unwrap(expr)
     if not isinstance(expr, Binary) or expr.op != "-":
-        return False
+        return None
     left = _unwrap(expr.left)
-    return (
-        isinstance(left, Ident)
-        and left.name == name
-        and _positive_integer(expr.right) is not None
-    )
+    if isinstance(left, Ident) and left.name == name:
+        return _positive_integer(expr.right)
+    return None
+
+
+def _decreasing_integer_assignment(expr: Expr, name: str) -> bool:
+    return _decreasing_integer_step(expr, name) is not None
+
+
+_UNSIGNED_TYPE_NAMES = {"u8", "u16", "u32", "u64", "usize"}
+
+
+def _type_name(ty) -> str | None:
+    while isinstance(ty, TypeRef):
+        ty = ty.inner
+    return ty.name if isinstance(ty, TypeName) else None
+
+
+def _unsigned_variables(fn: FnDecl) -> set[str]:
+    """Names explicitly declared with an unsigned integer type anywhere in ``fn``.
+
+    The set is deliberately flow-insensitive: a shadowed re-declaration keeps
+    the name in the set.  That only makes the termination checker more
+    conservative, never less sound.
+    """
+    names: set[str] = set()
+    for node in _walk(fn):
+        if isinstance(node, FnDecl):
+            for param in node.params:
+                if (
+                    isinstance(param.pattern, PatIdent)
+                    and _type_name(param.ty) in _UNSIGNED_TYPE_NAMES
+                ):
+                    names.add(param.pattern.name)
+        elif (
+            isinstance(node, LetStmt)
+            and isinstance(node.pattern, PatIdent)
+            and _type_name(node.ty) in _UNSIGNED_TYPE_NAMES
+        ):
+            names.add(node.pattern.name)
+    return names
 
 
 def _assignment_target_name(expr: Expr) -> str | None:
@@ -165,10 +202,10 @@ def _assignment_target_name(expr: Expr) -> str | None:
     return target.name if isinstance(target, Ident) else None
 
 
-def _while_variant(loop: While) -> str | None:
+def _while_variant(loop: While, unsigned_names: set[str]) -> str | None:
     lower_bounds = _condition_lower_bounds(loop.cond)
     body = loop.body
-    direct_updates: dict[str, list[bool]] = {}
+    direct_updates: dict[str, list[int | None]] = {}
     shadowed_names = {
         node.pattern.name
         for node in _walk(body)
@@ -182,40 +219,49 @@ def _while_variant(loop: While) -> str | None:
             name = _assignment_target_name(expr.target)
             if name is not None:
                 direct_updates.setdefault(name, []).append(
-                    _decreasing_integer_assignment(expr.value, name)
+                    _decreasing_integer_step(expr.value, name)
                 )
         elif isinstance(expr, CompoundAssign):
             name = _assignment_target_name(expr.target)
             if name is not None:
-                positive = _positive_integer(expr.value) is not None
-                direct_updates.setdefault(name, []).append(expr.op == "-=" and positive)
+                direct_updates.setdefault(name, []).append(
+                    _positive_integer(expr.value) if expr.op == "-=" else None
+                )
     for name, bound in lower_bounds.items():
         if bound < 0 or name in shadowed_names:
             continue
         updates = direct_updates.get(name, [])
-        all_updates: list[bool] = []
+        all_steps: list[int | None] = []
         for node in _walk(body):
             if isinstance(node, Assign):
                 target_name = _assignment_target_name(node.target)
                 if target_name == name:
-                    all_updates.append(_decreasing_integer_assignment(node.value, name))
+                    all_steps.append(_decreasing_integer_step(node.value, name))
             elif isinstance(node, CompoundAssign):
                 target_name = _assignment_target_name(node.target)
                 if target_name == name:
-                    all_updates.append(
-                        node.op == "-=" and _positive_integer(node.value) is not None
+                    all_steps.append(
+                        _positive_integer(node.value) if node.op == "-=" else None
                     )
-        if (
-            updates
-            and all(updates)
-            and all(all_updates)
-            and not any(
-                isinstance(node, Continue)
-                for stmt in body.stmts
-                for node in _walk(stmt)
-            )
+        if not (updates and all(step is not None for step in updates) and all(
+            step is not None for step in all_steps
+        )):
+            continue
+        if any(
+            isinstance(node, Continue)
+            for stmt in body.stmts
+            for node in _walk(stmt)
         ):
-            return name
+            continue
+        if name in unsigned_names:
+            # Unsigned subtraction wraps.  A bound of 0 (as in `i >= 0`) is
+            # always true, and a step larger than 1 can jump past 0, so only
+            # a strictly positive bound with a unit decrement is a proof.
+            if bound < 1:
+                continue
+            if any(step != 1 for step in all_steps):
+                continue
+        return name
     return None
 
 
@@ -309,6 +355,7 @@ def check_function(fn: FnDecl) -> None:
             getattr(fn, "span", None),
         )
 
+    unsigned_variables = _unsigned_variables(fn)
     parameters = _parameter_info(fn)
     parameter_types = {name: ty for name, ty in parameters if name is not None}
     parameter_names = set(parameter_types)
@@ -381,7 +428,7 @@ def check_function(fn: FnDecl) -> None:
                 value,
             )
         if isinstance(value, While):
-            variant = _while_variant(value)
+            variant = _while_variant(value, unsigned_variables)
             if variant is None:
                 fail(
                     "the while condition and body do not prove a decreasing "

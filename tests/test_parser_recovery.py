@@ -74,3 +74,19 @@ def test_check_all_errors_reports_each_error(tmp_path, capsys) -> None:
     assert main(["check", str(path), "--all-errors"]) == 1
     stderr = capsys.readouterr().err
     assert stderr.count("error:") == 2
+
+
+def test_if_statement_followed_by_parenthesized_expression() -> None:
+    # Regression: `(a - 1) / 2` after a block-form `if` used to parse as a call
+    # on the if-expression, producing a translation error.
+    source = """
+fn f(a: i64) -> i64 {
+    if a == 0 { return 0; }
+    (a - 1) / 2
+}
+"""
+    program = parse(lex(source))
+    body = program.items[0].body
+    assert len(body.stmts) == 1
+    assert body.tail is not None
+    assert type(body.tail).__name__ == "Binary"
