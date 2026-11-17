@@ -13,8 +13,8 @@ If you already know Rust, skip to the [README](README.md) or
 pip install polyglot-lang
 ```
 
-The Python backend has no native dependencies. You can run `.poly`
-files immediately.
+Python 3.14.8 or later is required. The Python backend has no native
+dependencies. You can run `.poly` files immediately.
 
 For the native backend, you also need a Rust toolchain:
 
@@ -179,12 +179,13 @@ removes the last element. `xs.len()` returns a `usize`, so you need
 Your `main()` returns `i64`. Polyglot does not convert between them
 automatically:
 
-```
-error[E001]: type mismatch at line 6, column 5
+```text
+error[E001]: type mismatch at line 5, column 7
   found:    usize
   expected: i64
   help: write `as i64` here
   note: `as` may wrap or truncate the value; check the range first
+  at: line 5, column 7 (span 90..92)
 ```
 
 To fix it, write `xs.len() as i64`. This is the **only** place in
@@ -230,7 +231,8 @@ fn main() -> i64 {
 ```
 
 `Some(x)` wraps a value. `None` is the absence. `match` extracts the
-value safely.
+value safely; `unwrap_or` is the shorter form when you only need a
+default.
 
 ### Result
 
@@ -249,7 +251,8 @@ fn main() -> i64 {
 ```
 
 `Ok(n)` is a success. `Err(e)` is a failure. The `?` operator
-propagates an `Err` to the caller.
+propagates an `Err` to the caller. `unwrap_or` returns the `Ok` value or
+a default on `Err`.
 
 ### `if let` shortcut
 
@@ -263,11 +266,12 @@ fn main() -> i64 {
 }
 ```
 
-`if let` is shorter than `match` when you only care about one variant.
+`if let` is shorter than `match` when you only care about the `Some`
+branch.
 
 Note: `if let` works as the final expression of a block, but not inside a
-`let` binding. Use `match` if you need an `if let` expression in the middle
-of another expression.
+`let` binding. If you need the conditional in the middle of another
+expression, move it into a helper function or restructure the block.
 
 ## 8. When to use the native backend
 
@@ -303,11 +307,12 @@ import hello
 print(hello.add(2, 3))
 ```
 
-The first build takes about 2 minutes. Subsequent builds use a cache
-under `~/.cache/polyglot-native` (created with mode `0700`) and take
-about 3 seconds. Builds are keyed by a hash of the generated Rust, so
-editing the `.poly` source produces a new cache entry. To reclaim disk
-space, remove the cache directory:
+The first build takes about 2 minutes. Subsequent builds reuse the cache
+under `~/.cache/polyglot-native` (created with mode `0700`) and take a few
+seconds. Builds are keyed by a hash of the generated Rust, so editing the
+`.poly` source produces a new cache entry. Add `--incremental` to reuse
+per-function Rust fragments across edits. To reclaim disk space, remove
+the cache directory:
 
 ```sh
 rm -rf ~/.cache/polyglot-native
@@ -342,4 +347,6 @@ in the [README's error code table](README.md#error-codes):
   exactly what the language guarantees.
 - Try the [examples](examples/) directory.
 
-Note: `BTreeMap`, `HashSet`, and nested `HashMap` (depth 1) have only basic Python-backend support; native support is deferred. See SPEC 10.25 and 10.27.
+Note: `BTreeMap`, `HashSet`, and nested `HashMap` (depth 1) are available
+in both backends for the type sets in SPEC 7.2.6–7.2.8. Deeper nesting and
+unsupported key/value combinations are deferred. See SPEC 10.25 and 10.27.

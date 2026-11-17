@@ -72,3 +72,16 @@ reported and the working tree is clean for that scope.
 
 Stop and ask the maintainers. Do not silently fall back to a single
 large commit.
+
+## MANDATORY FORMATTING AND LINT RULES
+
+Before making ANY commit, you MUST run the following two commands in the project root:
+
+1. `.venv/bin/ruff format .`
+2. `.venv/bin/ruff check --fix .`
+
+After running them, verify with: 3. `.venv/bin/ruff format --check .` 4. `.venv/bin/ruff check .`
+
+Do NOT commit if either `--check` command fails. If there are unfixable lint errors, stop and report them to the user.
+
+This rule applies to every single commit, including docs-only commits. The CI pipeline runs `ruff format --check` and `ruff check`, so failing to run this locally will break the build.

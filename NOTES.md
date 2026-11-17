@@ -15,7 +15,7 @@
 - F1: Deliverable CLI
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 
-**Latest baseline:** 686 passed, 5 skipped, 19 deselected; slow 19 passed, 691 deselected.
+**Latest baseline:** 11361 passed, 11 skipped, 1129 deselected (1 xpassed); slow 19 passed, 12483 deselected.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -755,11 +755,13 @@ Batch 5 validation: `pytest -v` completed with 133 passed and 8 skipped in 13.35
 
 ## Async runtime
 
-The native backend uses hand-written `PyFuture` and `PyFutureIterator` classes in `_RUNTIME_PREFIX` in `backends/rust/codegen.py`; it does not use `pyo3-asyncio` or PyO3 experimental async support. Both are regular `#[pyclass]` types. The boxed future is `Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>`, stored in a `Mutex<Option<...>>` so the pyclass is both `Send` and `Sync`, and `py_future` requires `Send`. Futures are polled with a noop waker. Async free functions are emitted as `#[pyfunction] fn name(params) -> PyResult<PyFuture> { Ok(py_future(async move { ... })) }`, and await expressions emit `.await`. The tail value is converted to Python with `into_py_any(py)` inside `Python::with_gil`, fixing conversion for PyO3 0.26.
+The native backend uses hand-written `PyFuture` and `PyFutureIterator` classes in `_RUNTIME_PREFIX` in `backends/rust/codegen.py`; it does not use `pyo3-asyncio` or PyO3 experimental async support. Both are regular `#[pyclass]` types. The boxed future is `Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>`, stored in a `Mutex<Option<...>>` so the pyclass is both `Send` and `Sync`, and `py_future` requires `Send`. Async free functions are emitted as `#[pyfunction] fn name(params) -> PyResult<PyFuture> { Ok(py_future(async move { ... })) }`, and await expressions emit `.await`. The tail value is converted to Python with `into_py_any(py)` inside `Python::with_gil`, fixing conversion for PyO3 0.26.
 
-Async `&self` impl methods use the same lowering. Before `async move`, referenced fields are cloned into owned locals and `self.<field>` is aliased to those locals, because `&self` is not `Send`. Async `&mut self` and by-value receivers are rejected, as are bare `self` uses and non-`Clone` payload-enum fields. Cancellation is drop-based: dropping a `PyFuture` or its iterator drops the boxed future without another poll. The internal `await_with_timeout` helper polls until ready or a deadline, sleeps with the GIL released, and raises `PyTimeoutError` on expiry.
+A single-threaded reactor thread backed by `mio` drives the futures. Each task has a waker that enqueues it for polling; timer deadlines use a binary heap; Unix file-descriptor readiness is registered with the reactor. When Python awaits a pending future, `PyFutureIterator` returns an `asyncio` future created on the running loop and the reactor completes it thread-safely with `loop.call_soon_threadsafe`. The internal `await_with_timeout` helper waits on a condition-variable waker with the GIL released and raises `PyTimeoutError` on expiry; it no longer busy-polls. `polyglot_sleep_ms` and Unix-only `polyglot_readable` are runtime/test helpers, not language-level APIs.
 
-Tests: `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity`, `::test_native_async_send_add_across_threads`, `::test_native_async_impl_method`, `::test_native_await_with_timeout_value`, `::test_native_await_with_timeout_times_out`, `::test_native_dropping_future_iterator_cancels_before_poll`.
+Async `&self` impl methods use the same lowering. Before `async move`, referenced fields are cloned into owned locals and `self.<field>` is aliased to those locals, because `&self` is not `Send`. Async `&mut self` and by-value receivers are rejected, as are bare `self` uses and non-`Clone` payload-enum fields. Cancellation is drop-based: dropping a `PyFuture` or its iterator drops the boxed future without another poll.
+
+Tests: `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity`, `::test_native_async_send_add_across_threads`, `::test_native_async_impl_method`, `::test_native_async_timer_wakes_without_busy_waiting`, `::test_native_async_timers_run_concurrently`, `::test_native_await_with_timeout_value`, `::test_native_await_with_timeout_times_out`, `::test_native_dropping_future_iterator_cancels_before_poll`.
 
 ## Sandbox
 
@@ -769,13 +771,15 @@ Tests: `tests/test_native_n5.py::test_sandbox_blocks_import`, `tests/test_native
 
 ## Build performance
 
-When available, `sccache` is configured through `RUSTC_WRAPPER` in `_build_env`. Cargo's `target` directory remains per-build under each build directory rather than being shared. After clearing the cache, a cold build takes about two minutes; a warm second run takes about three seconds. `test_native_errors_map_back_to_polyglot_source` is marked `slow`; `pyproject.toml` sets `addopts = "-m 'not slow'"`, deselecting four slow tests by default.
+When available, `sccache` is configured through `RUSTC_WRAPPER` in `_build_env`. Cargo's `target` directory remains per-build under each build directory rather than being shared. After clearing the cache, a cold build takes about two minutes; a warm cached build takes seconds. `test_native_errors_map_back_to_polyglot_source` is marked `slow`; `pyproject.toml` sets `addopts = "-m 'not slow'"`, deselecting nineteen slow tests by default.
 
 ## N5 complete
 
 N5 delivers Option and Result construction and combinators, the `?` operator, `if let`, nested Option support, async functions through the custom PyFuture runtime, match exhaustiveness warnings, and Python built-ins sandboxing. The features that remain Python-only are Result `is_ok`, `is_err`, `map_err`, and `ok_or` in let-bindings (native `Err` emits `PyErr`, which does not match the declared error type), Box patterns, enum payload slices, and nested Vec slice patterns. Option `map` remains intentionally unsupported because it collides with Vec `map`; both backends reject it with a clear error.
 
-Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style Option-returning `next()`. The M5 async work is documented below: async `&mut self` methods are rejected, the timeout helper is polling-based, and external wakeups/event-loop integration are not supported.
+Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style Option-returning `next()`. The M5 async work is documented below: async `&mut self` methods are rejected.
+
+> **Superseded by v0.3.6:** The original N5 note said the timeout helper was polling-based and that external wakeups/event-loop integration were unsupported. The v0.3.6 reactor replaced the no-op waker with real task wakers, a `mio` reactor, timer and Unix fd wakeups, and an `asyncio` bridge. See "M5: real async event loop".
 
 Tests: `tests/test_native_n5.py` covers native and Python Option/Result, async, sandbox, `?`, `if let`, and match diagnostics.
 
@@ -955,7 +959,8 @@ Each README limitation is pinned by a test or has an explicit out-of-scope ratio
 | `while let Some(x) = iter.next()`                                                              | `tests/test_known_limitations.py::test_while_let_next_is_a_parse_error`                                                                                             |
 | Box patterns, enum payload slices, nested Vec slice patterns                                   | Python behavior in `tests/test_known_limitations.py`; native lowering remains out of scope because Rust slice patterns do not apply directly to `Vec`/enum payloads |
 | Async `&mut self` methods are rejected                                                                 | `tests/test_known_limitations.py::test_async_mut_self_method_native_codegen_is_rejected`; `tests/test_native_n5.py::test_native_async_impl_method` covers the supported `&self` path |
-| Async timeout uses polling; no event loop or external wakeups                                          | `tests/test_native_n5.py::test_native_await_with_timeout_value` and `::test_native_await_with_timeout_times_out`                                                                 |
+| Async timer/I/O helpers are runtime-only; no language-level async timer or I/O primitives           | `tests/test_native_n5.py::test_native_async_timer_wakes_without_busy_waiting`, `::test_native_async_timers_run_concurrently`, `::test_native_await_with_timeout_value`, `::test_native_await_with_timeout_times_out` |
+| WASM backend is experimental and compute-only                                                 | `tests/test_wasm_backend.py` covers the `i64`/`bool` subset and unsupported-node rejection                                                                          |
 | Option `map` collides with Vec `map`                                                           | `tests/test_known_limitations.py` rejection tests for both backends plus `test_vec_map_still_lowers`                                                                |
 | HashMap entry subset                                                                           | `tests/test_native_n7_map.py` entry tests                                                                                                                           |
 | HashMap views allocate and have unspecified order                                              | `tests/test_native_n7_map.py` sorts view results where order is observable                                                                                          |
@@ -1379,11 +1384,57 @@ appended to the location line.
 
 **Lesson:** A silent synchronous fallback hides the absence of async semantics. Unsupported receivers should fail at translation time with a clear message rather than producing code with different behavior.
 
+### Real async event loop (v0.3.6)
+
+**Symptom:** Native futures were polled with a no-op waker, so a future that returned `Pending` could only make progress when Python called `PyFutureIterator.__next__` again. Timers busy-waited, and Python `asyncio` could not await a pending native future without blocking.
+
+**Cause:** The runtime had no source of external wakeups. `PyFutureIterator` had no bridge to the running `asyncio` loop, and `await_with_timeout` polled in a loop with `std::thread::sleep`.
+
+**Fix:** Added a single-threaded reactor in `backends/rust/codegen.py` built on `mio`. Each task has a per-task waker that enqueues it for polling. The reactor owns a deadline heap for timers and registers Unix file descriptors for readiness. `PyFutureIterator` now creates an `asyncio` future on the running loop when a poll returns `Pending`, and the reactor completes it with `loop.call_soon_threadsafe`. `await_with_timeout` waits on a condition-variable waker with the GIL released. The generated `Cargo.toml` adds `mio` with `os-poll` and `os-ext`.
+
+**Lesson:** A no-op waker is only sufficient for futures that are always ready. Real async needs a wake source, a task queue, and an explicit bridge to the host event loop; otherwise "async" is just polling.
+
 ### Status
 
-M5 is complete. Commit 1 also removed the thread-affinity limitation; commit 3 added drop-based cancellation and the polling timeout helper without changing the noop-waker design.
+M5 is complete. Commit 1 also removed the thread-affinity limitation; commit 3 added drop-based cancellation. v0.3.6 replaced the no-op waker with the real reactor, timers, fd readiness, and the `asyncio` bridge described above.
 
-- `pytest -q`: 686 passed, 5 skipped, 19 deselected.
-- `pytest -q -m slow`: 19 passed, 691 deselected.
+- `pytest -q`: 907 passed, 5 skipped, 19 deselected.
+- `pytest -q -m slow`: 19 passed, 912 deselected.
 - `pytest -q tests/test_native_n5.py`: 62 passed, 2 deselected.
 - `pytest -q tests/test_known_limitations.py`: 16 passed.
+
+## M-T0a: Python match on Option and Result
+
+**Symptom:** In the Python backend, `match Some(1) { Some(x) => x, None => 0 }` took the `None` arm, a bare `None` pattern raised `NameError: name 'None_' is not defined`, and `Ok`/`Err` patterns produced `int(None)` errors. Native matching already worked because the code generator emits real Rust patterns.
+
+**Cause:** The Python pattern lowerer treated every `PatEnum` payload as a tagged tuple (`(variant, payload)`) and lowered `PatPath` through the user-path helper. Built-in Option/Result values are instances of the internal `_Option`/`_Result` runtime classes, so neither representation applied.
+
+**Fix:** `_pattern_test_bindings` now recognises the built-in variants `Some`, `None`, `Ok`, and `Err`, including qualified forms such as `Option::Some` and `Result::Err`. It emits `isinstance(..., _Option)`/`_Result` plus `is_some`/`is_none`/`is_ok`/`is_err`, binds payloads through `unwrap`/`unwrap_err`, and applies nested payload patterns recursively. Wrong arity is rejected with a translation error. Bare variant names are treated as the prelude variants unless the scrutinee type is a known user enum; user enums can always qualify their patterns. Match scrutinees are now evaluated once, in both expression and statement position, instead of once per test.
+
+**Tests:** `tests/test_native_n5.py::test_python_option_result_match_patterns`, `::test_native_option_result_match_patterns`, and `::test_python_option_result_match_arity_errors` cover direct construction, typed `None`, wildcards, qualified patterns, nested payloads, function-call scrutinees, guards, and arity rejection. The GUIDE Option/Result `match` examples were restored.
+
+**Lesson:** Built-in generic types and user enums need different runtime representations. Pattern lowering must branch on the built-in constructors before falling back to the user-enum tuple encoding.
+
+## M-T0b: package version drift
+
+**Symptom:** `pyproject.toml` declared version `0.3.0` while `SPECIFICATION.md` was already at v0.3.6.
+
+**Fix:** Set the package version to `0.3.6` and add `tests/test_packaging_config.py::test_version_matches_specification_title`, which compares the package version with the SPEC title. The test fails on future drift in either direction.
+
+**Lesson:** Generated or manually recorded version numbers need an executable check; prose alone cannot keep two files aligned.
+
+## M-T1–M-T3: bundled standard library
+
+**Goal:** Ship a zero-dependency standard library as pure `.poly` modules and make it reachable from any source file without a package manager.
+
+**Resolution:** `include_expander.py` treats the `std:` prefix as a reserved namespace. `resolve_std_include` resolves names against `Path(__file__).resolve().parent / "stdlib"`, appends `.poly` when the name has no suffix, rejects absolute names and paths that escape the stdlib root with `E006`, and reports missing modules with `E006`. Bare `include("std:...")` is accepted at item position for compatibility with the directive's call syntax; it remains a parse error inside a block.
+
+**Deduplication:** Only resolved `std:` paths enter the standard-library dedup set, and only after a successful expansion. That keeps genuine cycles as `E005` while allowing `std:numpy` to be included by the program, `std:linalg`, and `std:prelude` without duplicating `NdArray` or its impl blocks. Ordinary include paths are not deduplicated; the existing duplicate-splice contract is unchanged.
+
+**Modules:** `math` (integer helpers plus pure-`.poly` Newton/Taylor `sqrt_f64`/`exp_f64`), `algo` (sorts, searches, reductions, `unique`), `str_utils`, `collections` (`Stack`, `Queue`, `SetI64`, `Counter`), `numpy` (dense `NdArray`), `linalg` (Gauss-Jordan inverse and Gaussian-elimination solve), `random` (Xoshiro256** seeded by SplitMix64), and `prelude`. All use only language constructs that both backends support: `[...].to_vec()`, `"...".to_string()`, `match` instead of `Option::map`, explicit `as` casts, and `format!` instead of native `String + String`.
+
+**Backend fixes found by the stdlib:** The parser now applies Rust's rule that a `{` in an `if`/`while`/`for`/`if let`/`match` scrutinee starts the body, not a struct literal, so `if a < b { a } else { b }` parses correctly. The Python translator infers struct types for unannotated `let` bindings and struct fields, dispatches user `impl` methods before built-in `Vec`/`String` rewrites, and uses `deepcopy` for `.clone()` so nested vectors do not alias. The native codegen prefers user methods, emits `#[staticmethod]` for receiver-less associated functions, lowers method `Result<T, String>` returns to `PyResult<T>`, and infers types through field, call, and `match` expressions.
+
+**Packaging and tests:** `stdlib` is included in `[tool.setuptools.packages.find]`, and `stdlib/*.poly` is declared as package data. `tests/test_std_include.py` covers resolution, traversal, cycles, and deduplication. `tests/test_stdlib.py` compiles every module on the Python and native backends, checks the math invariants (`A.matmul(&A.inv()?) ≈ I` within `1e-9` and exact `solve` roots), verifies the reference RNG sequence, and covers `E006` and wheel metadata.
+
+**Lesson:** A textual include mechanism needs an explicit namespace and an explicit dedup policy once it starts shipping shared definitions. Keeping dedup limited to `std:` preserves the documented behaviour of ordinary includes while making a prelude safe to include anywhere.

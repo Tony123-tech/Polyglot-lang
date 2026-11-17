@@ -1,4 +1,4 @@
-# polyglot-lang Specification v0.3.5
+# polyglot-lang Specification v0.3.8
 
 ## 0. Conventions
 
@@ -120,7 +120,7 @@ A requirement is marked Normative when it applies to both backends without platf
 - **5.4** `if let Some(binding) = expr` MUST be supported. Other if-let pattern forms MUST raise a translation error until they are implemented.
 - **5.5** The concrete representation of `Err` is Platform-defined. See Section 8.5.2.
 - **5.6** Native `Result::and_then` and `Result::or_else` MUST be supported. Their continuations operate on the native `PyErr` error representation described in 8.5.4.
-- **5.7** `Option::map` MUST remain unsupported until method dispatch is type-aware. `Vec::filter` and `Option::filter` are currently distinguished by a receiver-type check; this partial dispatch does not satisfy the condition for supporting `Option::map`, which collides with `Vec::map` at the call site.
+- **5.7** Method dispatch MUST be type-aware. `Option` and `Result` receivers—including `Some`/`None`/`Ok`/`Err` expressions, annotated bindings, `pop`/`next` results, and free calls whose declared return type is `Option` or `Result`—MUST lower `map` to the matching combinator. `Vec` receivers MUST retain collection semantics. See 7.2.1, 7.2.3, and 7.2.4.
 - **5.8** The following combinators are Platform-defined:
   - **5.8.1** `Result::is_ok`, `Result::is_err`, and `Result::map_err`. See Section 8.5.5.
   - **5.8.2** `Option::ok_or` and `Option::ok_or_else`. See Section 8.5.6.
@@ -129,7 +129,8 @@ A requirement is marked Normative when it applies to both backends without platf
 
 - A parity test exists for synchronous `?`.
 - The async behaviour of `?` is documented in Section 8.5.3.
-- Each unsupported combinator has an entry in Section 10.
+- A parity test exists for type-aware `Option::map`, `Result::map`, and `Vec::map` dispatch.
+- Each combinator marked Platform-defined or Unsupported has an entry in Section 10.
 - A Platform-defined test exists for each of `Result::is_ok`, `Result::is_err`, `Result::map_err`, `Option::ok_or`, and `Option::ok_or_else`.
 
 ## 6. Async
@@ -137,8 +138,8 @@ A requirement is marked Normative when it applies to both backends without platf
 - **6.1** Async MUST be marked Experimental and MUST NOT be part of the normative core of this specification. See Section 8.2.1.
   - **6.1.1** Full async support is a planned core feature. Until it is specified, async remains Experimental and does not satisfy the independence requirement of 1.4. Moving async into the core MUST be recorded as a SPEC version increase (see 11.1) and MUST precede any async parity test (see 11.3).
 - **6.2** The async execution model is Platform-defined. See Section 8.2.2.
-- **6.3** The native future type MUST be documented as `unsendable`. See Section 8.2.3.
-- **6.4** Async free functions MUST be supported in both backends. The native backend MUST use the language's own future type. Async `impl` methods are Deferred.
+- **6.3** The native future type MUST be documented as Send-aware: a future whose captured values are Send MUST be usable across threads. See Section 8.2.3.
+- **6.4** Async free functions MUST be supported in both backends. The native backend MUST use the language's own future type. Async `impl` methods with an `&self` receiver MUST be supported; `&mut self` and by-value receivers are Deferred.
   - **6.4.1** Async free functions in the Python backend MUST execute synchronously until the async execution model is moved out of Experimental.
 - **6.5** `while let Some(x) = iter.next()` is Deferred until a Rust-style `Option`-returning iterator adapter is specified.
 
@@ -146,6 +147,7 @@ A requirement is marked Normative when it applies to both backends without platf
 
 - A native async free-function test exists.
 - An async embedding test exists.
+- A native async `&self` impl-method test exists.
 - A Python async free-function test asserts synchronous execution. This test asserts backend-specific behaviour and is not a parity test; see 11.3.1.
 - Each Deferred item is recorded in Section 10.
 
@@ -172,7 +174,7 @@ A requirement is marked Normative when it applies to both backends without platf
 | index `v[i]`                                  | Normative | requires `usize` per 2.4.4           |
 | `contains`                                    | Normative | —                                    |
 | `sort`, `sort_by`                             | Normative | —                                    |
-| `map`, `filter`, `fold`                       | Normative | `filter` receiver-type check per 5.7 |
+| `map`, `filter`, `fold`                       | Normative | type-aware dispatch per 5.7          |
 | slice `&v[a..b]`                              | Normative | —                                    |
 | `extend`                                      | Normative | —                                    |
 | `insert`, `remove`, `retain`, `dedup`         | Normative | —                                    |
@@ -213,9 +215,9 @@ A requirement is marked Normative when it applies to both backends without platf
 | ------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
 | construction `Some`, `None`                 | Normative                                        | —                                                                |
 | `is_some`, `is_none`, `unwrap`, `unwrap_or` | Normative                                        | —                                                                |
-| `and_then`, `or_else`, `filter`             | Normative; native uses Rust standard combinators | `filter` receiver-type check per 5.7                             |
+| `and_then`, `or_else`, `filter`             | Normative; native uses Rust standard combinators | type-aware dispatch per 5.7                                      |
+| `map`                                       | Normative                                        | type-aware dispatch per 5.7                                      |
 | `ok_or`, `ok_or_else`                       | Platform-defined                                 | 5.8.2, 8.5.6                                                     |
-| `map`                                       | **Unsupported**                                  | 5.7; collides with `Vec::map` until dispatch is fully type-aware |
 
 ### 7.2.4 `Result<T, E>` (core)
 
@@ -225,6 +227,7 @@ A requirement is marked Normative when it applies to both backends without platf
 | `?` operator, synchronous      | Normative; `Err` representation Platform-defined | 5.2, 5.5, 8.5.1–8.5.2 |
 | `?` operator, asynchronous     | Platform-defined                                 | 5.3, 8.5.3            |
 | `is_ok`, `is_err`, `map_err`   | Platform-defined                                 | 5.8.1, 8.5.5          |
+| `map`                          | Normative                                        | type-aware dispatch per 5.7 |
 | `ok`, `err`                    | Normative                                        | —                     |
 | `and_then`, `or_else` (native) | Normative; native errors use `PyErr`             | 5.6, 8.5.4            |
 | `and_then`, `or_else` (Python) | Normative                                        | —                     |
@@ -304,13 +307,14 @@ This section defines the platform differences permitted by this specification. E
 ### 8.2 Async execution
 
 - **8.2.1** Async MUST be marked Experimental.
-- **8.2.2** The execution model is Platform-defined. The native backend uses a non-`Send` future polled with a no-op waker; the Python backend executes async functions synchronously until a later version specifies otherwise.
-- **8.2.3** The native future type MUST be `unsendable`. Cross-thread use MUST fail explicitly.
+- **8.2.2** The execution model is Platform-defined. The native backend drives futures on a single-threaded reactor thread backed by `mio`. Each task has a waker that enqueues it for polling; timer deadlines and Unix file-descriptor readability are delivered by the same reactor. When Python awaits a pending native future, `PyFutureIterator` yields an `asyncio` future created on the running loop, and the reactor completes it thread-safely with `loop.call_soon_threadsafe`. The native runtime also provides internal `polyglot_sleep_ms` and Unix-only `polyglot_readable` helpers; these are runtime helpers, not language-level standard-library functions. The internal `await_with_timeout` helper waits for a reactor wakeup or its deadline with the GIL released, rather than busy-polling, and raises `PyTimeoutError` on expiry. The Python backend executes async functions synchronously until a later version specifies otherwise.
+- **8.2.3** The native future type MUST be Send when its captured values are Send. Cross-thread await MUST be supported for such futures. If a captured value is not Send, the native backend MUST reject the generated Rust at compile time.
 
 **Acceptance criteria**
 
 - A native async test exists.
-- A cross-thread rejection test exists.
+- A cross-thread await test exists for Send captures.
+- A native timer test demonstrates reactor wakeups without busy-polling.
 
 ### 8.3 Box patterns
 
@@ -418,6 +422,9 @@ This section defines the platform differences permitted by this specification. E
 
 - **9.1** The toolchain MUST include a lexer, a parser, an AST, both backends, diagnostics that map native errors to source positions, and a module mechanism.
 - **9.2** The module mechanism MUST provide a one-way inclusion directive. `include!("path/to/file.poly");` at item position parses the included file and splices its items at the include site. Relative paths resolve relative to the including file's directory; absolute paths are allowed. Included files MAY contain includes recursively. Cyclic includes MUST be detected and rejected with a five-line error that prints the include chain. Full `mod` and `use` syntax remains Deferred.
+- **9.2.1** A bundled standard-library namespace MUST be available as `std:`. `include!("std:<name>");` resolves the name inside the packaged `stdlib/` directory and appends `.poly` when the name has no suffix. The equivalent bare `include("std:<name>");` form MUST be accepted at item position. Names that are absolute, escape `stdlib/`, or do not name a module MUST be rejected with `E006`; cyclic standard-library includes MUST still report `E005`.
+- **9.2.2** Standard-library includes MUST be deduplicated by resolved path across the whole program expansion. Ordinary (non-`std:`) includes remain textual and MAY splice duplicate items, preserving the pre-v0.3.8 contract.
+- **9.2.3** The bundled standard library MUST consist of pure `.poly` modules: `math`, `algo`, `str_utils`, `collections`, `numpy`, `linalg`, `random`, and `prelude`. `prelude` includes the other modules, and `numpy` may be re-included by `linalg` and `prelude` without duplicating `NdArray` or its impl blocks. The `stdlib/` package and its `.poly` files MUST ship with the wheel.
 - **9.3** Diagnostics MUST map native errors back to original source lines and MUST include a stable error code and, where available, a character span.
 - **9.4** A command-line interface SHOULD provide a run command and a build command.
 - **9.5** The README Quick Start MUST allow a new user to run a first program without reading this specification.
@@ -441,13 +448,13 @@ This section defines the platform differences permitted by this specification. E
 This section is normative. Each entry MUST reference the requirement or platform difference it qualifies.
 
 - **10.1** Integer overflow differs across backends. See 8.1.4.
-- **10.2** Async is Experimental and the native future type is `unsendable`. See 8.2.3.
+- **10.2** Async is Experimental. Native futures are Send-aware and may be awaited across threads when their captured values are Send; non-Send captures are rejected at Rust compile time. See 8.2.3.
 - **10.3** Box patterns are supported only by the Python backend. See 8.3.
 - **10.4** Payload enum slices are supported only by the Python backend; native payload enums are internal. See 8.4.
 - **10.5** Native `Result::and_then` and `Result::or_else` use `PyErr` continuations. See 8.5.4.
-- **10.6** `Option::map` is unsupported until method dispatch is fully type-aware. See 5.7.
+- **10.6 (Retired in v0.3.7).** `Option::map` and `Result::map` are supported through type-aware receiver dispatch. See 5.7.
 - **10.7** `while let Some(x) = iter.next()` is deferred. See 6.5.
-- **10.8** Async `impl` methods are deferred. See 6.4.
+- **10.8** Native async `impl` methods with an `&self` receiver are supported. `&mut self` and by-value receivers are Deferred; bare `self` use and non-`Clone` payload-enum fields are rejected. See 6.4.
 - **10.9 (Retired in v0.2.5).** The transitional `usize`/`isize` behavior is retired; implementations use distinct pointer-sized types and explicit casts. See 2.4.5.
 - **10.10 (Retired in v0.3.3).** Additional fixed-width integer types are specified in 2.5 and implemented in scope of M4-remaining. See 2.5 and 8.1.
 - **10.11 (Retired in v0.3.3).** Python backend `as` conversion behavior for additional integer types is specified in 8.1 and 10.26. See 2.5 and 2.7.
@@ -460,7 +467,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.18** `Option::ok_or` and `Option::ok_or_else` are Platform-defined. See 8.5.6.
 - **10.19** No platform difference may be removed from this section without a corresponding SPEC version increase. See 11.1.
 - **10.20** Native `HashMap::get_mut` returns a copied `Option<V>` at the Python boundary; the copy cannot mutate the input dictionary. See 8.10.2.
-- **10.21** M3-remaining extends the collection targets in 7.2.6–7.2.8, but full parity for extended entry methods, `BTreeMap`, `HashSet`, nested HashMap depth-1 values, and collection `get_mut` semantics is Partial in this pass. See 10.25 and 10.27.
+- **10.21** M3-remaining extends the collection targets in 7.2.6–7.2.8. Native and Python support for `BTreeMap`, `HashSet`, extended entry methods, nested HashMap depth-1 values, and collection `get_mut` semantics is implemented for those types. Deeper nesting and unsupported type combinations remain Deferred. See 10.25 and 10.27.
 - **10.22** Termination proofs for mutual recursion, loops with `break`, complex arithmetic, non-recursive function calls, and async suspension are Deferred. Such constructs are conservatively rejected in an annotated function when the checker cannot prove termination.
 - **10.23** Cyclic includes are rejected. Full `mod` and `use` syntax remains Deferred. See 9.2.
 - **10.24** AST spans are best-effort; nodes with a single token have span equal to that token's span. See 2.4.7 and 9.3.
@@ -473,6 +480,8 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.31** `TranslateError` (E003) is raised only by the Python backend translation path. The native backend reports unsupported constructs as `UnsupportedNativePatternError` (E007) or `RustCompileError` (E004); there is no native E003 path. See 9.3.
 - **10.32** `String::from(...)` is parsed but not lowered by either backend; use "...".to_string() instead. See 7.2.2.
 - **10.33** The `vec![...]` macro expression is parsed as a token stream but not lowered by either backend; use `[...].to_vec()` instead. See 7.2.1.
+- **10.34** The native reactor, its timers, and Unix fd readiness are runtime-internal. The language does not expose async timer or I/O primitives; `polyglot_sleep_ms` and `polyglot_readable` are helpers used by the runtime and tests. See 8.2.2.
+- **10.35** The bundled `std:` modules are pure `.poly` and inherit the language subset in this specification. They do not add a package manager, arbitrary crate dependencies, or float math beyond the provided helpers. Only `std:` includes are deduplicated; ordinary includes still splice textually. See 9.2.
 
 ## 11. Versioning
 
@@ -492,6 +501,9 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.13** v0.3.3 records M4-remaining: additional fixed-width integer types, integer boundary diagnostics across all integer types, and documented Python/native `as`-cast behavior for those types.
 - **11.14** v0.3.4 records M3-remaining: HashMap API completion targets, BTreeMap/HashSet collection types, extended supported key/value sets, and documented partial implementation status.
 - **11.15** v0.3.5 records completion of M3-remaining and M4-remaining, include-system hardening, M7 span/JSON diagnostics hardening, and the documentation, packaging, and CI tooling pass. It adds 8.1.5–8.1.7 for float, `char`, and `bool` cast differences and 10.28–10.31 for the corresponding limitations and the unreachable native E003 path.
+- **11.16** v0.3.6 records the real native async event loop: a single-threaded `mio` reactor with task wakers, timers, Unix fd readiness, and an `asyncio` bridge. It updates 6.3, 6.4, 8.2, 10.2, and 10.8 for Send-aware cross-thread awaits and supported async `&self` methods, and adds 10.34 for the runtime-internal timer/I/O helpers. Async remains Experimental.
+- **11.17** v0.3.7 records type-aware `Option::map` and `Result::map` support in both backends, retires 10.6, and adds the `map` row to 7.2.4. `Vec::map` retains collection semantics under the same receiver-type dispatch rule.
+- **11.18** v0.3.8 records the bundled zero-dependency standard library: the `std:` include namespace, path containment and `E006` handling, `std:`-only deduplication, the eight shipped modules, and wheel packaging for `stdlib/*.poly`. It adds 9.2.1–9.2.3 and 10.35.
 
 ## 12. Conformance Status
 
@@ -503,8 +515,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 686 passed, 5 skipped, 19 deselected.
-- `pytest -q -m slow`: 19 passed, 691 deselected.
+- `pytest -q`: 11361 passed, 11 skipped, 1129 deselected (1 xpassed).
+- `pytest -q -m slow`: 19 passed, 12483 deselected.
 
 The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, M3-remaining, and M5 async tests.
 
@@ -514,7 +526,7 @@ The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M
 
 ### 12.2 Acceptance criteria status
 
-**12.2.0** Summary: 70 Pass, 6 Partial, 0 Fail, 0 Blocked.
+**12.2.0** Summary: 75 Pass, 3 Partial, 0 Fail, 0 Blocked.
 
 **12.2.1** **Partial** means at least one test exists and passes, but the criterion is not fully covered. The Note column MUST state what is missing. A criterion marked **Partial** with the note "Tests not yet recorded" means the test may exist but is not traceable to a named test in `NOTES.md` or `tests/`. Such a criterion MUST be reclassified as **Fail** if, on inspection, no such test exists.
 
@@ -544,23 +556,24 @@ The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M
 | 4       | Exhaustiveness-diagnostic test                                                        | 4.2                       | Pass    | Diagnostic text asserted in `tests/test_spec_conformance.py`                                                                                                                                                                                                                        |
 | 5       | Synchronous `?` parity test                                                           | 5.2                       | Pass    | —                                                                                                                                                                                                                                                                                   |
 | 5       | Async `?` documented                                                                  | 5.3                       | Pass    | 8.5.3                                                                                                                                                                                                                                                                               |
-| 5       | Unsupported combinator in Section 10                                                  | 5.7                       | Pass    | 10.6                                                                                                                                                                                                                                                                                |
+| 5       | Type-aware `Option::map`, `Result::map`, and `Vec::map` dispatch                      | 5.7                       | Pass    | `tests/test_tier1_option_result_map.py`                                                                                                                                                                                                                                             |
 | 5       | Platform-defined test for each of `is_ok`, `is_err`, `map_err`, `ok_or`, `ok_or_else` | 5.8                       | Pass    | `tests/test_n9_result.py` contains a dedicated test per combinator and backend                                                                                                                                                                                                      |
 | 6       | Native async free-function test                                                       | 6.4                       | Pass    | —                                                                                                                                                                                                                                                                                   |
 | 6       | Async embedding test                                                                  | 6.4                       | Pass    | —                                                                                                                                                                                                                                                                                   |
 | 6       | Python async free-function test                                                       | 6.4.1                     | Partial | Synchronous execution asserted indirectly                                                                                                                                                                                                                                           |
+| 6       | Native async `&self` impl-method test                                                 | 6.4                       | Pass    | `tests/test_native_n5.py::test_native_async_impl_method`; `&mut self` rejection in `tests/test_known_limitations.py::test_async_mut_self_method_native_codegen_is_rejected`                                                                                                                                 |
 | 6       | Deferred items in Section 10                                                          | 6.4, 6.5                  | Pass    | 10.7, 10.8                                                                                                                                                                                                                                                                          |
 | 7       | Function table with status markers                                                    | 7.2                       | Pass    | 7.2.1–7.2.8                                                                                                                                                                                                                                                                         |
 | 7       | No Platform-defined function lacks Section 10 entry                                   | 7.3                       | Pass    | 10.13–10.18, 10.20                                                                                                                                                                                                                                                                  |
 | 7       | HashMap supported methods, type sets, and dictionary boundary                         | 7.2.6–7.2.7, 8.10.1       | Pass    | `tests/test_n8_hashmap.py`                                                                                                                                                                                                                                                          |
 | 7       | HashMap `get_mut` reference at native Python boundary                                 | 8.10.2                    | Partial | Native returns an owned copy because the input map is passed by value; see 10.20                                                                                                                                                                                                    |
-| 8.1     | Native overflow test                                                                  | 8.1.1                     | Partial | Baseline restored; dedicated test not yet verified in this session                                                                                                                                                                                                                  |
-| 8.1     | Python arbitrary-precision test                                                       | 8.1.2                     | Partial | Baseline restored; dedicated test not yet verified in this session                                                                                                                                                                                                                  |
+| 8.1     | Native overflow test                                                                  | 8.1.1                     | Pass    | `tests/test_native_n8_types.py::test_native_overflow_wraps`                                                                                                                                                                                                                        |
+| 8.1     | Python arbitrary-precision/overflow test                                              | 8.1.2                     | Pass    | `tests/test_m4_integers.py::test_i128_u128_above_2_64_python` exercises values above 2^64; `tests/test_native_n8_types.py::test_python_overflow_wraps` covers typed wrapping                                          |
 | 8.1     | Float-to-int `as` cast documented and tested                                          | 8.1.5                     | Pass    | `tests/test_m4_integers.py::test_float_to_int_truncates_toward_zero_both_backends`, `::test_float_to_int_range_difference_is_documented`                                                                                                                                           |
 | 8.1     | `char` casts documented and tested                                                    | 8.1.6                     | Pass    | `tests/test_m4_integers.py::test_char_as_i64_both_backends`, `::test_python_integer_as_char_invalid_code_points`, `::test_native_integer_as_char_other_widths_rejected`                                                                                                            |
 | 8.1     | `bool` casts documented and tested                                                    | 8.1.7                     | Pass    | `tests/test_m4_integers.py::test_bool_as_i64_both_backends`, `::test_python_i64_as_bool`, `::test_native_i64_as_bool_rejected`                                                                                                                                                      |
 | 8.2     | Native async test                                                                     | 8.2.2                     | Pass    | `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity`                                                                                                                                                                                                    |
-| 8.2     | Cross-thread rejection test                                                           | 8.2.3                     | Partial | `PyFuture` unsendable; explicit test name not recorded                                                                                                                                                                                                                              |
+| 8.2     | Cross-thread await test for Send captures                                             | 8.2.3                     | Pass    | `tests/test_native_n5.py::test_native_async_send_add_across_threads`; main-thread parity in `::test_native_async_send_add_on_main_thread`                                                                                                                                           |
 | 8.3     | Python Box pattern test                                                               | 8.3.1                     | Pass    | —                                                                                                                                                                                                                                                                                   |
 | 8.3     | Native rejection test                                                                 | 8.3.2                     | Pass    | `tests/test_native_n2a_patterns.py::test_pattern_box_native_rejected` (parametrized over five Box pattern forms)                                                                                                                                                                    |
 | 8.4     | Python payload slice test                                                             | 8.4.1                     | Pass    | —                                                                                                                                                                                                                                                                                   |
@@ -594,26 +607,24 @@ The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M
 | M6      | Nested and relative-path includes resolve correctly                                   | 9.2                       | Pass    | `tests/test_m6_include.py::test_nested_include`, `::test_include_path_relative_to_including_file`                                                                                                                                                                                   |
 | M6      | Cyclic/missing includes rejected with five-line diagnostics                           | 9.2, 10.23                | Pass    | `tests/test_m6_include.py::test_cyclic_include_rejected`, `::test_missing_include_file`                                                                                                                                                                                             |
 | M6      | Duplicate, `..`, absolute, include-only, block, and non-string includes               | 9.2                       | Pass    | `tests/test_m6_include.py::test_duplicate_include_is_allowed_and_splices_twice`, `::test_include_with_parent_directory_segments_is_allowed`, `::test_include_with_absolute_path_outside_repo_is_allowed`, `::test_include_only_file_produces_empty_program`, `::test_include_inside_block_is_parse_error`, `::test_include_with_non_string_argument_is_parse_error` |
+| M6      | Bundled `std:` namespace resolves, dedups, and ships                                  | 9.2.1–9.2.3, 10.35        | Pass    | `tests/test_std_include.py` covers resolution, traversal, cycles, and dedup; `tests/test_stdlib.py` covers every module on both backends, packaging, `E006`, and `NdArray` dedup |
 | M7      | Stable error codes and span-aware diagnostics                                         | 2.4.7, 9.3, 10.24         | Pass    | `tests/test_m7_diagnostics.py` covers E001–E008 span formatting, E007 native rejection, E008 literal span, E005 multi-file chain, E006 resolved path, and JSON diagnostics for E001/E002/E005                                                                                          |
 | M4      | Additional integer types, `as` casts, and E001 boundaries                             | 2.5, 8.1, 10.26           | Pass | `tests/test_m4_integers.py` covers the full Python/native integer matrix, literal and variable casts, E001 boundaries, `i128`/`u128` above 2^64, float/char/bool casts                                                                                                               |
 | M3      | HashMap API completion, BTreeMap, HashSet, nested values, and `get_mut` semantics     | 7.2.6–7.2.8, 10.25, 10.27 | Pass    | `tests/test_m3_collections.py` covers Python and native `BTreeMap`, `HashSet`, entry methods, nested HashMap depth-1 values, sorted/unspecified iteration, and `get_mut` copy semantics                                                                                               |
 
-### 12.3 Outstanding items that block a v0.3.5 conformance claim
+### 12.3 Outstanding items that block a v0.3.6 conformance claim
 
-No item blocks a v0.3.5 conformance claim, provided that:
+No item blocks a v0.3.6 conformance claim, provided that:
 
 - Every Partial in 12.2 is explicitly accepted as a known gap in this version.
-- The 6 Partial criteria are listed in 12.3.1 with a justification for why each does not block conformance.
+- The 3 Partial criteria are listed in 12.3.1 with a justification for why each does not block conformance.
 
-### 12.3.1 Accepted Partial items for v0.3.5
+### 12.3.1 Accepted Partial items for v0.3.6
 
 | Partial item                                        | Justification                                                                                                                  |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | 3.4 mutability preservation test                    | Behaviour exists; only the test name is missing from NOTES                                                                     |
 | 6.4.1 Python async synchronous execution            | Behaviour is backend-specific per 11.3.1; not a parity gap                                                                     |
-| 8.1 overflow tests                                  | Baseline restored; dedicated verification is next milestone scope                                                              |
-| 8.1 Python arbitrary-precision test                 | Baseline restored; dedicated verification is next milestone scope                                                              |
-| 8.2 cross-thread rejection test                     | `PyFuture` unsendable is documented; explicit test is next milestone scope                                                     |
 | 8.10.2 native `HashMap::get_mut` boundary reference | The by-value native map cannot safely return a mutable reference; the documented platform behaviour returns a copy. See 10.20. |
 
 Each item above is either (a) covered by a Deferred clause, (b) a test-recording gap rather than a behaviour gap, or (c) explicitly assigned to next milestone in the roadmap.

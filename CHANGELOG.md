@@ -2,19 +2,103 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Apple Silicon JIT backend and edge-case audit
+
+- Added a zero-dependency AArch64 JIT backend (`backends/jit/`) that lowers
+  typed SSA to machine words directly, manages `MAP_JIT` executable memory,
+  performs linear-scan register allocation with spilling, resolves cyclic phi
+  copies, and reports division/shift traps at the Python boundary. Wired into
+  `get_backend("jit")` and `polyglot run/compile --backend jit`.
+- Fixed parser precedence for bitwise operators, added `^` (XOR) to the lexer,
+  parser, and Python backend, and prevented a block-form `if` from capturing
+  the following parenthesised expression.
+- Fixed the `#[terminates]` checker so unsigned counters cannot use wrapped
+  subtraction (`i >= 0`, or steps larger than one) as a termination proof.
+- Hardened `include!` targets: directories and unreadable files now report
+  E006 instead of raising tracebacks.
+- Fixed Python/JIT drift for narrow-integer wrapping, Rust-style constant
+  division/modulo folding, and comparison/logical-result typing.
+- Added `tests/test_jit_backend.py` and `tests/test_edge_cases.py`; see
+  `BUGS_AND_EDGE_CASES.md` for the audit details and known limitations.
+- Added a zero-dependency bundled standard library under `stdlib/` with eight
+  pure-`.poly` modules: `math`, `algo`, `str_utils`, `collections`, `numpy`,
+  `linalg`, `random`, and `prelude`.
+- Added `include!("std:<name>")` resolution against the packaged `stdlib/`
+  directory, including `.poly` suffix inference, traversal rejection with
+  `E006`, cycle detection with `E005`, and resolved-path deduplication for
+  `std:` includes only. Ordinary includes still splice duplicates.
+- Shipped `stdlib/*.poly` in the wheel and added `tests/test_stdlib.py`, which
+  exercises every module on both backends, checks the inverse identity within
+  `1e-9`, exact `solve` roots, the reference Xoshiro256** sequence, packaging,
+  `E006`, and `NdArray` deduplication.
+- Fixed parser handling of block-form `if`/`while`/`for`/`match` conditions so
+  `if a < b { a } else { b }` is not misread as a struct literal.
+- Fixed Python method dispatch for struct-typed bindings and fields, switched
+  `.clone()` lowering to `deepcopy` for nested vectors, and preferred user
+  `impl` methods over built-in collection rewrites in both backends.
+- Exposed receiver-less associated functions as static methods in native
+  code, lowered method `Result<T, String>` returns to `PyResult<T>`, and
+  improved Python/native expression type inference for field, call, and
+  `match` expressions.
+
+## v0.3.7 — type-aware Option/Result map
+
+- Lowered `Option::map` and `Result::map` in both backends through
+  receiver-type dispatch instead of rejecting them with E003.
+- Added free-function return-type tracking so calls returning `Option` or
+  `Result` dispatch `map` correctly, including chained maps.
+- Kept `Vec::map` collection lowering unchanged and covered the
+  `Option::map` / `Result::map` / `Vec::map` split with Python and native
+  parity tests.
+- Retired SPEC 10.6 and added the `Result` `map` row to 7.2.4.
+
+## v0.3.6 — real async event loop
+
+- Fixed Python backend `match` lowering for built-in `Option` and `Result`
+  patterns: `Some(x)`, `None`, `Ok(x)`, and `Err(e)` now match the runtime
+  representation, including qualified paths, nested payloads, guards, and
+  wildcard arms. Match scrutinees are evaluated once.
+- Aligned `pyproject.toml` package version with the SPEC title and added a
+  packaging test that prevents future version drift.
+- Replaced the no-op waker with per-task wakers that enqueue work on a
+  single-threaded native reactor backed by `mio`.
+- Added timer wakeups and Unix file-descriptor readiness to the reactor,
+  with internal `polyglot_sleep_ms` and `polyglot_readable` helpers for
+  native tests.
+- Bridged pending `PyFuture` iterations to Python `asyncio` futures and
+  completed them thread-safely through the running loop.
+- Reworked `await_with_timeout` to wait on a condition-variable waker with
+  the GIL released instead of busy-polling.
+- Documented Send-aware cross-thread awaits and updated the async
+  platform-difference clauses. Async remains Experimental.
+
+## v0.3.5 — M3/M4 completion and hardening
+
+- Completed native `BTreeMap<K, V>` for `K` in `{i64, String}` and `V` in
+  `{i64, String, bool, f64, Vec<i64>}`, with sorted iteration.
+- Completed native `HashSet<T>` for `T` in `{i64, String}` and nested
+  `HashMap` values at depth 1.
+- Completed the extended `HashMap` entry API (`or_insert_with`,
+  `and_modify`, `or_insert_with_key`) and collection `get_mut`
+  copy-at-Python-boundary semantics.
+- Completed the cross-backend fixed-width integer matrix and documented
+  float, `char`, and `bool` cast differences.
+- Hardened `include!` handling for duplicate, parent-directory, absolute,
+  block-position, and non-string cases.
+- Hardened span and JSON diagnostics, and recorded the unreachable native
+  E003 path.
+- Added the docs/CI tooling pass: `Makefile`, `docs/`, docs-sync checks,
+  formatting checks, build benchmark, and `CHANGELOG.md`.
+
 ## v0.3.4 — M3 remainder
 
 - Specified `BTreeMap` and `HashSet` as collections-layer types and
-  extended the `HashMap` entry API (`or_insert_with`, `and_modify`,
-  `or_insert_with_key`).
-- Implemented native `BTreeMap<K, V>` for `K` in `{i64, String}` and `V` in
-  `{i64, String, bool, f64, Vec<i64>}`, with sorted iteration.
-- Implemented native `HashSet<T>` for `T` in `{i64, String}` and nested
-  `HashMap` values at depth 1.
-- Added collection `get_mut` copy-at-Python-boundary semantics for
-  `BTreeMap` and `HashSet`, with tests proving the input is not mutated.
-- Added parity tests for sorted `BTreeMap` iteration and
-  order-insensitive `HashSet` iteration.
+  extended the `HashMap` entry API targets (`or_insert_with`,
+  `and_modify`, `or_insert_with_key`).
+- Recorded the supported `BTreeMap`, `HashSet`, nested `HashMap` depth-1,
+  and collection `get_mut` type sets.
+- Marked native collection support as Partial pending completion; the
+  implementation landed in v0.3.5.
 
 ## v0.3.3 — M4 remainder
 

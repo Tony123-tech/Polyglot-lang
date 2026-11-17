@@ -6,8 +6,11 @@ One-page orientation for the repository.
 
 `polyglot-lang` is a small Rust-like language with a shared lexer, parser,
 and AST. A `.poly` file can run on a stdlib-only Python backend or compile
-to a native PyO3 extension. Both backends are selected through the same
-backend interface and the same CLI.
+to a native PyO3 extension. An experimental compute-only backend emits
+WebAssembly text format (`.wat`). All backends are selected through the
+same interface and CLI.
+
+Python 3.14.8 or later is required.
 
 ## Where to start
 
@@ -19,16 +22,21 @@ backend interface and the same CLI.
 | [NOTES](../NOTES.md) | Design journal: symptoms, causes, fixes, lessons, test baselines |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Development setup, tests, Makefile, adding error codes/examples |
 | [architecture.md](architecture.md) | ASCII pipeline diagram and layer responsibilities |
-| [CHANGELOG](../CHANGELOG.md) | Version history from v0.3.0 through v0.3.4 |
+| [CHANGELOG](../CHANGELOG.md) | Version history from v0.3.0 through v0.3.6 |
 
-## The two backends
+## The backends
 
 - **Python** — `polyglot run file.poly` or `polyglot run file.poly --backend python`.
   No Rust toolchain. Translates the AST to Python and executes it in an
   isolated namespace.
 - **Native** — `polyglot build file.poly` or `polyglot run file.poly --backend native`.
   Generates Rust with PyO3, builds with Cargo, and loads a `.so`/`.pyd`.
-  Builds are cached under `~/.cache/polyglot-native`.
+  Async futures are driven by a single-threaded reactor and integrate
+  with Python `asyncio`. Builds are cached under
+  `~/.cache/polyglot-native`.
+- **WASM (experimental)** — `polyglot build file.poly --backend wasm`
+  writes a `.wat` module for a compute-only `i64`/`bool` subset. It
+  requires the optional `wasm` extra (`wasmtime`).
 
 ## Key boundaries
 
@@ -42,7 +50,11 @@ backend interface and the same CLI.
   including file; cycles are rejected with `E005`.
 - Diagnostics use stable codes `E001`–`E008`, five lines by default and
   six when a source span is available. `--error-format=json` emits a
-  machine-readable object.
+  machine-readable object. E003 is Python-only; the native backend uses
+  E004 or E007 instead.
+- Async is experimental. Native futures use a real waker/reactor,
+  integrate with `asyncio`, and support timer wakeups. Async `&mut self`
+  methods are rejected.
 
 ## Verifying the repository
 
