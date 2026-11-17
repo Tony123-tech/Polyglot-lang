@@ -293,6 +293,26 @@ fn n5_await_with_timeout_times_out() -> bool {
     Python::with_gil(|py| await_with_timeout(py, future, 0.01)).is_err()
 }
 """,
+    "async_timer": """
+async fn n5_async_sleep_ms(ms: i64) -> i64 {
+    await polyglot_sleep_ms(ms);
+    42
+}
+
+async fn n5_async_sleep_double(first: i64, second: i64) -> i64 {
+    await polyglot_sleep_ms(first);
+    await polyglot_sleep_ms(second);
+    84
+}
+
+fn n5_async_poll_reset() {
+    polyglot_async_poll_reset();
+}
+
+fn n5_async_poll_count() -> i64 {
+    polyglot_async_poll_count()
+}
+""",
     "vec_is_empty": """
 fn n5_vec_is_empty(values: Vec<i64>) -> bool {
     values.is_empty()
@@ -455,6 +475,56 @@ fn n5_vec_sort_by_key(mut values: Vec<i64>) -> Vec<i64> {
 }
 fn n5_vec_is_sorted(values: Vec<i64>) -> bool {
     values.is_sorted()
+}
+""",
+    "option_result_match": """
+fn n5_option_match_some() -> i64 {
+    match Some(1) { Some(x) => x, None => 0 }
+}
+fn n5_option_match_none() -> i64 {
+    let value: Option<i64> = None;
+    match value { Some(x) => x, None => 7 }
+}
+fn n5_option_match_wildcard() -> i64 {
+    match Some(2) { Some(_) => 1, None => 0 }
+}
+fn n5_option_match_qualified() -> i64 {
+    match Some(4) { Option::Some(x) => x, Option::None => 0 }
+}
+fn n5_option_match_value() -> Option<i64> {
+    Some(6)
+}
+fn n5_option_match_call() -> i64 {
+    match n5_option_match_value() { Some(x) => x + 1, None => 0 }
+}
+fn n5_option_match_nested() -> i64 {
+    match Some(Some(9)) {
+        Some(Some(x)) => x,
+        Some(None) => 1,
+        None => 0,
+    }
+}
+fn n5_result_match_ok_value() -> Result<i64, String> {
+    Ok(6)
+}
+fn n5_result_match_err_value() -> Result<i64, String> {
+    Err("bad")
+}
+fn n5_result_match_ok() -> i64 {
+    let value = n5_result_match_ok_value();
+    match value { Ok(n) => n, Err(_) => -1 }
+}
+fn n5_result_match_err() -> i64 {
+    let value = n5_result_match_err_value();
+    match value { Ok(n) => n, Err(_) => 3 }
+}
+fn n5_result_match_guard() -> i64 {
+    let value = n5_result_match_ok_value();
+    match value {
+        Ok(n) if n > 5 => n,
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
 }
 """,
 }
@@ -782,6 +852,58 @@ def test_python_option_result_construction():
     assert ns["err"]() == ns["_Result"].from_err("x")
 
 
+def test_python_option_result_match_patterns():
+    ns = _run_python(SOURCES["option_result_match"])
+    assert ns["n5_option_match_some"]() == 1
+    assert ns["n5_option_match_none"]() == 7
+    assert ns["n5_option_match_wildcard"]() == 1
+    assert ns["n5_option_match_qualified"]() == 4
+    assert ns["n5_option_match_call"]() == 7
+    assert ns["n5_option_match_nested"]() == 9
+    assert ns["n5_result_match_ok"]() == 6
+    assert ns["n5_result_match_err"]() == 3
+    assert ns["n5_result_match_guard"]() == 6
+
+
+@pytest.mark.native
+def test_native_option_result_match_patterns(native_ns):
+    assert native_ns["n5_option_match_some"]() == 1
+    assert native_ns["n5_option_match_none"]() == 7
+    assert native_ns["n5_option_match_wildcard"]() == 1
+    assert native_ns["n5_option_match_qualified"]() == 4
+    assert native_ns["n5_option_match_call"]() == 7
+    assert native_ns["n5_option_match_nested"]() == 9
+    assert native_ns["n5_result_match_ok"]() == 6
+    assert native_ns["n5_result_match_err"]() == 3
+    assert native_ns["n5_result_match_guard"]() == 6
+
+
+def test_python_option_result_match_arity_errors():
+    from backends.python.translator import TranslateError
+
+    with pytest.raises(
+        TranslateError,
+        match="Some pattern requires exactly one payload",
+    ):
+        _run_python("""
+        fn bad() -> i64 { match Some(1) { Some => 0, None => 0 } }
+        """)
+    with pytest.raises(
+        TranslateError,
+        match="Ok pattern requires exactly one payload",
+    ):
+        _run_python("""
+        fn bad() -> i64 { match Ok(1) { Ok => 0, Err(_) => 0 } }
+        """)
+    with pytest.raises(
+        TranslateError,
+        match="None pattern does not take a payload",
+    ):
+        _run_python("""
+        fn bad() -> i64 { match Some(1) { None(x) => x, Some(_) => 0 } }
+        """)
+
+
 def test_python_vec_clear_empty_reverse_and_string_repeat():
     ns = _run_python("""
     fn n5_vec_is_empty(values: Vec<i64>) -> bool {
@@ -1041,7 +1163,7 @@ def test_python_vec_partition_sort_by_key_and_is_sorted():
 @pytest.mark.native
 def test_native_option_unwrap(native_ns):
     assert native_ns["n5_option_unwrap_get"]() == 5
-    with pytest.raises(BaseException):  # noqa: B017
+    with pytest.raises(BaseException):
         native_ns["n5_option_unwrap_fail"]()
 
 
@@ -1489,6 +1611,50 @@ def test_native_await_with_timeout_value(native_ns):
 @pytest.mark.native
 def test_native_await_with_timeout_times_out(native_ns):
     assert native_ns["n5_await_with_timeout_times_out"]() is True
+
+
+@pytest.mark.native
+def test_native_async_timer_wakes_without_busy_waiting(native_ns):
+    import asyncio
+    import time
+
+    native_ns["n5_async_poll_reset"]()
+
+    async def _await():
+        started = time.perf_counter()
+        value = await native_ns["n5_async_sleep_ms"](100)
+        return value, time.perf_counter() - started
+
+    value, elapsed = asyncio.run(_await())
+    assert value == 42
+    # The timer really elapsed rather than completing synchronously.
+    assert 0.09 <= elapsed < 1.5
+    # A cooperative busy loop would poll the future thousands of times. The
+    # reactor should need only the initial poll plus the timer wakeup.
+    assert native_ns["n5_async_poll_count"]() <= 5
+
+
+@pytest.mark.native
+def test_native_async_timers_run_concurrently(native_ns):
+    import asyncio
+
+    async def _await():
+        return await asyncio.gather(
+            native_ns["n5_async_sleep_ms"](30),
+            native_ns["n5_async_sleep_ms"](80),
+        )
+
+    assert asyncio.run(_await()) == [42, 42]
+
+
+@pytest.mark.native
+def test_native_async_sequential_timers(native_ns):
+    import asyncio
+
+    async def _await():
+        return await native_ns["n5_async_sleep_double"](20, 30)
+
+    assert asyncio.run(_await()) == 84
 
 
 @pytest.mark.native

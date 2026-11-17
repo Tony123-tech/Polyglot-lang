@@ -149,19 +149,500 @@ use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-fn _noop_waker() -> Waker {
-    unsafe {
-        let raw = RawWaker::new(std::ptr::null(), &VTABLE);
-        Waker::from_raw(raw)
+use std::collections::{BinaryHeap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, Condvar, OnceLock};
+use std::time::{Duration, Instant};
+
+// Number of times a native future has been polled. Tests reset this to prove
+// that a pending future makes progress through the reactor instead of being
+// busy-polled from Python.
+static POLYGLOT_ASYNC_POLLS: AtomicU64 = AtomicU64::new(0);
+
+fn polyglot_async_poll_reset() {
+    POLYGLOT_ASYNC_POLLS.store(0, AtomicOrdering::SeqCst);
+}
+
+fn polyglot_async_poll_count() -> i64 {
+    POLYGLOT_ASYNC_POLLS.load(AtomicOrdering::SeqCst) as i64
+}
+
+type PolyglotBoxFuture =
+    Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>;
+
+struct PolyglotTask {
+    id: u64,
+    future: Mutex<PolyglotBoxFuture>,
+    result: Mutex<Option<PyResult<PyObject>>>,
+    waiter: Mutex<Option<Py<PyAny>>>,
+    poll_lock: Mutex<()>,
+    done: AtomicBool,
+    scheduled: AtomicBool,
+    active: AtomicBool,
+    woken: AtomicBool,
+    cancelled: AtomicBool,
+}
+
+impl PolyglotTask {
+    fn take_result(&self) -> Option<PyResult<PyObject>> {
+        self.result.lock().unwrap().take()
+    }
+
+    fn waker(self: &Arc<Self>) -> Waker {
+        unsafe {
+            let raw = RawWaker::new(
+                Arc::into_raw(self.clone()) as *const (),
+                &POLYGLOT_TASK_WAKER_VTABLE,
+            );
+            Waker::from_raw(raw)
+        }
+    }
+
+    fn notify_python(&self) {
+        let waiter = self.waiter.lock().unwrap().take();
+        if let Some(waiter) = waiter {
+            Python::with_gil(|py| {
+                let future = waiter.bind(py);
+                let loop_obj = future.call_method0("get_loop").ok();
+                let set_result = future.getattr("set_result").ok();
+                if let (Some(loop_obj), Some(set_result)) = (loop_obj, set_result) {
+                    // Python futures must be resolved on their own event-loop
+                    // thread, so schedule the callback thread-safely.
+                    let _ = loop_obj.call_method1(
+                        "call_soon_threadsafe",
+                        (set_result, py.None()),
+                    );
+                }
+            });
+        }
     }
 }
 
-static VTABLE: RawWakerVTable = RawWakerVTable::new(
-    |_| RawWaker::new(std::ptr::null(), &VTABLE),
-    |_| {},
-    |_| {},
-    |_| {},
+fn polyglot_wake_task(task: &Arc<PolyglotTask>) {
+    // Before the task is handed to the reactor the wake is recorded locally.
+    // This closes the race between the first synchronous poll and activation.
+    if task.active.load(AtomicOrdering::SeqCst) {
+        polyglot_reactor().enqueue(task);
+    } else {
+        task.woken.store(true, AtomicOrdering::SeqCst);
+    }
+}
+
+unsafe fn polyglot_task_waker_clone(data: *const ()) -> RawWaker {
+    Arc::increment_strong_count(data as *const PolyglotTask);
+    RawWaker::new(data, &POLYGLOT_TASK_WAKER_VTABLE)
+}
+
+unsafe fn polyglot_task_waker_wake(data: *const ()) {
+    let task = Arc::from_raw(data as *const PolyglotTask);
+    polyglot_wake_task(&task);
+}
+
+unsafe fn polyglot_task_waker_wake_by_ref(data: *const ()) {
+    Arc::increment_strong_count(data as *const PolyglotTask);
+    let task = Arc::from_raw(data as *const PolyglotTask);
+    polyglot_wake_task(&task);
+}
+
+unsafe fn polyglot_task_waker_drop(data: *const ()) {
+    drop(Arc::from_raw(data as *const PolyglotTask));
+}
+
+static POLYGLOT_TASK_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+    polyglot_task_waker_clone,
+    polyglot_task_waker_wake,
+    polyglot_task_waker_wake_by_ref,
+    polyglot_task_waker_drop,
 );
+
+struct PolyglotTimer {
+    deadline: Instant,
+    waker: Waker,
+}
+
+impl PartialEq for PolyglotTimer {
+    fn eq(&self, other: &Self) -> bool {
+        self.deadline == other.deadline
+    }
+}
+
+impl Eq for PolyglotTimer {}
+
+impl PartialOrd for PolyglotTimer {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PolyglotTimer {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Reverse ordering so BinaryHeap becomes a min-heap by deadline.
+        other.deadline.cmp(&self.deadline)
+    }
+}
+
+#[cfg(unix)]
+struct PolyglotIoSlot {
+    token: mio::Token,
+    fd: std::os::fd::RawFd,
+    ready: AtomicBool,
+    waker: Mutex<Option<Waker>>,
+}
+
+struct PolyglotReactorState {
+    next_id: u64,
+    tasks: HashMap<u64, Arc<PolyglotTask>>,
+    queue: VecDeque<u64>,
+    timers: BinaryHeap<PolyglotTimer>,
+    #[cfg(unix)]
+    next_io_token: usize,
+    #[cfg(unix)]
+    io: HashMap<mio::Token, Arc<PolyglotIoSlot>>,
+}
+
+struct PolyglotReactor {
+    poll: Mutex<mio::Poll>,
+    registry: mio::Registry,
+    wake_handle: mio::Waker,
+    state: Mutex<PolyglotReactorState>,
+}
+
+static POLYGLOT_REACTOR: OnceLock<Arc<PolyglotReactor>> = OnceLock::new();
+
+fn polyglot_reactor() -> Arc<PolyglotReactor> {
+    POLYGLOT_REACTOR
+        .get_or_init(PolyglotReactor::start)
+        .clone()
+}
+
+impl PolyglotReactor {
+    fn start() -> Arc<Self> {
+        let poll = mio::Poll::new().expect("failed to create async reactor");
+        let registry = poll
+            .registry()
+            .try_clone()
+            .expect("failed to clone async reactor registry");
+        let wake_handle = mio::Waker::new(&registry, mio::Token(0))
+            .expect("failed to create async reactor waker");
+        let reactor = Arc::new(Self {
+            poll: Mutex::new(poll),
+            registry,
+            wake_handle,
+            state: Mutex::new(PolyglotReactorState {
+                next_id: 0,
+                tasks: HashMap::new(),
+                queue: VecDeque::new(),
+                timers: BinaryHeap::new(),
+                #[cfg(unix)]
+                next_io_token: 1,
+                #[cfg(unix)]
+                io: HashMap::new(),
+            }),
+        });
+        let runner = reactor.clone();
+        std::thread::Builder::new()
+            .name("polyglot-async".to_string())
+            .spawn(move || runner.run())
+            .expect("failed to spawn async reactor");
+        reactor
+    }
+
+    fn add_task(&self, future: PolyglotBoxFuture) -> Arc<PolyglotTask> {
+        let mut state = self.state.lock().unwrap();
+        let id = state.next_id;
+        state.next_id += 1;
+        let task = Arc::new(PolyglotTask {
+            id,
+            future: Mutex::new(future),
+            result: Mutex::new(None),
+            waiter: Mutex::new(None),
+            poll_lock: Mutex::new(()),
+            done: AtomicBool::new(false),
+            scheduled: AtomicBool::new(false),
+            active: AtomicBool::new(false),
+            woken: AtomicBool::new(false),
+            cancelled: AtomicBool::new(false),
+        });
+        state.tasks.insert(id, task.clone());
+        task
+    }
+
+    fn remove_task(&self, id: u64) {
+        self.state.lock().unwrap().tasks.remove(&id);
+    }
+
+    fn enqueue(&self, task: &Arc<PolyglotTask>) {
+        if !task.scheduled.swap(true, AtomicOrdering::SeqCst) {
+            self.state.lock().unwrap().queue.push_back(task.id);
+            let _ = self.wake_handle.wake();
+        }
+    }
+
+    fn add_timer(&self, deadline: Instant, waker: Waker) {
+        self.state
+            .lock()
+            .unwrap()
+            .timers
+            .push(PolyglotTimer { deadline, waker });
+        let _ = self.wake_handle.wake();
+    }
+
+    fn fire_timers(&self) {
+        loop {
+            let now = Instant::now();
+            let waker = {
+                let mut state = self.state.lock().unwrap();
+                match state.timers.peek() {
+                    Some(timer) if timer.deadline <= now => {
+                        state.timers.pop().map(|timer| timer.waker)
+                    }
+                    _ => None,
+                }
+            };
+            match waker {
+                Some(waker) => waker.wake(),
+                None => break,
+            }
+        }
+    }
+
+    fn poll_task(&self, task: &Arc<PolyglotTask>) {
+        if task.cancelled.load(AtomicOrdering::SeqCst) {
+            self.remove_task(task.id);
+            return;
+        }
+        let waker = task.waker();
+        let mut cx = Context::from_waker(&waker);
+        let polled = {
+            let _guard = task.poll_lock.lock().unwrap();
+            let mut future = task.future.lock().unwrap();
+            POLYGLOT_ASYNC_POLLS.fetch_add(1, AtomicOrdering::SeqCst);
+            future.as_mut().poll(&mut cx)
+        };
+        if let Poll::Ready(result) = polled {
+            task.done.store(true, AtomicOrdering::SeqCst);
+            *task.result.lock().unwrap() = Some(result);
+            self.remove_task(task.id);
+            task.notify_python();
+        }
+    }
+
+    #[cfg(unix)]
+    fn register_io(
+        &self,
+        fd: std::os::fd::RawFd,
+        waker: Waker,
+    ) -> Option<Arc<PolyglotIoSlot>> {
+        let (token, slot) = {
+            let mut state = self.state.lock().unwrap();
+            let token = mio::Token(state.next_io_token);
+            state.next_io_token += 1;
+            let slot = Arc::new(PolyglotIoSlot {
+                token,
+                fd,
+                ready: AtomicBool::new(false),
+                waker: Mutex::new(Some(waker)),
+            });
+            state.io.insert(token, slot.clone());
+            (token, slot)
+        };
+        let mut source = mio::unix::SourceFd(&fd);
+        match self
+            .registry
+            .register(&mut source, token, mio::Interest::READABLE)
+        {
+            Ok(()) => Some(slot),
+            Err(_) => {
+                self.state.lock().unwrap().io.remove(&token);
+                None
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn deregister_io(&self, token: mio::Token) {
+        let slot = self.state.lock().unwrap().io.remove(&token);
+        if let Some(slot) = slot {
+            let mut source = mio::unix::SourceFd(&slot.fd);
+            let _ = self.registry.deregister(&mut source);
+        }
+    }
+
+    fn run(self: Arc<Self>) {
+        let mut events = mio::Events::with_capacity(64);
+        loop {
+            let ready: Vec<u64> = {
+                let mut state = self.state.lock().unwrap();
+                state.queue.drain(..).collect()
+            };
+            for id in ready {
+                let task = {
+                    let state = self.state.lock().unwrap();
+                    state.tasks.get(&id).cloned()
+                };
+                if let Some(task) = task {
+                    task.scheduled.store(false, AtomicOrdering::SeqCst);
+                    self.poll_task(&task);
+                }
+            }
+
+            self.fire_timers();
+
+            let timeout = {
+                let state = self.state.lock().unwrap();
+                if !state.queue.is_empty() {
+                    Some(Duration::ZERO)
+                } else {
+                    state.timers.peek().map(|timer| {
+                        timer
+                            .deadline
+                            .saturating_duration_since(Instant::now())
+                    })
+                }
+            };
+
+            if timeout == Some(Duration::ZERO) {
+                continue;
+            }
+
+            let mut poll = self.poll.lock().unwrap();
+            let _ = poll.poll(&mut events, timeout);
+
+            #[cfg(unix)]
+            for event in events.iter() {
+                if event.token() == mio::Token(0) {
+                    continue;
+                }
+                let slot = {
+                    let state = self.state.lock().unwrap();
+                    state.io.get(&event.token()).cloned()
+                };
+                if let Some(slot) = slot {
+                    slot.ready.store(true, AtomicOrdering::SeqCst);
+                    let waker = slot.waker.lock().unwrap().take();
+                    if let Some(waker) = waker {
+                        waker.wake();
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct PolyglotSleep {
+    delay: Duration,
+    deadline: Option<Instant>,
+}
+
+impl Future for PolyglotSleep {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.get_mut();
+        let now = Instant::now();
+        if let Some(deadline) = this.deadline {
+            if now >= deadline {
+                return Poll::Ready(());
+            }
+        } else {
+            let deadline = now + this.delay;
+            this.deadline = Some(deadline);
+            polyglot_reactor().add_timer(deadline, cx.waker().clone());
+        }
+        Poll::Pending
+    }
+}
+
+fn polyglot_sleep_ms(ms: i64) -> impl Future<Output = ()> + Send {
+    let millis = ms.max(0) as u64;
+    PolyglotSleep {
+        delay: Duration::from_millis(millis),
+        deadline: None,
+    }
+}
+
+#[cfg(unix)]
+struct PolyglotReadable {
+    fd: std::os::fd::RawFd,
+    slot: Option<Arc<PolyglotIoSlot>>,
+}
+
+#[cfg(unix)]
+impl Future for PolyglotReadable {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.get_mut();
+        if let Some(slot) = &this.slot {
+            if slot.ready.swap(false, AtomicOrdering::SeqCst) {
+                polyglot_reactor().deregister_io(slot.token);
+                this.slot = None;
+                return Poll::Ready(());
+            }
+            *slot.waker.lock().unwrap() = Some(cx.waker().clone());
+            return Poll::Pending;
+        }
+        match polyglot_reactor().register_io(this.fd, cx.waker().clone()) {
+            Some(slot) => {
+                this.slot = Some(slot);
+                Poll::Pending
+            }
+            None => Poll::Ready(()),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn polyglot_readable(fd: i64) -> impl Future<Output = ()> + Send {
+    PolyglotReadable {
+        fd: fd as std::os::fd::RawFd,
+        slot: None,
+    }
+}
+
+struct PolyglotSyncWake {
+    flag: Mutex<bool>,
+    condvar: Condvar,
+}
+
+unsafe fn polyglot_sync_waker_clone(data: *const ()) -> RawWaker {
+    Arc::increment_strong_count(data as *const PolyglotSyncWake);
+    RawWaker::new(data, &POLYGLOT_SYNC_WAKER_VTABLE)
+}
+
+unsafe fn polyglot_sync_waker_wake(data: *const ()) {
+    let wake = Arc::from_raw(data as *const PolyglotSyncWake);
+    *wake.flag.lock().unwrap() = true;
+    wake.condvar.notify_all();
+}
+
+unsafe fn polyglot_sync_waker_wake_by_ref(data: *const ()) {
+    Arc::increment_strong_count(data as *const PolyglotSyncWake);
+    let wake = Arc::from_raw(data as *const PolyglotSyncWake);
+    *wake.flag.lock().unwrap() = true;
+    wake.condvar.notify_all();
+}
+
+unsafe fn polyglot_sync_waker_drop(data: *const ()) {
+    drop(Arc::from_raw(data as *const PolyglotSyncWake));
+}
+
+static POLYGLOT_SYNC_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+    polyglot_sync_waker_clone,
+    polyglot_sync_waker_wake,
+    polyglot_sync_waker_wake_by_ref,
+    polyglot_sync_waker_drop,
+);
+
+fn polyglot_sync_waker(wake: Arc<PolyglotSyncWake>) -> Waker {
+    unsafe {
+        let raw = RawWaker::new(
+            Arc::into_raw(wake) as *const (),
+            &POLYGLOT_SYNC_WAKER_VTABLE,
+        );
+        Waker::from_raw(raw)
+    }
+}
 
 // M3: HashSet has no `get_mut` in std. At the Python boundary the value is
 // an owned copy anyway, so return the present element unchanged.
@@ -178,17 +659,23 @@ fn polyglot_hashset_get_mut<T: Clone + Eq + std::hash::Hash>(
 
 #[pyclass]
 pub struct PyFuture {
-    future: Mutex<Option<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>>>,
+    future: Mutex<Option<PolyglotBoxFuture>>,
 }
 
 #[pymethods]
 impl PyFuture {
     fn __await__(mut slf: PyRefMut<'_, Self>) -> PyResult<Py<PyFutureIterator>> {
         let py = slf.py();
-        let iter = PyFutureIterator {
-            future: Mutex::new(slf.future.lock().unwrap().take()),
-        };
-        Py::new(py, iter)
+        let future = slf.future.lock().unwrap().take();
+        Py::new(
+            py,
+            PyFutureIterator {
+                inner: Mutex::new(PolyglotIteratorInner {
+                    future,
+                    task: None,
+                }),
+            },
+        )
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -196,12 +683,77 @@ impl PyFuture {
     }
 }
 
+struct PolyglotIteratorInner {
+    future: Option<PolyglotBoxFuture>,
+    task: Option<Arc<PolyglotTask>>,
+}
+
 /// Cancellation is drop-based: dropping a `PyFuture` before it is awaited, or
-/// dropping the iterator before it is exhausted, drops the boxed future so it
-/// is never polled again.
+/// dropping the iterator before it is exhausted, drops (or unregisters) the
+/// boxed future so it is never polled again.
 #[pyclass]
 pub struct PyFutureIterator {
-    future: Mutex<Option<Pin<Box<dyn Future<Output = PyResult<PyObject>> + Send + 'static>>>>,
+    inner: Mutex<PolyglotIteratorInner>,
+}
+
+impl Drop for PyFutureIterator {
+    fn drop(&mut self) {
+        if let Ok(inner) = self.inner.get_mut() {
+            if let Some(task) = inner.task.take() {
+                task.cancelled.store(true, AtomicOrdering::SeqCst);
+                polyglot_reactor().remove_task(task.id);
+            }
+        }
+    }
+}
+
+fn polyglot_future_result(result: PyResult<PyObject>) -> PyResult<PyObject> {
+    match result {
+        Ok(value) => Err(pyo3::exceptions::PyStopIteration::new_err(value)),
+        Err(err) => Err(err),
+    }
+}
+
+fn polyglot_pending_waiter(
+    py: Python<'_>,
+    task: &Arc<PolyglotTask>,
+) -> PyResult<PyObject> {
+    if let Some(result) = task.take_result() {
+        return polyglot_future_result(result);
+    }
+
+    let mut waiter_guard = task.waiter.lock().unwrap();
+    if waiter_guard.is_some() {
+        // Python is asking for another iteration while the waiter future is
+        // still pending; yielding to the loop is the only sane response.
+        return Ok(py.None());
+    }
+
+    let waiter = py
+        .import("asyncio")
+        .and_then(|module| module.call_method0("get_running_loop"))
+        .and_then(|loop_obj| loop_obj.call_method0("create_future"));
+    let waiter = match waiter {
+        Ok(waiter) => {
+            // Mark the future as yielded via `yield from`, matching what
+            // `Future.__await__` does. Without this flag asyncio treats the
+            // value as a plain `yield` and refuses to wait on the task.
+            let _ = waiter.setattr("_asyncio_future_blocking", true);
+            waiter.unbind()
+        }
+        // Without an asyncio loop, fall back to cooperative yielding. The
+        // caller can keep calling __next__ until the future is ready.
+        Err(_) => return Ok(py.None()),
+    };
+    *waiter_guard = Some(waiter.clone_ref(py));
+    drop(waiter_guard);
+
+    // The reactor may have completed the task while the waiter was being
+    // installed. Check once more so that wakeups are never lost.
+    if let Some(result) = task.take_result() {
+        return polyglot_future_result(result);
+    }
+    Ok(waiter)
 }
 
 #[pymethods]
@@ -211,22 +763,47 @@ impl PyFutureIterator {
     }
 
     fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<PyObject> {
-        // Taking the future out means a `Ready` result drops it immediately,
-        // while a `Pending` result writes it back. Dropping the iterator
-        // between polls therefore cancels the future without another poll.
-        let Some(mut fut) = slf.future.lock().unwrap().take() else {
+        let py = slf.py();
+        let mut inner = slf.inner.lock().unwrap();
+
+        if let Some(task) = inner.task.as_ref() {
+            if let Some(result) = task.take_result() {
+                return polyglot_future_result(result);
+            }
+            return polyglot_pending_waiter(py, task);
+        }
+
+        let Some(future) = inner.future.take() else {
             return Err(pyo3::exceptions::PyStopIteration::new_err(()));
         };
-        let waker = _noop_waker();
+
+        let task = polyglot_reactor().add_task(future);
+        let waker = task.waker();
         let mut cx = Context::from_waker(&waker);
-        match fut.as_mut().poll(&mut cx) {
-            Poll::Ready(Ok(value)) => {
-                Err(pyo3::exceptions::PyStopIteration::new_err(value))
+        let polled = {
+            let _guard = task.poll_lock.lock().unwrap();
+            let mut future = task.future.lock().unwrap();
+            POLYGLOT_ASYNC_POLLS.fetch_add(1, AtomicOrdering::SeqCst);
+            future.as_mut().poll(&mut cx)
+        };
+
+        match polled {
+            Poll::Ready(result) => {
+                task.done.store(true, AtomicOrdering::SeqCst);
+                *task.result.lock().unwrap() = Some(result);
+                polyglot_reactor().remove_task(task.id);
+                let result = task
+                    .take_result()
+                    .expect("future result disappeared after completion");
+                polyglot_future_result(result)
             }
-            Poll::Ready(Err(e)) => Err(e),
             Poll::Pending => {
-                *slf.future.lock().unwrap() = Some(fut);
-                Ok(pyo3::Python::with_gil(|py| py.None()))
+                inner.task = Some(task.clone());
+                task.active.store(true, AtomicOrdering::SeqCst);
+                if task.woken.swap(false, AtomicOrdering::SeqCst) {
+                    polyglot_reactor().enqueue(&task);
+                }
+                polyglot_pending_waiter(py, &task)
             }
         }
     }
@@ -251,10 +828,10 @@ fn polyglot_pending_future() -> PyFuture {
 
 /// Poll `future` until it is ready or `seconds` elapse.
 ///
-/// This is intentionally a polling helper: the runtime has no real waker or
-/// event-loop integration, so each iteration polls and then sleeps briefly
-/// with the GIL released. Dropping the future on timeout or error provides
-/// drop-based cancellation. On timeout it returns `PyTimeoutError`.
+/// Readiness is delivered by the reactor waker to a condition variable, so the
+/// helper sleeps until the future makes progress (or the deadline expires)
+/// instead of repeatedly polling. The GIL is released while waiting. Dropping
+/// the future on timeout or error provides drop-based cancellation.
 fn await_with_timeout(
     py: Python<'_>,
     future: PyFuture,
@@ -273,23 +850,43 @@ fn await_with_timeout(
     } else {
         0.0
     };
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_secs_f64(seconds);
-    let waker = _noop_waker();
+    let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+    let wake = Arc::new(PolyglotSyncWake {
+        flag: Mutex::new(false),
+        condvar: Condvar::new(),
+    });
+    let waker = polyglot_sync_waker(wake.clone());
     let mut cx = Context::from_waker(&waker);
     loop {
+        *wake.flag.lock().unwrap() = false;
+        POLYGLOT_ASYNC_POLLS.fetch_add(1, AtomicOrdering::SeqCst);
         match fut.as_mut().poll(&mut cx) {
             Poll::Ready(Ok(value)) => return Ok(value),
             Poll::Ready(Err(e)) => return Err(e),
             Poll::Pending => {
-                if std::time::Instant::now() >= deadline {
+                let now = Instant::now();
+                if now >= deadline {
                     return Err(PyTimeoutError::new_err(format!(
                         "future did not complete within {seconds} seconds"
                     )));
                 }
-                py.allow_threads(|| {
-                    std::thread::sleep(std::time::Duration::from_millis(1))
+                let remaining = deadline - now;
+                let timed_out = py.allow_threads(|| {
+                    let flag = wake.flag.lock().unwrap();
+                    if *flag {
+                        return false;
+                    }
+                    let (_flag, result) = wake
+                        .condvar
+                        .wait_timeout(flag, remaining)
+                        .expect("async waiter mutex poisoned");
+                    result.timed_out()
                 });
+                if timed_out {
+                    return Err(PyTimeoutError::new_err(format!(
+                        "future did not complete within {seconds} seconds"
+                    )));
+                }
             }
         }
     }
@@ -314,6 +911,7 @@ class RustCodegen:
         self.vec_bindings: set[str] = set()
         self.binding_types: dict[str, str] = {}
         self._function_signatures: dict[str, list[str | None]] = {}
+        self._function_return_types: dict[str, str | None] = {}
         self._method_return_types: dict[tuple[str, str], str | None] = {}
         self.struct_field_types: dict[str, dict[str, str]] = {}
         self._current_impl_type: str | None = None
@@ -413,6 +1011,7 @@ class RustCodegen:
         self.vec_bindings = set()
         self.binding_types = {}
         self._function_signatures = {}
+        self._function_return_types = {}
         self._method_return_types = {}
         self.struct_field_types = {}
         self._current_impl_type = None
@@ -447,6 +1046,9 @@ class RustCodegen:
                 self._function_signatures[item.name] = [
                     self._binding_type_name(param.ty) for param in item.params
                 ]
+                self._function_return_types[item.name] = self._binding_type_name(
+                    item.ret
+                )
             elif isinstance(item, ImplBlock):
                 target = self._binding_type_name(item.ty)
                 if target is not None:
@@ -675,6 +1277,10 @@ class RustCodegen:
             self.exported_fns.append(fn.name)
         elif is_ctor:
             self.emit("#[new]")
+        elif not any(self._is_self_param(p) for p in fn.params):
+            # Associated function without a receiver, e.g. `Vec::new()`-style
+            # constructors on user structs: expose it as a static method.
+            self.emit("#[staticmethod]")
 
         params = [self.param_to_rust(p, as_method=as_method) for p in fn.params]
         param_str = ", ".join(params)
@@ -682,8 +1288,7 @@ class RustCodegen:
         ret = ""
         if fn.ret is not None:
             if (
-                not as_method
-                and isinstance(fn.ret, TypeName)
+                isinstance(fn.ret, TypeName)
                 and fn.ret.name == "Result"
                 and len(fn.ret.args) == 2
             ):
@@ -1015,6 +1620,26 @@ class RustCodegen:
             return self.struct_field_types.get(receiver_type or "", {}).get(
                 expr.name,
             )
+        if isinstance(expr, Call):
+            if isinstance(expr.func, Ident):
+                return self._function_return_types.get(expr.func.name)
+            if isinstance(expr.func, Path) and len(expr.func.segments) == 1:
+                return self._function_return_types.get(expr.func.segments[0])
+        if isinstance(expr, Call) and isinstance(expr.func, Path):
+            segments = expr.func.segments
+            if len(segments) >= 2:
+                target = segments[-2]
+                if target == "Self" and self._current_impl_type is not None:
+                    target = self._current_impl_type
+                return self._method_return_types.get((target, segments[-1]))
+        if isinstance(expr, MatchExpr):
+            known: list[str] = []
+            for arm in expr.arms:
+                arm_type = self._expr_type(arm.body)
+                if arm_type is not None and arm_type not in known:
+                    known.append(arm_type)
+            if len(known) == 1:
+                return known[0]
         return None
 
     def _check_call_arguments(self, call: Call) -> None:
@@ -1346,6 +1971,9 @@ class RustCodegen:
             return f"{self.expr_to_rust(e.func)}({args})"
         if isinstance(e, MethodCall):
             recv = self.expr_to_rust(e.receiver)
+            if self._is_user_method_call(e):
+                args = ", ".join(self.expr_to_rust(a) for a in e.args)
+                return f"{recv}.{e.method}({args})"
             kind = self._map_kind(e.receiver)
             if kind in {"HashMap", "BTreeMap"}:
                 if e.method == "insert" and len(e.args) == 2:
@@ -1739,9 +2367,7 @@ class RustCodegen:
             ):
                 option_kind = self._option_result_type(e.receiver)
                 if option_kind is not None:
-                    raise NotImplementedError(
-                        f"{option_kind}.map is unsupported; use match or if let instead"
-                    )
+                    return f"{recv}.map({self.expr_to_rust(e.args[0])})"
                 return (
                     f"{recv}.into_iter().map("
                     f"{self.expr_to_rust(e.args[0])})"
@@ -2122,8 +2748,24 @@ class RustCodegen:
             return "Option"
         if isinstance(expr, (ResultOk, ResultErr)):
             return "Result"
+        if isinstance(expr, Call) and isinstance(expr.func, Ident):
+            return self._function_return_types.get(expr.func.name)
+        if (
+            isinstance(expr, Call)
+            and isinstance(expr.func, Path)
+            and len(expr.func.segments) == 1
+        ):
+            return self._function_return_types.get(expr.func.segments[0])
         if isinstance(expr, MethodCall) and expr.method in {"pop", "next"}:
             return "Option"
+        if isinstance(expr, MethodCall) and expr.method in {
+            "map",
+            "map_err",
+            "and_then",
+            "or_else",
+            "filter",
+        }:
+            return self._option_result_type(expr.receiver)
         if isinstance(expr, Path) and expr.segments[:1] in (
             ["HashMap"],
             ["BTreeMap"],
@@ -2160,6 +2802,16 @@ class RustCodegen:
                 return None
             return self.struct_field_types.get(owner, {}).get(expr.name)
         return None
+
+    def _is_user_method_call(self, e: MethodCall) -> bool:
+        """True when ``e`` calls a method declared in an ``impl`` block."""
+        receiver_type = self._expr_struct_type(e.receiver) or self._expr_type(
+            e.receiver
+        )
+        return (
+            receiver_type is not None
+            and (receiver_type, e.method) in self._method_return_types
+        )
 
     def _is_hashmap_expr(self, expr: Expr) -> bool:
         return self._map_kind(expr) == "HashMap"
@@ -2281,6 +2933,15 @@ class RustCodegen:
         if isinstance(ty, TypeUnit):
             return "()"
         return "()"
+
+    def _is_self_param(self, p: FnParam) -> bool:
+        pattern = p.pattern
+        if isinstance(pattern, PatIdent):
+            return pattern.name == "self"
+        if isinstance(pattern, PatRef):
+            inner = pattern.inner
+            return isinstance(inner, PatIdent) and inner.name == "self"
+        return False
 
     def param_to_rust(self, p: FnParam, *, as_method: bool = False) -> str:
         pat = self.pattern_to_rust(p.pattern)

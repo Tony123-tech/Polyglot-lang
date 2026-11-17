@@ -69,7 +69,7 @@ class InProcessQueue:
                 result = await self._executor.run(job.source, job.backend, job.trusted)
                 if not job.future.done():
                     job.future.set_result(result)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 if not job.future.done():
                     job.future.set_exception(e)
             finally:

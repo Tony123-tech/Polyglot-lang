@@ -600,6 +600,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = {{ version = "0.26", features = ["extension-module"] }}
 futures = "0.3"
+mio = {{ version = "1", features = ["os-poll", "os-ext"] }}
 """
 
     # ---- load steps --------------------------------------------------------

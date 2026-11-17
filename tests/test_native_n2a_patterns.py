@@ -473,7 +473,7 @@ fn pattern_guard_binding(x: i64) -> i64 {
     "pattern_guard_or_expr": """
 fn pattern_guard_or_expr(x: i64) -> i64 {
     match x {
-        1 | 2 if x > 0 | x < 0 => 1,
+        1 | 2 if (x > 0) | (x < 0) => 1,
         _ => 0,
     }
 }
