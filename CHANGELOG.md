@@ -4,6 +4,17 @@ Version history derived from SPECIFICATION.md Section 11.
 
 ## Unreleased — Apple Silicon JIT backend and edge-case audit
 
+- Added a shared monomorphization pass (`monomorph.py`) that resolves generic
+  functions, structs, enums, and impl blocks into concrete mangled
+  declarations such as `Box_i64`, `Box_String`, and `identity_i64`, with
+  deduplication and a depth-32 recursion limit that rejects infinite generic
+  expansion as `E003`.
+- Added trait-bound parsing (`<T: Display + Clone>`), preserved generic
+  arguments on paths and struct literals, and taught the Python, native Rust,
+  and JIT backends to consume fully concrete generic output.
+- Added `tests/test_generics.py` covering bounds, nested arguments, turbofish
+  syntax, deduplication, recursion rejection, Python/native parity for
+  `Box<T>` and `identity<T>`, and the JIT's aggregate-generic limitation.
 - Added a zero-dependency AArch64 JIT backend (`backends/jit/`) that lowers
   typed SSA to machine words directly, manages `MAP_JIT` executable memory,
   performs linear-scan register allocation with spilling, resolves cyclic phi

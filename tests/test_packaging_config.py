@@ -32,3 +32,8 @@ def test_console_script_points_at_cli_entry_point():
 def test_include_expander_is_shipped_as_top_level_module():
     modules = _pyproject()["tool"]["setuptools"]["py-modules"]
     assert "include_expander" in modules
+
+
+def test_monomorphizer_is_shipped_as_top_level_module():
+    modules = _pyproject()["tool"]["setuptools"]["py-modules"]
+    assert "monomorph" in modules

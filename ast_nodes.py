@@ -425,9 +425,10 @@ class Ident(Node):
 
 @dataclass
 class Path(Node):
-    """A::B::C"""
+    """A::B::C, optionally with turbofish type arguments."""
 
     segments: list[str]
+    generic_args: list[Type] = field(default_factory=list)
 
 
 @dataclass
@@ -506,6 +507,7 @@ class StructLiteral(Node):
     path: str
     fields: list[tuple[str, Expr]]
     rest: Expr | None = None
+    generic_args: list[Type] = field(default_factory=list)
 
 
 @dataclass

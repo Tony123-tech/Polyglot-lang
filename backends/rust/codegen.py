@@ -111,6 +111,7 @@ from backends.errors import (
     UnsupportedNativePatternError,
 )
 from match_diagnostics import warn_match_issues
+from monomorph import monomorphize
 from struct_order import order_struct_declarations
 
 
@@ -996,6 +997,7 @@ class RustCodegen:
         return type(item).__name__
 
     def generate(self, program: Program) -> str:
+        program = monomorphize(program)
         self.lines = []
         self.fragments = {}
         self.fragment_hashes = {}

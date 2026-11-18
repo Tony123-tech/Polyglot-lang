@@ -34,6 +34,7 @@ from backends.jit.ir import (
     normalize_int,
 )
 from backends.jit.memory import ExecutableMemory, is_supported_host
+from monomorph import monomorphize
 
 CONTEXT_BYTES = 64
 TRAP_DIVIDE_BY_ZERO = 1
@@ -159,7 +160,7 @@ class JITBackend(BackendBase):
             raise JITUnsupportedError(
                 "the JIT backend requires macOS on Apple Silicon (arm64)"
             )
-        lowered = lower_program(program)
+        lowered = lower_program(monomorphize(program))
         if not lowered.source_order:
             raise JITUnsupportedError(
                 "the JIT backend needs at least one scalar function"

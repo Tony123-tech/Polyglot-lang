@@ -39,6 +39,7 @@ py-modules = [
     "termination",
     "inline_lang",
     "match_diagnostics",
+    "monomorph",
     "struct_order",
     "main",
     "_native_sources",

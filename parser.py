@@ -1471,23 +1471,46 @@ class Parser:
         if tok.type == TokenType.IDENT:
             self.advance()
             segments = [tok.value]
+            generic_args: list[Type] = []
             end_tok = tok
-            while (
-                self.check(TokenType.COLONCOLON)
-                and self.peek(1).type == TokenType.IDENT
-            ):
-                self.advance()
-                end_tok = self.advance()
-                segments.append(end_tok.value)
+            while True:
+                if (
+                    self.check(TokenType.COLONCOLON)
+                    and self.peek(1).type == TokenType.IDENT
+                ):
+                    self.advance()
+                    end_tok = self.advance()
+                    segments.append(end_tok.value)
+                    continue
+                # Turbofish: `foo::<i64>` or `Box::<String>::new`.
+                if (
+                    self.check(TokenType.COLONCOLON)
+                    and self.peek(1).type == TokenType.LT
+                ):
+                    self.advance()
+                    self.expect(TokenType.LT)
+                    while not self.check(TokenType.GT):
+                        generic_args.append(self.parse_type())
+                        if not self.eat(TokenType.COMMA):
+                            break
+                    self.expect(TokenType.GT)
+                    continue
+                break
             if (
                 not self._parsing_for_iter
                 and self.check(TokenType.LBRACE)
                 and self._looks_like_struct_literal()
             ):
-                return self.parse_struct_literal(tok, segments)
+                return self.parse_struct_literal(tok, segments, generic_args)
             span = (tok.pos, end_tok.pos + len(end_tok.value))
-            if len(segments) > 1:
-                return Path(tok.line, tok.col, segments, span=span)
+            if len(segments) > 1 or generic_args:
+                return Path(
+                    tok.line,
+                    tok.col,
+                    segments,
+                    generic_args,
+                    span=span,
+                )
             return Ident(tok.line, tok.col, segments[0], span=span)
 
         if tok.type == TokenType.SELF:
@@ -1513,7 +1536,12 @@ class Parser:
             return after.type in (TokenType.COLON, TokenType.COMMA, TokenType.RBRACE)
         return False
 
-    def parse_struct_literal(self, tok: Token, segments: list[str]) -> StructLiteral:
+    def parse_struct_literal(
+        self,
+        tok: Token,
+        segments: list[str],
+        generic_args: list[Type] | None = None,
+    ) -> StructLiteral:
         self.expect(TokenType.LBRACE)
         fields: list[tuple[str, Expr]] = []
         rest: Expr | None = None
@@ -1531,7 +1559,14 @@ class Parser:
             if not self.eat(TokenType.COMMA):
                 break
         self.expect(TokenType.RBRACE)
-        return StructLiteral(tok.line, tok.col, "::".join(segments), fields, rest)
+        return StructLiteral(
+            tok.line,
+            tok.col,
+            "::".join(segments),
+            fields,
+            rest,
+            generic_args or [],
+        )
 
     def _make_number(self, tok: Token, suffix: str | None = None) -> Expr:
         raw = tok.value

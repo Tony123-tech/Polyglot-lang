@@ -175,6 +175,7 @@ from backends.python.runtime import (
     _Option as _RuntimeOption,
 )
 from match_diagnostics import missing_match_variants, warn_match_issues
+from monomorph import monomorphize
 from struct_order import order_struct_declarations
 
 _SAFE_BUILTINS = frozenset(
@@ -1613,6 +1614,7 @@ class Translator:
     # ---- entry -------------------------------------------------------------
 
     def translate_program(self, program: Program) -> ast.Module:
+        program = monomorphize(program)
         self.struct_names.clear()
         self.struct_fields.clear()
         self.struct_field_types.clear()
