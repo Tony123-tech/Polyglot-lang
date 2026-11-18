@@ -482,6 +482,8 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.33** The `vec![...]` macro expression is parsed as a token stream but not lowered by either backend; use `[...].to_vec()` instead. See 7.2.1.
 - **10.34** The native reactor, its timers, and Unix fd readiness are runtime-internal. The language does not expose async timer or I/O primitives; `polyglot_sleep_ms` and `polyglot_readable` are helpers used by the runtime and tests. See 8.2.2.
 - **10.35** The bundled `std:` modules are pure `.poly` and inherit the language subset in this specification. They do not add a package manager, arbitrary crate dependencies, or float math beyond the provided helpers. Only `std:` includes are deduplicated; ordinary includes still splice textually. See 9.2.
+- **10.36** The experimental pillar modules (`backends/hotpatch.py`, `compiler/`, `proofs/`, `debug/`, and `runtime/transmute.py`) are opt-in research foundations and are not part of the stable conformance surface. They patch only at quiescent points, never rewrite loaded executable text, never rewind live CPython/PyO3 frames, prove only within their documented interval/polynomial grammar, and deoptimise through a guard plus fallback rather than a nanosecond guarantee. They reuse the `E001`–`E008` diagnostics. See `docs/experimental_pillars.md`.
+- **10.37** The unified 10-pillar / 100-function surface is a capability registry (`runtime/capabilities.py`), not a claim that every requested mechanism is implementable. `runtime/capabilities.CAPABILITIES` classifies each function as `foundation`, `modelled`, or `rejected`; both backends expose the same 100 names through `capability_namespace()` and emit identical span-aware `E001`–`E008` diagnostics. Requests that require unstable interpreter internals, executable-text patching, privileged OS primitives, real accelerator dispatch, or cryptographic threshold signatures are uniformly rejected. The generated `native_pillars/` PyO3 scaffold is opt-in and is not part of `polyglot build`. See `docs/unified_pillars.md`.
 
 ## 11. Versioning
 
@@ -504,6 +506,8 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.16** v0.3.6 records the real native async event loop: a single-threaded `mio` reactor with task wakers, timers, Unix fd readiness, and an `asyncio` bridge. It updates 6.3, 6.4, 8.2, 10.2, and 10.8 for Send-aware cross-thread awaits and supported async `&self` methods, and adds 10.34 for the runtime-internal timer/I/O helpers. Async remains Experimental.
 - **11.17** v0.3.7 records type-aware `Option::map` and `Result::map` support in both backends, retires 10.6, and adds the `map` row to 7.2.4. `Vec::map` retains collection semantics under the same receiver-type dispatch rule.
 - **11.18** v0.3.8 records the bundled zero-dependency standard library: the `std:` include namespace, path containment and `E006` handling, `std:`-only deduplication, the eight shipped modules, and wheel packaging for `stdlib/*.poly`. It adds 9.2.1–9.2.3 and 10.35.
+- **11.19** v0.3.8 also records the opt-in experimental pillar foundations: quiescent-point hot-patching, sandboxed compiler-pass evolution, bounded certificate-checked synthesis, deterministic cross-FFI checkpoint replay, and guarded speculative specialization. They are explicitly outside the stable conformance surface; 10.36 records their safety boundaries.
+- **11.20** v0.3.8+ records the unified capability registry for the ten pillars (100 functions), the dual-backend host bridge and generated PyO3 binding scaffold, and the `#[gpu]`/`#[npu]` span-aware `E007` feature gate. Parity is defined as identical names and diagnostics on both backends, not as universal availability of privileged mechanisms. See 10.37 and `docs/unified_pillars.md`.
 
 ## 12. Conformance Status
 
@@ -515,10 +519,10 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 11361 passed, 11 skipped, 1129 deselected (1 xpassed).
-- `pytest -q -m slow`: 19 passed, 12483 deselected.
+- `pytest -q`: 1428 passed, 4 skipped, 22 deselected.
+- `pytest -q -m slow`: 22 passed, 1432 deselected.
 
-The suite reports 0 failed. The increases in passed/skipped counts reflect M6, M7, M4-remaining, M3-remaining, and M5 async tests.
+The suite reports 0 failed. The counts were re-measured after the experimental pillar suites, the generated edge-case audits, and the `assert!` lowering regression tests were added, replacing the earlier stale baseline.
 
 - **12.1.1** The numbers above are from the current repository state at the time of writing. They MUST be updated whenever the test suite changes. The summary counts in 12.2.0 are derived from the 12.2 table below and MUST be recomputed whenever a row changes.
 - **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. The baseline is now restored; Blocked criteria have been re-evaluated in 12.2 and any that remain are marked **Partial** with a note recording what is still unverified.

@@ -15,9 +15,39 @@
 - F1: Deliverable CLI
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 
-**Latest baseline:** 11361 passed, 11 skipped, 1129 deselected (1 xpassed); slow 19 passed, 12483 deselected.
+**Latest baseline:** 1428 passed, 4 skipped, 22 deselected; slow 22 passed, 1432 deselected.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
+
+## Experimental pillars — drawing the honesty line
+
+The five opt-in pillars (`backends/hotpatch.py`, `compiler/evolution.py`,
+`proofs/synthesis.py`, `debug/timetravel.py`, `runtime/transmute.py`) were
+built as architectural foundations, not as claims that the impossible
+guarantees are reachable. Three boundaries drove the design:
+
+- **Live-frame rewriting.** CPython does not expose a portable safepoint for
+  replacing a running frame, and a suspended PyO3 stack cannot be rewritten
+  through a stable ABI. Hot-patching therefore applies at quiescent points and
+  preserves object identity; time travel is deterministic checkpoint/replay,
+  not live rewind.
+- **Executable-text patching.** Loaded `.so`/`.dylib` text is not patched.
+  Native hot-swapping goes through an atomic `NativeSymbolTable` indirection,
+  which is ABI-safe and testable; text patching is rejected with `E007`.
+- **Natural language to proofs.** A controlled invariant grammar is parsed
+  into symbolic conditions and checked with an i64 interval domain plus a
+  polynomial normalizer. Candidates are enumerated from a finite grammar and
+  accepted only when the obligation is proved. Interval overlap alone never
+  counts as equality — that unsound rule was caught while testing `a + b`
+  against `2 * a`.
+- **Nanosecond deoptimisation.** The guard is a tuple comparison followed by
+  the Python fallback. `DEOPT_COST_MODEL` records the real model; compilation
+  stays off the critical path and in-flight calls keep their resolved
+  callable.
+
+The shared `runtime/diagnostics.py` maps pillar failures onto the public
+`E001`–`E008` codes instead of adding a second error namespace. The full API
+and boundary list live in `docs/experimental_pillars.md`.
 
 ## Doc sync — `if let` expression-position limit
 

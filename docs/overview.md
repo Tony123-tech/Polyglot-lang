@@ -22,7 +22,11 @@ Python 3.14.8 or later is required.
 | [NOTES](../NOTES.md) | Design journal: symptoms, causes, fixes, lessons, test baselines |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Development setup, tests, Makefile, adding error codes/examples |
 | [architecture.md](architecture.md) | ASCII pipeline diagram and layer responsibilities |
-| [CHANGELOG](../CHANGELOG.md) | Version history from v0.3.0 through v0.3.6 |
+| [visualizer.md](visualizer.md) | Interactive AST, monomorphization, diagnostics, and dual-backend UI |
+| [experimental_pillars.md](experimental_pillars.md) | Opt-in hot-patching, meta-compiler, synthesis, time-travel, and transmutation foundations |
+| [distributed.md](distributed.md) | Opt-in distributed actors, live migration, anchored connections, leases, and failure recovery |
+| [unified_pillars.md](unified_pillars.md) | 10-pillar / 100-function capability registry, dual-backend parity rules, and the PyO3 binding scaffold |
+| [CHANGELOG](../CHANGELOG.md) | Version history from v0.3.0 through the current unreleased work |
 
 ## The backends
 
