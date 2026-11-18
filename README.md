@@ -20,9 +20,11 @@ and choose how to run it:
 - **Native backend** — `polyglot build add.poly` (compiles to a PyO3 extension)
 - **WASM backend (experimental)** — `polyglot build add.poly --backend wasm` (writes WebAssembly text format)
 
-Same source, same tests, same error messages. No `Cargo.toml`, no
-`pyproject.toml` scaffolding.
-
+The backends share a front end and are parity-tested for the documented
+language subset. Unsupported features and some runtime behavior remain
+backend-specific; see the support matrix and known limitations below. No
+`Cargo.toml` or `pyproject.toml` scaffolding is needed for a single-file
+program.
 
 ## Quick Start
 
@@ -68,53 +70,53 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 
 ## Status
 
-| Milestone | Status | Scope |
-|---|---|---|
-| N0 | Done | Empty program → Cargo → load module |
-| N1 | Done | Free functions, `i64`/`f64`/`bool`/`String`, `Vec`, structs with `impl` exposed as PyO3 classes, and `if` |
-| N2a | Done | Native `while`, `loop`, and `match` |
-| N2b | Done | `Vec` methods: `push`, `pop`, `len`, and indexing |
-| N2c | Done | Multiple structs/enums as `pyclass` |
-| N2d | Done | Improved caching and Rust-error mapping to source lines |
-| N3 | Done | `Vec` iteration, `contains`, `sort`/`sort_by`, `map`/`filter`/`fold`, slicing, and mutation methods |
-| N4 | Done | String length/iteration, split/join, replace/trim, case conversion, `parse`, `format!`, `write!`, slicing, and comparison |
-| N5 | Done | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing |
-| N6 | Done | Additional `Vec` and `String` methods, including search, slicing, rotation, and sort helpers |
-| N7 | Done | Distinct `usize`/`isize` types, explicit casts, and target-width-aware boundary checks |
-| N8 | Done | Collections-layer `HashMap` operations and Python/native dictionary boundaries |
-| N9 | Done | Platform-defined Option/Result combinators and native Result continuations |
-| N10 | Done | SPEC v0.2.7 and final conformance status |
-| M10 | Done | Opt-in termination checking for `#[terminates]` functions |
-| F1 | Done | Installable package, CLI, examples, and delivery documentation |
-| M3 | Done | HashMap entry completion, `BTreeMap`, `HashSet`, and nested `HashMap` depth 1 |
-| M4 | Done | Additional fixed-width integer types and the cross-backend cast matrix |
-| M5 | Done | Send-aware `PyFuture`, async `&self` impl methods, drop-based cancellation, a `mio` reactor with timers, and an `asyncio` bridge |
+| Milestone | Status | Scope                                                                                                                            |
+| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| N0        | Done   | Empty program → Cargo → load module                                                                                              |
+| N1        | Done   | Free functions, `i64`/`f64`/`bool`/`String`, `Vec`, structs with `impl` exposed as PyO3 classes, and `if`                        |
+| N2a       | Done   | Native `while`, `loop`, and `match`                                                                                              |
+| N2b       | Done   | `Vec` methods: `push`, `pop`, `len`, and indexing                                                                                |
+| N2c       | Done   | Multiple structs/enums as `pyclass`                                                                                              |
+| N2d       | Done   | Improved caching and Rust-error mapping to source lines                                                                          |
+| N3        | Done   | `Vec` iteration, `contains`, `sort`/`sort_by`, `map`/`filter`/`fold`, slicing, and mutation methods                              |
+| N4        | Done   | String length/iteration, split/join, replace/trim, case conversion, `parse`, `format!`, `write!`, slicing, and comparison        |
+| N5        | Done   | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing                         |
+| N6        | Done   | Additional `Vec` and `String` methods, including search, slicing, rotation, and sort helpers                                     |
+| N7        | Done   | Distinct `usize`/`isize` types, explicit casts, and target-width-aware boundary checks                                           |
+| N8        | Done   | Collections-layer `HashMap` operations and Python/native dictionary boundaries                                                   |
+| N9        | Done   | Platform-defined Option/Result combinators and native Result continuations                                                       |
+| N10       | Done   | SPEC v0.2.7 and final conformance status                                                                                         |
+| M10       | Done   | Opt-in termination checking for `#[terminates]` functions                                                                        |
+| F1        | Done   | Installable package, CLI, examples, and delivery documentation                                                                   |
+| M3        | Done   | HashMap entry completion, `BTreeMap`, `HashSet`, and nested `HashMap` depth 1                                                    |
+| M4        | Done   | Additional fixed-width integer types and the cross-backend cast matrix                                                           |
+| M5        | Done   | Send-aware `PyFuture`, async `&self`/`&mut self` impl methods, drop-based cancellation, a `mio` reactor with timers, and an `asyncio` bridge |
 
-**Current test status:** 11361 passed, 11 skipped, 1129 deselected (`pytest -q`, 1 xpassed); 19 passed, 12483 deselected (`pytest -q -m slow`).
+**Current test status:** 1205 passed, 5 skipped, 22 deselected (`pytest -q`); 22 passed, 1210 deselected (`pytest -q -m slow`).
 
 ## Support matrix
 
-| Feature | Python backend | Native backend |
-|---|---|---|
-| Vec, String, Option, Result | ✅ | ✅ |
-| HashMap (core ops) | ✅ | ✅ |
-| HashMap mutable iterators (`iter_mut`, `values_mut`) | ✅ | ✅ |
-| BTreeMap | ✅ | ✅ |
-| HashSet | ✅ | ✅ |
-| Nested HashMap (depth 1) | ✅ | ✅ |
-| Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, isize, usize) | ✅ | ✅ |
-| `include!` directive | ✅ | ✅ |
-| Bundled `std:` standard library | ✅ | ✅ |
-| Error codes (E001–E008) | ✅ | ✅ |
-| `#[terminates]` checking | ✅ | ✅ |
-| async free functions | ✅ (synchronous) | ✅ |
-| async `&self` impl methods | ✅ | ✅ |
-| cross-thread await with Send captures | n/a | ✅ |
-| drop-based cancellation | n/a | ✅ |
-| reactor timer wakeups | n/a | ✅ |
-| `asyncio` awaiting of pending futures | n/a | ✅ |
-| Box patterns | ✅ | ⬜ Deferred |
-| Payload enum slices | ✅ | ⬜ Deferred |
+| Feature                                                                        | Python backend   | Native backend |
+| ------------------------------------------------------------------------------ | ---------------- | -------------- |
+| Vec, String, Option, Result                                                    | ✅               | ✅             |
+| HashMap (core ops)                                                             | ✅               | ✅             |
+| HashMap mutable iterators (`iter_mut`, `values_mut`)                           | ✅               | ✅             |
+| BTreeMap                                                                       | ✅               | ✅             |
+| HashSet                                                                        | ✅               | ✅             |
+| Nested HashMap (depth 1)                                                       | ✅               | ✅             |
+| Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, isize, usize) | ✅               | ✅             |
+| `include!` directive                                                           | ✅               | ✅             |
+| Bundled `std:` standard library                                                | ✅               | ✅             |
+| Error codes (E001–E008)                                                        | ✅               | ✅             |
+| `#[terminates]` checking                                                       | ✅               | ✅             |
+| async free functions                                                           | ✅ (synchronous) | ✅             |
+| async `&self` / `&mut self` impl methods                                       | ✅               | ✅             |
+| cross-thread await with Send captures                                          | n/a              | ✅             |
+| drop-based cancellation                                                        | n/a              | ✅             |
+| reactor timer wakeups                                                          | n/a              | ✅             |
+| `asyncio` awaiting of pending futures                                          | n/a              | ✅             |
+| Box patterns                                                                   | ✅               | ⬜ Deferred    |
+| Payload enum slices                                                            | ✅               | ⬜ Deferred    |
 
 `BTreeMap` iteration is sorted by key in both backends. `HashSet`
 iteration order is unspecified; sort before comparing. `get_mut` on
@@ -131,16 +133,17 @@ The experimental WASM backend is not part of this matrix. It supports only
 - **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting Python extension (`.so` on macOS and Linux, `.pyd` on Windows).
 - **WASM backend (experimental):** Lowers an `i64`/`bool` compute-only subset to WebAssembly text format (`.wat`) and runs it through `wasmtime`.
 - **Common backend interface:** Select a backend with `get_backend("python")`, `get_backend("native")`, or `get_backend("wasm")`. Calling `backend.compile(program)` returns a namespace dictionary.
-- **CLI:** `polyglot run`, `polyglot build`, `polyglot check`, `polyglot lsp`, and the compatibility `polyglot compile` command.
+- **CLI:** `polyglot run`, `polyglot build`, `polyglot check`, `polyglot lsp`, the compatibility `polyglot compile` command, the machine-readable `polyglot exec` command, and the interactive `polyglot visualizer` (alias `gui`).
 - **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
 - **N6:** Additional `Vec` methods (`first`, `last`, `get`, `truncate`, `rotate_*`, `fill`, `swap`, `resize`, `split_off`, `partition`, `sort_*`, `is_sorted`, and others) and `String` methods (`find`, `rfind`, `strip_*`, `split_once`, `lines`, `as_bytes`, `is_char_boundary`, and others).
 - **N7:** Distinct `usize`/`isize` types, explicit `as` boundaries, range-loop variable typing, and selectable Python target-width simulation.
 - **N8:** `HashMap<K, V>` construction and supported operations, typed `usize` length, dict conversion, key/value/iteration views, mutable iterators, entry insertion, and mutable access.
 - **N9:** Dedicated Python/native coverage for Platform-defined Result/Option combinators and native `Result::and_then`/`or_else`.
 - **M10:** `#[terminates]` enables conservative static termination checks for bounded ranges, decreasing `while` variants, and recursive descent.
-- **M5:** Send-aware `PyFuture`, async `&self` impl methods, drop-based cancellation, a single-threaded `mio` reactor for timer and Unix fd wakeups, cross-thread Send awaits, and an `asyncio` bridge for pending futures.
+- **M5:** Send-aware `PyFuture`, async `&self`/`&mut self` impl methods with native borrow guards, drop-based cancellation, a single-threaded `mio` reactor for timer and Unix fd wakeups, cross-thread Send awaits, and an `asyncio` bridge for pending futures.
 - **Bundled stdlib:** `include!("std:...")` resolves eight pure-`.poly` modules (`math`, `algo`, `str_utils`, `collections`, `numpy`, `linalg`, `random`, `prelude`) from the installed package on both backends. `std:` includes are deduplicated; ordinary includes are still textual.
 - **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
+- **Distributed actors (experimental):** An opt-in `distributed/` runtime moves actors between nodes with a versioned Python/native codec, checkpointable await journals, anchored connections, epoch/fencing leases, and checkpoint-based rollback. See [docs/distributed.md](docs/distributed.md).
 
 ## CLI
 
@@ -150,6 +153,8 @@ polyglot build <file> [--backend python|native|wasm] [--out-dir <dir>] [--increm
 polyglot check <file> [--all-errors]
 polyglot lsp
 polyglot compile --backend python|native|wasm (--file <path> | --stdin)
+polyglot exec (<file> | --stdin) [--backend python|native|wasm|jit] [--result-file <path>]
+polyglot visualizer [--host 127.0.0.1] [--port 8765] [--no-open]
 ```
 
 - `run` compiles and executes a file and prints the result of `main()` when it returns a value. `--target-width 32` or `64` simulates the corresponding `usize`/`isize` width on the Python backend.
@@ -157,8 +162,10 @@ polyglot compile --backend python|native|wasm (--file <path> | --stdin)
 - `check` parses, translates (Python backend), and runs termination checks without executing. `--all-errors` recovers from top-level syntax errors and reports every parse error it finds.
 - `lsp` runs the stdio language server.
 - `compile` is a compatibility command used by the HTTP executor and older tooling. It prints the exported top-level names.
+- `exec` compiles and executes like `run`, but prints only program output. With `--result-file`, it also writes JSON containing compile/run timings, the runner's peak RSS, the return value, and structured E001–E008 diagnostics. It is the execution primitive behind the visualizer.
+- `visualizer` (alias `gui`) starts a dependency-free local web UI for the AST, monomorphization pass, generic-to-concrete source diff, error spans, and side-by-side Python/native output. The server binds to `127.0.0.1` by default and runs submitted programs as trusted local code; see [docs/visualizer.md](docs/visualizer.md).
 - Errors use the toolchain five-line format, or six lines when a span is available. Pass `--verbose` to include a traceback.
-- `--error-format text|json` selects the diagnostic format on `run`, `build`, `check`, and `compile`. JSON output is a single object with `code`, `message`, `line`, `col`, `span`, and `source`.
+- `--error-format text|json` selects the diagnostic format on `run`, `build`, `check`, `compile`, and `exec`. JSON output is a single object with `code`, `message`, `line`, `col`, `span`, and `source`.
 
 The Python backend has no native dependencies. The native backend requires a Rust toolchain (`cargo` and `rustc`) and PyO3-compatible build tooling. The WASM backend requires the optional `wasm` extra (`wasmtime`).
 
@@ -203,16 +210,16 @@ fn main() -> i64 {
 
 The bundled modules are pure `.poly` and require no extra dependencies:
 
-| Module | Contents |
-|---|---|
-| `std:math` | integer helpers, `gcd`/`lcm`/`pow_mod`/`is_prime`, and pure `f64` `sqrt`/`exp` |
-| `std:algo` | sorting, searching, sums, extrema, `unique`, and occurrence counting |
-| `std:str_utils` | trimming, case conversion, split/join, padding, search, and reversal |
-| `std:collections` | `Stack`, `Queue`, `SetI64`, and `Counter` |
-| `std:numpy` | dense `NdArray` creation, element-wise ops, reductions, and matrix products |
-| `std:linalg` | `inv`, `solve`, and `determinant` via Gauss-Jordan/Gaussian elimination |
-| `std:random` | deterministic Xoshiro256** `Rng` with `next_u64`/`next_f64`/ranges/shuffle |
-| `std:prelude` | includes every module above |
+| Module            | Contents                                                                       |
+| ----------------- | ------------------------------------------------------------------------------ |
+| `std:math`        | integer helpers, `gcd`/`lcm`/`pow_mod`/`is_prime`, and pure `f64` `sqrt`/`exp` |
+| `std:algo`        | sorting, searching, sums, extrema, `unique`, and occurrence counting           |
+| `std:str_utils`   | trimming, case conversion, split/join, padding, search, and reversal           |
+| `std:collections` | `Stack`, `Queue`, `SetI64`, and `Counter`                                      |
+| `std:numpy`       | dense `NdArray` creation, element-wise ops, reductions, and matrix products    |
+| `std:linalg`      | `inv`, `solve`, and `determinant` via Gauss-Jordan/Gaussian elimination        |
+| `std:random`      | deterministic Xoshiro256\*\* `Rng` with `next_u64`/`next_f64`/ranges/shuffle   |
+| `std:prelude`     | includes every module above                                                    |
 
 - `include!("std:math")` appends `.poly` automatically; `include!("std:math.poly")` also works.
 - `std:` paths are always resolved inside the packaged `stdlib/` directory. Missing modules and paths that escape that directory report `E006`.
@@ -311,6 +318,10 @@ as requiring OS-level isolation, such as the subprocess or Docker levels
 described in `NOTES.md` (isolation B or C), with network access disabled and
 a read-only filesystem where appropriate.
 
+The visualizer's **Run** button uses the same subprocess isolation pattern,
+but the visualizer itself is a local developer tool, not a sandbox. It binds
+to `127.0.0.1` and executes submitted code as trusted local code.
+
 ## Performance
 
 Native builds use `sccache` through `RUSTC_WRAPPER` when it is available.
@@ -334,19 +345,73 @@ expose arbitrary crate dependencies.
 
 Diagnostics include a stable error code. The table below maps each code to its class and meaning.
 
-| Code | Class | Meaning |
-|---|---|---|
-| `E001` | `TypeErrorForBoundary` | An implicit conversion between different integer types was attempted. Add an explicit `as` cast. See SPEC 2.4.6–2.4.7. |
-| `E002` | `TerminationError` | A function annotated `#[terminates]` could not be proven to terminate. See SPEC 2.8. |
-| `E003` | `TranslateError` | A generic AST-to-backend translation failure (unsupported construct, invalid pattern, etc.). Python backend only; the native backend reports `E004` or `E007`. |
-| `E004` | `RustCompileError` | The generated Rust failed to compile. The message includes the original source location when available. |
-| `E005` | `IncludeCycleError` | A cyclic `include!` chain was detected. The message prints the full chain. See SPEC 9.2. |
-| `E006` | `IncludeNotFoundError` | An `include!` target file does not exist or is unreadable. See SPEC 9.2. |
-| `E007` | `UnsupportedNativePatternError` | A source pattern cannot be represented by stable Rust. See SPEC 8.3. |
-| `E008` | `InvalidIntegerParseLiteralError` | A literal integer could not be parsed for the target type. |
+| Code   | Class                             | Meaning                                                                                                                                                        |
+| ------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `E001` | `TypeErrorForBoundary`            | An implicit conversion between different integer types was attempted. Add an explicit `as` cast. See SPEC 2.4.6–2.4.7.                                         |
+| `E002` | `TerminationError`                | A function annotated `#[terminates]` could not be proven to terminate. See SPEC 2.8.                                                                           |
+| `E003` | `TranslateError`                  | A generic AST-to-backend translation failure (unsupported construct, invalid pattern, etc.). Python backend only; the native backend reports `E004` or `E007`. |
+| `E004` | `RustCompileError`                | The generated Rust failed to compile. The message includes the original source location when available.                                                        |
+| `E005` | `IncludeCycleError`               | A cyclic `include!` chain was detected. The message prints the full chain. See SPEC 9.2.                                                                       |
+| `E006` | `IncludeNotFoundError`            | An `include!` target file does not exist or is unreadable. See SPEC 9.2.                                                                                       |
+| `E007` | `UnsupportedNativePatternError`   | A source pattern cannot be represented by stable Rust. See SPEC 8.3.                                                                                           |
+| `E008` | `InvalidIntegerParseLiteralError` | A literal integer could not be parsed for the target type.                                                                                                     |
+
+## Experimental engineering pillars
+
+The following table maps the ten proposed research areas to the code that
+exists today. These are prototypes and partial foundations, not guarantees of
+live-frame rewriting, arbitrary formal verification, transparent process
+migration, hardware isolation, or autonomous distributed repair. They are not
+part of the stable `polyglot run` / `polyglot build` contract.
+
+| Area                      | Module                  | What it does                                                                                       |
+| ------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------- |
+| Hot-patching              | `backends/hotpatch.py`  | Quiescent Python code/class swaps, live-struct migration, native symbol indirection slots; no executable-text patching |
+| Meta-compiler             | `compiler/evolution.py` | Template-based candidate passes, isolated corpus validation, and versioned history; no self-rewriting compiler |
+| Formal synthesis          | `proofs/synthesis.py`   | A controlled invariant grammar, interval/polynomial proofs, certificates, and dual-backend emission; no unrestricted natural-language proofs |
+| Time travel               | `debug/timetravel.py`   | Checkpoint/replay and object-graph snapshots; no rewinding live CPython frames or PyO3 stacks |
+| Speculative transmutation | `runtime/transmute.py`  | Type profiling, background specialization, and guarded fallback; no nanosecond deoptimization guarantee |
+| Distributed migration     | `distributed/`          | Cooperative actor checkpoint/replay with await journals and fencing; no opaque stack migration |
+| Distributed memory        | `distributed/dsm.py`    | In-process CRDTs (LWW/OR-Set/PN-Counter), Raft-style log/quorum, Merkle diffs, HLC/vector clocks, fencing, and MVCC; no `userfaultfd`, RDMA, or real cluster consensus |
+| Hardware sandboxing       | `security/sandbox.py`   | Declarative `mprotect`/seccomp/MPK/CFI plans (`E007` at execution) plus real taint, fuel, bounds, and zeroization models; no OS-enforced isolation |
+| GPU/NPU offloading        | `compiler/heterogeneous.py` | Affine-loop detection, textual MLIR-like IR/kernel models, fusion, tiling, quantization, and CPU fallback; real device dispatch is rejected with `E007`, as are `#[gpu]` / `#[npu]` |
+| Agent swarm/self-healing  | `swarm/agent.py`        | In-memory gossip, heuristic panic detector, HMAC-signed quorum model, reputation, canary rollout, MST healing, and span-aware audits; no real network or threshold signatures |
+
+These ten areas comprise a unified 10-pillar / 100-function capability registry
+at `runtime/capabilities.py`; both backends expose the same 100 names and emit
+the same span-aware diagnostics. See
+[docs/unified_pillars.md](docs/unified_pillars.md) for the full matrix, parity
+policy, and the generated opt-in `native_pillars/` PyO3 scaffold. See
+[docs/experimental_pillars.md](docs/experimental_pillars.md) for APIs, examples,
+and explicit limitations. These modules reuse the public `E001`–`E008`
+diagnostic codes where applicable; this does not imply a diagnostic for every
+unsupported research area or guarantee a character span when the source
+location is unavailable. The distributed runtime has its own guide at
+[docs/distributed.md](docs/distributed.md).
 
 ## Known limitations
 
+- The experimental modules are not wired into the CLI. They operate on
+  quiescent checkpoints, deterministic in-process models, and explicit
+  adapters. Distributed shared memory, consensus, OS-enforced sandboxing,
+  GPU/NPU offloading, and agent swarms are **modelled**, not the privileged or
+  hardware mechanisms named in the directive; requests that need those
+  mechanisms are uniformly rejected with `E007`. Existing prototypes do not
+  rewrite live CPython/PyO3 frames, patch loaded executable text, parse
+  unrestricted natural language, or guarantee nanosecond deoptimization. See
+  [docs/experimental_pillars.md](docs/experimental_pillars.md) and
+  [docs/unified_pillars.md](docs/unified_pillars.md).
+- `#[gpu]` and `#[npu]` function annotations are reserved but unsupported.
+  Both Python and native compilation reject them before backend lowering with
+  the same `E007` diagnostic and attribute span.
+- The lock-order proof accepts an explicit finite set of acquisition edges.
+  Cycles are rejected with an `E002` witness path; this does not prove
+  deadlock-freedom for arbitrary program code.
+- Distributed migration is cooperative replay, not opaque stack copying:
+  both nodes must run the same handlers and layouts, task handlers must be
+  deterministic up to each await, raw file descriptors never move, and the
+  in-memory transport/checkpoint store are development components. See
+  [docs/distributed.md](docs/distributed.md).
 - `is_ok`, `is_err`, `map_err`, `ok_or`, `and_then`, and `or_else` are Python-only inside let-bindings.
 - `while let Some(x) = iter.next()` is out of scope because Python has no Rust-style Option-returning `next()`.
 - Box patterns, enum payload slices, and nested Vec slice patterns are Python-only.
@@ -406,8 +471,10 @@ N0 through N10, M10, F1, and M5 are complete. M5 now includes a real native
 reactor thread, timer and Unix fd wakeups, cross-thread Send awaits, and an
 `asyncio` bridge. Remaining known limitations are listed under
 [Known limitations](#known-limitations). The main out-of-scope items are
-`while let Some(x) = iter.next()`, async `&mut self` methods, language-level
-async timer/I/O primitives, and the compute-only WASM subset.
+`while let Some(x) = iter.next()`, language-level async timer/I/O primitives,
+and the compute-only WASM subset. The
+experimental pillar modules are separate opt-in research foundations; see
+[docs/experimental_pillars.md](docs/experimental_pillars.md).
 
 ## Notes
 

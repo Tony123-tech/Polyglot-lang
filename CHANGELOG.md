@@ -51,6 +51,71 @@ Version history derived from SPECIFICATION.md Section 11.
   code, lowered method `Result<T, String>` returns to `PyResult<T>`, and
   improved Python/native expression type inference for field, call, and
   `match` expressions.
+- Added a dependency-free interactive visualizer (`polyglot visualizer`,
+  alias `gui`) that renders the color-coded AST, summarizes and diffs generic
+  versus monomorphized source, overlays E001–E008 character spans in the
+  editor, and runs Python and native backends side by side with compile/run
+  timings, peak RSS, exit codes, and return values.
+- Added `polyglot exec` and `api/visualizer.py` / `api/visualizer_server.py`
+  to support the visualizer without new runtime dependencies; user programs
+  execute only in isolated `api.cli exec` subprocesses with timeout and
+  process-group cleanup.
+- Added `tests/test_visualizer.py` and packaged `api/static/*.html` in the
+  wheel; documented the UI and its local-trusted-code security model in
+  `docs/visualizer.md`.
+- Added five opt-in experimental pillar foundations, documented in
+  `docs/experimental_pillars.md`: quiescent-point hot-patching with live
+  struct migration and atomic native symbol slots (`backends/hotpatch.py`),
+  sandboxed compiler-pass synthesis with versioned history
+  (`compiler/evolution.py`), bounded interval/polynomial synthesis with
+  independently checked certificates and dual-backend emission
+  (`proofs/synthesis.py`), deterministic Python/native checkpoint replay with
+  retroactive edits and object-graph snapshots (`debug/timetravel.py`), and
+  guarded background specialization with a fallback deopt path
+  (`runtime/transmute.py`). Shared diagnostics reuse `E001`–`E008`.
+- Fixed Python lowering of `assert!(condition, "fmt {}", ...)`: it now lowers
+  to the `_assert` runtime helper with the condition and format arguments
+  instead of emitting an invalid `assert()` call. The native backend continues
+  to emit Rust's `assert!`.
+- Extended setuptools package discovery to `compiler*`, `debug*`, `proofs*`,
+  and `runtime*`, and added `tests/test_hotpatch.py`,
+  `tests/test_evolution.py`, `tests/test_synthesis.py`,
+  `tests/test_timetravel.py`, and `tests/test_transmute.py`.
+- Added an opt-in `distributed/` runtime for live actor migration across
+  nodes: a versioned CRC-checked codec for Python graphs and native
+  `NativeLayout`/`NativeValue` state, checkpointable await journals, anchored
+  connections with cursor replay and idempotent writes, epoch/fencing leases
+  for distributed borrow checking, an in-memory partitionable network plus a
+  TCP transport, and checkpoint-based recovery with `E008` rollback and
+  node-loss diagnostics. See `docs/distributed.md`. Migration is cooperative
+  replay, not opaque CPython/Rust stack copying; raw descriptors and pointers
+  are never transported.
+- Added `tests/test_distributed.py` and extended setuptools package discovery
+  to `distributed*`.
+- Added a unified 10-pillar / 100-function capability registry
+  (`runtime/capabilities.py`). It classifies every directive function as a
+  foundation, a deterministic in-process model, or an explicit rejection, and
+  gives both backends the same 100-name namespace and span-aware
+  `E001`–`E008` diagnostics. Rejected mechanisms include executable-text
+  patching, live-frame rewriting, privileged page/syscall hooks, real
+  accelerator dispatch, and threshold signatures.
+- Added `distributed/dsm.py`, `security/sandbox.py`,
+  `compiler/heterogeneous.py`, and `swarm/agent.py` with dependency-free
+  reference models for CRDT/consensus, sandbox policy/taint/fuel, MLIR-style
+  accelerator lowering with CPU fallback, and gossip/self-healing.
+- Added `runtime/native_bindings.py` and the generated opt-in `native_pillars/`
+  crate: one `#[pyfunction]` per capability with honest `E006`/`E007`
+  diagnostics. It is not built by `polyglot build` or CI.
+- Documented the capability matrix in `docs/unified_pillars.md` and aligned the
+  `#[gpu]`/`#[npu]` feature gate with the accelerator boundary.
+- Added a Zig backend and lowering pass, including Zig-style `errdefer` and the
+  saturating `+|`, `-|`, and `*|` operator family.
+- Fixed recursive generic struct and enum expansion by caching the in-progress
+  instantiation before transforming variants, so `Node<T>` and `Tree<T>` reach
+  a fixed point instead of exhausting the recursion limit.
+- Added native async `&mut self` impl methods. Mutable fields are copied before
+  the future runs, an atomic borrow guard rejects overlapping calls, and field
+  writes are committed only when the future completes successfully.
 
 ## v0.3.7 — type-aware Option/Result map
 
