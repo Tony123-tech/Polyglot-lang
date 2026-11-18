@@ -225,3 +225,79 @@ fn main() -> i64 {
 }
 """
     assert _main(source, backend) == 42
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_impl_can_omit_the_generic_parameter_list(backend):
+    source = """
+struct Box<T> { value: T }
+impl Box<T> {
+    fn get(&self) -> T {
+        self.value.clone()
+    }
+}
+fn main() -> i64 {
+    let boxed: Box<i64> = Box { value: 42 };
+    boxed.get()
+}
+"""
+    assert _main(source, backend) == 42
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_nested_generic_instantiations(backend):
+    source = """
+struct Box<T> { value: T }
+fn wrap<T>(value: T) -> Box<T> {
+    Box { value: value }
+}
+fn main() -> i64 {
+    let nested: Box<Box<i64>> = wrap(wrap(41));
+    nested.value.value + 1
+}
+"""
+    assert _main(source, backend) == 42
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_multiple_type_parameters(backend):
+    source = """
+fn count_pair<A, B>(first: A, second: B) -> i64 {
+    42
+}
+fn main() -> i64 {
+    count_pair::<i64, String>(1, "two".to_string())
+}
+"""
+    assert _main(source, backend) == 42
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_impl_on_a_specialized_generic_type(backend):
+    source = """
+struct Box<T> { value: T }
+impl Box<Vec<T>> {
+    fn count(&self) -> i64 {
+        self.value.len() as i64
+    }
+}
+fn main() -> i64 {
+    let boxed: Box<Vec<i64>> = Box { value: vec![1, 2, 3] };
+    boxed.count()
+}
+"""
+    assert _main(source, backend) == 3
+
+
+def test_generic_struct_expansion_hits_the_recursion_limit():
+    source = """
+struct Wrap<T> {
+    value: T,
+    next: Option<Wrap<Vec<T>>>,
+}
+fn main() -> i64 { 0 }
+"""
+    with pytest.raises(MonomorphizationError) as error:
+        monomorphize(parse(lex(source)))
+    assert error.value.code == "E003"
+    assert "recursion limit" in str(error.value)

@@ -164,21 +164,23 @@ def _substitute_type(
     return ty
 
 
-def _collect_type_params(ty: ast.Type | None) -> set[str]:
-    params: set[str] = set()
+def _type_mentions(ty: ast.Type | None, names: set[str]) -> bool:
+    """Return true when ``ty`` contains one of the bare type-parameter names."""
+    if ty is None:
+        return False
     if isinstance(ty, ast.TypeName):
-        for arg in ty.args:
-            params.update(_collect_type_params(arg))
-    elif isinstance(ty, (ast.TypeRef, ast.TypeSlice, ast.TypeArray)):
-        params.update(_collect_type_params(ty.inner))
-    elif isinstance(ty, ast.TypeTuple):
-        for item in ty.elems:
-            params.update(_collect_type_params(item))
-    elif isinstance(ty, ast.TypeFn):
-        for item in ty.params:
-            params.update(_collect_type_params(item))
-        params.update(_collect_type_params(ty.ret))
-    return params
+        if not ty.args and ty.name in names:
+            return True
+        return any(_type_mentions(arg, names) for arg in ty.args)
+    if isinstance(ty, (ast.TypeRef, ast.TypeSlice, ast.TypeArray)):
+        return _type_mentions(ty.inner, names)
+    if isinstance(ty, ast.TypeTuple):
+        return any(_type_mentions(item, names) for item in ty.elems)
+    if isinstance(ty, ast.TypeFn):
+        return any(_type_mentions(item, names) for item in ty.params) or _type_mentions(
+            ty.ret, names
+        )
+    return False
 
 
 class Monomorphizer:
@@ -231,7 +233,7 @@ class Monomorphizer:
                 continue
             if isinstance(item, ast.EnumDecl) and item.generics:
                 continue
-            if isinstance(item, ast.ImplBlock) and item.generics:
+            if isinstance(item, ast.ImplBlock) and self._impl_has_type_params(item):
                 continue
             self.root_items.append(self._transform_root(item))
 
@@ -259,6 +261,15 @@ class Monomorphizer:
 
     # -- collection -------------------------------------------------------
 
+    def _impl_has_type_params(self, impl: ast.ImplBlock) -> bool:
+        if impl.generics:
+            return True
+        target = impl.ty if isinstance(impl.ty, ast.TypeName) else None
+        if target is None or target.name not in self.generic_structs:
+            return False
+        names = {param.name for param in self.generic_structs[target.name].generics}
+        return any(_type_mentions(arg, names) for arg in target.args)
+
     def _collect(self) -> None:
         for item in self.program.items:
             if isinstance(item, ast.StructDecl):
@@ -274,7 +285,7 @@ class Monomorphizer:
                 base = _base_name(item.ty)
                 if base is None:
                     continue
-                if item.generics or _collect_type_params(item.ty):
+                if self._impl_has_type_params(item):
                     self.generic_impls.setdefault(base, []).append(item)
                     for method in item.items:
                         if isinstance(method, ast.FnDecl):
@@ -449,20 +460,26 @@ class Monomorphizer:
         target = impl.ty if isinstance(impl.ty, ast.TypeName) else None
         if target is None:
             return None
-        mapping: dict[str, ast.Type] = {}
         struct_mapping = {
             param.name: arg
             for param, arg in zip(self.generic_structs[base].generics, args)
         }
+        mapping: dict[str, ast.Type] = {}
         if target.args:
-            for param, arg in zip(impl.generics, target.args):
-                mapping[param.name] = _substitute_type(arg, struct_mapping)
-        # An impl parameter that only appears in the target (e.g.
-        # `impl<T> Box<T>`) has already been bound above.  Any remaining
-        # parameter keeps its position in the struct's parameter list.
+            # Bind declared impl parameters, or the struct's own parameters
+            # when the impl omits an ``<...>`` list (``impl Box<T>``).
+            param_names = (
+                {param.name for param in impl.generics}
+                if impl.generics
+                else set(struct_mapping)
+            )
+            for target_arg, concrete_arg in zip(target.args, args):
+                self._unify(target_arg, concrete_arg, mapping, param_names)
         for param in impl.generics:
             if param.name not in mapping and param.name in struct_mapping:
                 mapping[param.name] = struct_mapping[param.name]
+        for name, arg in struct_mapping.items():
+            mapping.setdefault(name, arg)
         concrete_target = ast.TypeName(impl.ty.line, impl.ty.col, concrete, [])
         new_impl = ast.ImplBlock(
             impl.line,
