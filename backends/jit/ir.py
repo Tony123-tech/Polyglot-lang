@@ -762,7 +762,9 @@ class FunctionLowering:
             # Nested items are not part of the scalar JIT subset.
             item = stmt.item
             if isinstance(item, FnDecl):
-                raise JITUnsupportedError("nested functions are not supported by the JIT")
+                raise JITUnsupportedError(
+                    "nested functions are not supported by the JIT"
+                )
             return
         raise JITUnsupportedError(
             f"unsupported statement {type(stmt).__name__} in JIT function",
@@ -864,7 +866,9 @@ class FunctionLowering:
             )
         if isinstance(expr, Path):
             if len(expr.segments) == 1:
-                return self.lower_expr(Ident(expr.line, expr.col, expr.segments[0]), expected)
+                return self.lower_expr(
+                    Ident(expr.line, expr.col, expr.segments[0]), expected
+                )
             raise JITUnsupportedError(
                 f"JIT does not support path expression `{'::'.join(expr.segments)}`",
                 expr.line,
@@ -923,9 +927,23 @@ class FunctionLowering:
             raise JITUnsupportedError("Result values are not supported by the JIT")
         if isinstance(expr, IfLet):
             raise JITUnsupportedError("if let is not supported by the JIT")
-        if isinstance(expr, (MethodCall, Field, Index, StructLiteral, ArrayExpr,
-                             RepeatArray, TupleExpr, Closure, RangeExpr, Try,
-                             Await, MacroCall)):
+        if isinstance(
+            expr,
+            (
+                MethodCall,
+                Field,
+                Index,
+                StructLiteral,
+                ArrayExpr,
+                RepeatArray,
+                TupleExpr,
+                Closure,
+                RangeExpr,
+                Try,
+                Await,
+                MacroCall,
+            ),
+        ):
             raise JITUnsupportedError(
                 f"JIT does not support expression {type(expr).__name__}",
                 getattr(expr, "line", None),
@@ -1053,7 +1071,9 @@ class FunctionLowering:
         self.emit(LocalGet(result_slot, result))
         return result
 
-    def lower_cmp(self, op: str, left: Value, right: Value, operand_ty: IRType) -> Value:
+    def lower_cmp(
+        self, op: str, left: Value, right: Value, operand_ty: IRType
+    ) -> Value:
         left = self.coerce(left, operand_ty)
         right = self.coerce(right, operand_ty)
         result = self.new_temp(BOOL, "cmp")
@@ -1069,7 +1089,16 @@ class FunctionLowering:
         node,
     ) -> Value:
         if op not in {
-            "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
+            "+",
+            "-",
+            "*",
+            "/",
+            "%",
+            "&",
+            "|",
+            "^",
+            "<<",
+            ">>",
         }:
             raise JITUnsupportedError(
                 f"unsupported binary operator `{op}` in JIT function",

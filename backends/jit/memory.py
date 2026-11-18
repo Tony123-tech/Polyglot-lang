@@ -216,7 +216,9 @@ class ExecutableMemory:
         ctypes.memmove(self.address + offset, payload, len(payload))
 
     def write_words(self, offset: int, words: list[int] | tuple[int, ...]) -> None:
-        self.write(offset, b"".join(struct.pack("<I", word & 0xFFFFFFFF) for word in words))
+        self.write(
+            offset, b"".join(struct.pack("<I", word & 0xFFFFFFFF) for word in words)
+        )
 
     def commit(self, *, size: int | None = None) -> None:
         """Finish a write transaction and invalidate the icache."""

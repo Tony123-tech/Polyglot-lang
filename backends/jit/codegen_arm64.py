@@ -75,8 +75,20 @@ LE = 13
 SIGNED_COND = {"==": EQ, "!=": NE, "<": LT, "<=": LE, ">": GT, ">=": GE}
 UNSIGNED_COND = {"==": EQ, "!=": NE, "<": LO, "<=": LS, ">": HI, ">=": HS}
 FLOAT_COND = {"==": EQ, "!=": NE, "<": MI, "<=": LS, ">": GT, ">=": GE}
-INVERT_COND = {EQ: NE, NE: EQ, HS: LO, LO: HS, MI: PL, PL: MI, HI: LS, LS: HI,
-               GE: LT, LT: GE, GT: LE, LE: GT}
+INVERT_COND = {
+    EQ: NE,
+    NE: EQ,
+    HS: LO,
+    LO: HS,
+    MI: PL,
+    PL: MI,
+    HI: LS,
+    LS: HI,
+    GE: LT,
+    LT: GE,
+    GT: LE,
+    LE: GT,
+}
 
 
 def _r(name: str) -> int:
@@ -541,11 +553,7 @@ class FunctionCodegen:
     ) -> None:
         table = _LOAD_KINDS if load else _STORE_KINDS
         base_word, scale = table[kind]
-        if (
-            0 <= offset
-            and offset % (1 << scale) == 0
-            and (offset >> scale) <= 0xFFF
-        ):
+        if 0 <= offset and offset % (1 << scale) == 0 and (offset >> scale) <= 0xFFF:
             self.asm.emit(ldst(base_word, scale, rt, base, offset))
             return
         scratch = 16 if rt != 16 else 17
@@ -573,9 +581,7 @@ class FunctionCodegen:
             self.asm.emit(stp(19 + index, 20 + index, 31, index * 8))
         if self.has_float:
             for index in range(0, 8, 2):
-                self.asm.emit(
-                    stp(8 + index, 9 + index, 31, 80 + index * 8, fp=True)
-                )
+                self.asm.emit(stp(8 + index, 9 + index, 31, 80 + index * 8, fp=True))
 
     def _allocate_frame(self, size: int) -> None:
         if size == 0:
@@ -594,9 +600,7 @@ class FunctionCodegen:
             self.asm.emit(ldp(19 + index, 20 + index, 31, index * 8))
         if self.has_float:
             for index in range(0, 8, 2):
-                self.asm.emit(
-                    ldp(8 + index, 9 + index, 31, 80 + index * 8, fp=True)
-                )
+                self.asm.emit(ldp(8 + index, 9 + index, 31, 80 + index * 8, fp=True))
         self.asm.emit(add_imm(31, 29, 0))
         self.asm.emit(ldp_post(29, 30, 31, 16))
         self.asm.emit(0xD65F03C0)  # RET
@@ -720,9 +724,7 @@ class FunctionCodegen:
             left = self._int_reg(inst.left, "X16")
             right = self._int_reg(inst.right, "X17")
             self.asm.emit(cmp_reg(left, right))
-            table = (
-                UNSIGNED_COND if inst.operand_ty.is_unsigned else SIGNED_COND
-            )
+            table = UNSIGNED_COND if inst.operand_ty.is_unsigned else SIGNED_COND
             self.asm.emit(cset(destination, table[inst.op]))
         if spilled:
             self._write_int(inst.result, destination)
@@ -750,11 +752,23 @@ class FunctionCodegen:
         else:
             operand = self._int_reg(inst.value, "X16")
             if target.bits == 8:
-                self.asm.emit(sxtb(destination, operand) if target.signed else uxtb(destination, operand))
+                self.asm.emit(
+                    sxtb(destination, operand)
+                    if target.signed
+                    else uxtb(destination, operand)
+                )
             elif target.bits == 16:
-                self.asm.emit(sxth(destination, operand) if target.signed else uxth(destination, operand))
+                self.asm.emit(
+                    sxth(destination, operand)
+                    if target.signed
+                    else uxth(destination, operand)
+                )
             elif target.bits == 32:
-                self.asm.emit(sxtw(destination, operand) if target.signed else uxtw(destination, operand))
+                self.asm.emit(
+                    sxtw(destination, operand)
+                    if target.signed
+                    else uxtw(destination, operand)
+                )
             elif destination != operand:
                 self.asm.emit(mov_reg(destination, operand))
 
@@ -1039,7 +1053,9 @@ def compile_program(
             words[index] = 0x94000000 | (delta & 0x3FFFFFF)
 
     payload = b"".join(
-        struct.pack("<I", word & 0xFFFFFFFF) for _, words, _calls in parts for word in words
+        struct.pack("<I", word & 0xFFFFFFFF)
+        for _, words, _calls in parts
+        for word in words
     )
     memory.write(0, payload)
     memory.commit(size=len(payload))

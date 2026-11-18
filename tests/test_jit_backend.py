@@ -136,9 +136,7 @@ def test_assembler_resolves_local_branches():
 
 
 def test_executable_memory_roundtrip():
-    code = struct.pack("<I", arm64.movz(0, 1234)) + struct.pack(
-        "<I", 0xD65F03C0
-    )
+    code = struct.pack("<I", arm64.movz(0, 1234)) + struct.pack("<I", 0xD65F03C0)
     memory = ExecutableMemory(4096)
     try:
         memory.write(0, code)
@@ -208,9 +206,10 @@ def test_parallel_copy_handles_spill_locations():
 
 
 def test_parallel_copy_drops_self_moves():
-    assert parallel_copy(
-        [(Location(reg="X19"), Location(reg="X19"))], Location(reg="X16")
-    ) == []
+    assert (
+        parallel_copy([(Location(reg="X19"), Location(reg="X19"))], Location(reg="X16"))
+        == []
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +357,10 @@ fn main() -> f64 { mix(1, 2.5, 3, 4.0) }
         ("fn main() -> i64 { let a: i16 = -1; a as i64 }", -1),
         ("fn main() -> u64 { let a: i8 = -1; a as u64 }", (1 << 64) - 1),
         ("fn main() -> u64 { let a: i64 = -1; (a as u32) as u64 }", (1 << 32) - 1),
-        ("fn main() -> i64 { let a: u64 = 18446744073709551615u64; a as i32 as i64 }", -1),
+        (
+            "fn main() -> i64 { let a: u64 = 18446744073709551615u64; a as i32 as i64 }",
+            -1,
+        ),
         ("fn main() -> i64 { let b: bool = 3 > 2; b as i64 }", 1),
         ("fn main() -> u64 { let a: u8 = 200; a as u64 }", 200),
     ],
@@ -377,9 +379,7 @@ fn main() -> u64 {
 """
     assert _run(source) == (1 << 63) - 1
     assert (
-        _run(
-            "fn main() -> bool { let a: u64 = 18446744073709551615u64; a > 1u64 }"
-        )
+        _run("fn main() -> bool { let a: u64 = 18446744073709551615u64; a > 1u64 }")
         is True
     )
     assert _run("fn main() -> bool { let a: i64 = -1; a < 1 }") is True
@@ -508,9 +508,7 @@ def test_register_spilling_preserves_semantics():
     function = _spill_pressure_function(24)
     allocation = allocate(function)
     assert allocation.spill_count > 0
-    assert (
-        _run_ir(function, FunctionSignature("main", [], I64)) == 10
-    )
+    assert _run_ir(function, FunctionSignature("main", [], I64)) == 10
 
 
 def test_split_critical_edge_for_phi_copies():

@@ -347,9 +347,7 @@ def parallel_copy(
     locations never participate in cycles because each spill slot is unique.
     """
     pending = [
-        (source, destination)
-        for source, destination in moves
-        if source != destination
+        (source, destination) for source, destination in moves if source != destination
     ]
     scheduled: list[tuple[Location, Location]] = []
 

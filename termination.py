@@ -243,14 +243,14 @@ def _while_variant(loop: While, unsigned_names: set[str]) -> str | None:
                     all_steps.append(
                         _positive_integer(node.value) if node.op == "-=" else None
                     )
-        if not (updates and all(step is not None for step in updates) and all(
-            step is not None for step in all_steps
-        )):
+        if not (
+            updates
+            and all(step is not None for step in updates)
+            and all(step is not None for step in all_steps)
+        ):
             continue
         if any(
-            isinstance(node, Continue)
-            for stmt in body.stmts
-            for node in _walk(stmt)
+            isinstance(node, Continue) for stmt in body.stmts for node in _walk(stmt)
         ):
             continue
         if name in unsigned_names:

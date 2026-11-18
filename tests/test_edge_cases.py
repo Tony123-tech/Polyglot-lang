@@ -178,7 +178,9 @@ def test_include_target_that_is_a_directory_is_rejected(tmp_path):
 
 def test_include_missing_target_still_reports_e006(tmp_path):
     main = tmp_path / "main.poly"
-    main.write_text('include!("nope.poly");\nfn main() -> i64 { 1 }\n', encoding="utf-8")
+    main.write_text(
+        'include!("nope.poly");\nfn main() -> i64 { 1 }\n', encoding="utf-8"
+    )
     with pytest.raises(IncludeNotFoundError) as error:
         load_program(main)
     assert error.value.code == "E006"
@@ -187,9 +189,7 @@ def test_include_missing_target_still_reports_e006(tmp_path):
 def test_include_parent_segments_are_resolved_relative_to_the_includer(tmp_path):
     sub = tmp_path / "sub"
     sub.mkdir()
-    (tmp_path / "lib.poly").write_text(
-        "fn from_lib() -> i64 { 7 }\n", encoding="utf-8"
-    )
+    (tmp_path / "lib.poly").write_text("fn from_lib() -> i64 { 7 }\n", encoding="utf-8")
     main = sub / "main.poly"
     main.write_text(
         'include!("../lib.poly");\nfn main() -> i64 { from_lib() }\n',
@@ -252,7 +252,10 @@ PARITY_PROGRAMS = [
     ("fn main() -> i64 { 17 % -5 }", 2),
     ("fn main() -> i64 { let a: i8 = 127; let b: i8 = 1; (a + b) as i64 }", -128),
     ("fn main() -> u64 { let a: u8 = 255; let b: u8 = 1; (a + b) as u64 }", 0),
-    ("fn main() -> u64 { let a: u64 = 18446744073709551615u64; a / 2u64 }", (1 << 63) - 1),
+    (
+        "fn main() -> u64 { let a: u64 = 18446744073709551615u64; a / 2u64 }",
+        (1 << 63) - 1,
+    ),
     ("fn main() -> i64 { let a: u64 = 18446744073709551615u64; a as i32 as i64 }", -1),
     (
         """fn main() -> i64 {
