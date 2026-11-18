@@ -112,6 +112,7 @@ from backends.errors import (
 )
 from match_diagnostics import warn_match_issues
 from monomorph import monomorphize
+from runtime.feature_gates import validate_program_features
 from struct_order import order_struct_declarations
 
 
@@ -997,6 +998,7 @@ class RustCodegen:
         return type(item).__name__
 
     def generate(self, program: Program) -> str:
+        validate_program_features(program)
         program = monomorphize(program)
         self.lines = []
         self.fragments = {}
