@@ -964,6 +964,7 @@ class RustCodegen:
         self._current_return_type: str | None = None
         self._self_field_aliases: dict[str, str] | None = None
         self._payload_enum_names: set[str] = set()
+        self.borrow_state_types: set[str] = set()
         # Content-addressed top-level fragments. ``fragments`` maps a stable
         # key such as ``fn:add`` to the Rust text that implements it.
         self.fragments: dict[str, str] = {}
@@ -1067,6 +1068,7 @@ class RustCodegen:
         self._current_return_type = None
         self._self_field_aliases = None
         self._payload_enum_names = set()
+        self.borrow_state_types = set()
 
         for item in program.items:
             if isinstance(item, StructDecl):
@@ -1097,6 +1099,11 @@ class RustCodegen:
                             self._method_return_types[(target, method.name)] = (
                                 self._binding_type_name(method.ret)
                             )
+                            if (
+                                method.is_async
+                                and self._async_receiver_kind(method) == "mut"
+                            ):
+                                self.borrow_state_types.add(target)
             elif isinstance(item, EnumDecl) and all(
                 variant.fields is None for variant in item.variants
             ):
@@ -1468,9 +1475,10 @@ class RustCodegen:
         for name, ty, _is_pub in s.fields:
             self.emit("#[pyo3(get, set)]")
             self.emit(f"{name}: {self.type_to_rust(ty)},")
-        self.emit(
-            "__polyglot_borrow_state: std::sync::Arc<std::sync::atomic::AtomicU8>,"
-        )
+        if s.name in self.borrow_state_types:
+            self.emit(
+                "__polyglot_borrow_state: std::sync::Arc<std::sync::atomic::AtomicU8>,"
+            )
         self.dedent()
         self.emit("}")
         self.emit()
@@ -2684,7 +2692,7 @@ class RustCodegen:
         if isinstance(e, StructLiteral):
             name = e.path.split("::")[-1]
             field_items = [f"{k}: {self.expr_to_rust(v)}" for k, v in e.fields]
-            if e.rest is None and name in self.struct_names:
+            if e.rest is None and name in self.borrow_state_types:
                 field_items.append(
                     "__polyglot_borrow_state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0))"
                 )
@@ -3095,7 +3103,7 @@ class RustCodegen:
                 f"{name}: {self.pattern_to_rust(field_pattern)}"
                 for name, field_pattern in pat.fields
             )
-            if pat.rest or struct_short_name in self.struct_names:
+            if pat.rest or struct_short_name in self.borrow_state_types:
                 fields = f"{fields}, .." if fields else ".."
             return f"{pat.path} {{ {fields} }}"
         if isinstance(pat, PatEnum):
