@@ -319,7 +319,9 @@ class Monomorphizer:
     def _struct_key(
         self, name: str, args: list[ast.Type], default: bool
     ) -> tuple[Any, ...]:
-        return ("struct", name, tuple(_type_key(arg) for arg in args), default)
+        # The default original-name alias and an explicit ``<i64>`` request
+        # denote the same instantiation; the first request decides the name.
+        return ("struct", name, tuple(_type_key(arg) for arg in args))
 
     def _fn_key(
         self, name: str, args: list[ast.Type], default: bool
@@ -874,8 +876,20 @@ class Monomorphizer:
             return expr
         if isinstance(expr, ast.MacroCall):
             if isinstance(expr.args, list):
+                # Propagate the collection element type through builtin
+                # macros such as ``vec![...]`` so generic constructors inside
+                # the macro resolve to the same instantiation as their context.
+                element_expected: ast.Type | None = None
+                if (
+                    isinstance(expected, ast.TypeName)
+                    and expected.name == "Vec"
+                    and len(expected.args) == 1
+                ):
+                    element_expected = expected.args[0]
                 expr.args = [
-                    self._transform_expr(item, env, mapping, depth, self_type, None)
+                    self._transform_expr(
+                        item, env, mapping, depth, self_type, element_expected
+                    )
                     for item in expr.args
                 ]
             return expr
@@ -1470,13 +1484,18 @@ class Monomorphizer:
             and all(_types_equal(arg, _atomic_type(_DEFAULT_TYPE)) for arg in args)
             else _mangle(name, args)
         )
-        key = ("enum", name, tuple(_type_key(arg) for arg in args), concrete == name)
+        key = ("enum", name, tuple(_type_key(arg) for arg in args))
         cached = self.enum_cache.get(key)
         if cached is not None:
             return cached.name
         clone = copy.deepcopy(decl)
         clone.name = concrete
         clone.generics = []
+        # Cache a placeholder before transforming the variants so recursive
+        # generic enums such as `Tree<T> { Node(Vec<Tree<T>>) }` resolve to
+        # the in-progress instantiation instead of expanding forever.
+        self.enum_cache[key] = clone
+        self.generated_structs.append(clone)
         mapping = {param.name: arg for param, arg in zip(decl.generics, args)}
         for variant in clone.variants:
             if variant.fields is not None:
@@ -1484,8 +1503,6 @@ class Monomorphizer:
                     self.transform_type(fty, mapping, depth + 1, node=clone)
                     for fty in variant.fields
                 ]
-        self.enum_cache[key] = clone
-        self.generated_structs.append(clone)
         self.instance_source[concrete] = ast.TypeName(decl.line, decl.col, name, args)
         return concrete
 

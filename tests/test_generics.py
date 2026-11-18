@@ -289,6 +289,40 @@ fn main() -> i64 {
     assert _main(source, backend) == 3
 
 
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_recursive_generic_struct_terminates(backend):
+    source = """
+struct Node<T> {
+    value: T,
+    children: Vec<Node<T>>,
+}
+fn main() -> i64 {
+    let leaf: Node<i64> = Node { value: 1, children: vec![] };
+    let root: Node<i64> = Node { value: 2, children: vec![leaf] };
+    root.value + root.children.len() as i64
+}
+"""
+    assert _main(source, backend) == 3
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_recursive_generic_enum_terminates(backend):
+    source = """
+enum Tree<T> {
+    Leaf(T),
+    Node(Vec<Tree<T>>),
+}
+fn main() -> i64 {
+    let tree: Tree<i64> = Tree::Node(vec![Tree::Leaf(1), Tree::Leaf(2)]);
+    match tree {
+        Tree::Leaf(value) => value,
+        Tree::Node(children) => children.len() as i64,
+    }
+}
+"""
+    assert _main(source, backend) == 2
+
+
 def test_generic_struct_expansion_hits_the_recursion_limit():
     source = """
 struct Wrap<T> {
