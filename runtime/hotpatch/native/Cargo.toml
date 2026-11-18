@@ -1,0 +1,27 @@
+[package]
+name = "polyglot_hotpatch"
+version = "0.1.0"
+edition = "2021"
+description = "Native primitives for the Polyglot quantum hot-patching subsystem"
+license = "MIT"
+
+[lib]
+name = "polyglot_hotpatch"
+crate-type = ["cdylib", "rlib"]
+
+# The extension-module feature is enabled by default for real PyO3 builds.
+# `cargo test --no-default-features` links libpython so the pure-Rust tests can
+# run under the interpreter that built the crate.
+[features]
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "0.26" }
+libc = "0.2"
+mio = { version = "1", features = ["os-poll", "os-ext"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

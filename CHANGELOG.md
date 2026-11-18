@@ -2,6 +2,26 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Quantum hot-patching subsystem
+
+- Added the opt-in `runtime/hotpatch` package with five production mechanisms:
+  atomic GOT/PLT cell swaps plus owned-page AArch64/x86-64 jump sleds, CPython
+  3.13+ safe-point frame migration through PEP 667, selector and native
+  `mio::Poll` registration migration, cooperative RCU epochs for AST roots,
+  and before-image rollback journaling.
+- Added `runtime/hotpatch/native`, a PyO3 crate with real `unsafe` primitives
+  for Mach-O/ELF GOT discovery, `MAP_JIT` executable regions, instruction-cache
+  flushes, native RCU, raw-range journals, and a live `mio::Poll` wrapper.
+- Added `E008` diagnostics with character and UTF-8 byte spans for relocation,
+  ABI, frame-layout, reactor, and journal failures, plus `E007` refusals for
+  foreign executable text and unsupported primitives.
+- Added `tests/test_quantum_hotpatch.py` covering live local and generator
+  migration, concurrency-safe pointer swaps, zero-loss UDP reactor migration,
+  RCU timeouts, rollback, span formatting, and an optional crate build.
+- Documented the mechanisms and honesty boundaries in
+  `docs/quantum_hotpatch.md` and linked the pillar from
+  `docs/experimental_pillars.md`.
+
 ## Unreleased — Apple Silicon JIT backend and edge-case audit
 
 - Added a shared monomorphization pass (`monomorph.py`) that resolves generic

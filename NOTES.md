@@ -49,6 +49,31 @@ The shared `runtime/diagnostics.py` maps pillar failures onto the public
 `E001`–`E008` codes instead of adding a second error namespace. The full API
 and boundary list live in `docs/experimental_pillars.md`.
 
+## Quantum hot-patching — second-generation boundaries
+
+`runtime/hotpatch` is a new opt-in subsystem, not a replacement for
+`backends/hotpatch.py`. It implements real primitives that the first
+generation only exposed at quiescent points:
+
+- GOT/PLT cells are swapped with one aligned atomic word after temporarily
+  widening the page, and owned `MAP_JIT` pages accept AArch64/x86-64 jump
+  sleds. Foreign `__TEXT` is still refused with `E007`.
+- Future entries of a function get the new `__code__`; live frames keep their
+  captured code and have fast locals migrated through PEP 667. A
+  mid-instruction `f_code` rewrite remains impossible and is refused.
+- A fresh selector or `mio::Poll` adopts the old interest registry while the
+  sockets stay open, so queued datagrams and connections are not lost.
+- RCU is cooperative user-space epoch reclamation, not a kernel RCU syscall;
+  a reader that never leaves its guard produces an `E008` timeout.
+- The journal captures attribute/buffer before-images and replays them in
+  reverse order. It does not claim OS page-level copy-on-write without
+  `fork`; `deep=True` is the explicit container-isolation mode.
+
+The Rust/PyO3 crate in `runtime/hotpatch/native` mirrors these mechanisms with
+`unsafe` Mach/Mach-O, `libc`, and `mio` code. Python and native surfaces share
+the `E008` character/byte-span format. Details and build/test commands are in
+`docs/quantum_hotpatch.md`.
+
 ## Doc sync — `if let` expression-position limit
 
 > **Note (superseded):** This entry records an earlier README wording

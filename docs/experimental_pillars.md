@@ -192,10 +192,29 @@ Safety boundaries:
   disables specialisation instead of thrashing.
 - Live frames are not rewritten during a hot swap.
 
+## 6. Quantum hot-patching (`runtime/hotpatch`)
+
+The second-generation hot-patch pillar, documented in full at
+[`docs/quantum_hotpatch.md`](quantum_hotpatch.md), implements five mechanisms
+with a real Rust/PyO3 counterpart:
+
+- atomic GOT/PLT pointer swaps and owned-page AArch64/x86-64 jump sleds;
+- CPython 3.13+ fast-local migration through PEP 667 at a safe point;
+- selector and native `mio::Poll` registration migration with the sockets kept
+  open;
+- cooperative user-space RCU epochs for immutable AST roots;
+- before-image attribute/buffer journaling with reverse-order rollback.
+
+The first-generation boundaries still hold: foreign `__TEXT` is never patched,
+a running frame is never moved to a new `f_code` mid-instruction, and OS
+page-level copy-on-write is not claimed without `fork`. Relocation, ABI, and
+journal failures are `E008` with character and byte spans; unavailable
+primitives are `E007`.
+
 ## Tests
 
 ```sh
 pytest -q tests/test_hotpatch.py tests/test_evolution.py tests/test_synthesis.py \
-  tests/test_timetravel.py tests/test_transmute.py
+  tests/test_timetravel.py tests/test_transmute.py tests/test_quantum_hotpatch.py
 pytest -q -m slow   # includes the native-backend synthesis/transmutation paths
 ```
