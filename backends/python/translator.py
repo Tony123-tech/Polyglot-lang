@@ -351,7 +351,7 @@ MACRO_MAP: dict[str, str] = {
     "format": "format",
     "vec": "list",
     "panic": "_panic",
-    "assert": "assert",
+    "assert": "_assert",
     "assert_eq": "_assert_eq",
     "assert_ne": "_assert_ne",
 }
@@ -368,6 +368,23 @@ def _runtime_panic(msg: str = "") -> None:
 
 def _runtime_non_exhaustive_match(scrutinee_type: str) -> None:
     raise RuntimeError(f"non-exhaustive {scrutinee_type} match reached at runtime")
+
+
+def _runtime_assert(condition, *args) -> None:
+    if condition:
+        return
+    message = "assertion failed"
+    if args:
+        fmt, rest = args[0], args[1:]
+        render = getattr(fmt, "format", None)
+        if rest and render is not None:
+            try:
+                message = render(*rest)
+            except IndexError, KeyError, ValueError:
+                message = str(fmt)
+        else:
+            message = str(fmt)
+    raise AssertionError(message)
 
 
 def _runtime_assert_eq(a, b) -> None:
@@ -1738,6 +1755,7 @@ class Translator:
         }
         ns["_panic"] = _runtime_panic
         ns["_runtime_non_exhaustive_match"] = _runtime_non_exhaustive_match
+        ns["_assert"] = _runtime_assert
         ns["_assert_eq"] = _runtime_assert_eq
         ns["_assert_ne"] = _runtime_assert_ne
         ns["_rust_len"] = _runtime_rust_len
@@ -6425,9 +6443,11 @@ class Translator:
                 m.col,
             )
         if m.path == "assert":
+            # ``_runtime_assert`` formats the message itself, so the generic
+            # print-style ``.format`` rewrite below must not run here.
             return ast.Call(
-                func=ast.Name(id="assert", ctx=ast.Load()),
-                args=[],
+                func=ast.Name(id=target, ctx=ast.Load()),
+                args=[self.translate_expr(a) for a in m.args],
                 keywords=[],
             )
         args: list[ast.expr] = [self.translate_expr(a) for a in m.args]
