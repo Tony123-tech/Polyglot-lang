@@ -31,7 +31,7 @@ polyglot = "api.cli:main"
 [tool.setuptools]
 # Top-level modules shipped in the wheel. Test modules (tests/) and developer
 # tooling (tools/) are intentionally excluded: package discovery below only
-# includes api* and backends*, and pytest collects tests/ from the sdist tree.
+# includes the runtime packages, and pytest collects tests/ from the sdist tree.
 py-modules = [
     "ast_nodes",
     "lexer",
@@ -48,10 +48,23 @@ py-modules = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["api*", "backends*", "stdlib*"]
+include = [
+    "api*",
+    "backends*",
+    "compiler*",
+    "debug*",
+    "distributed*",
+    "proofs*",
+    "runtime*",
+    "security*",
+    "stdlib*",
+    "swarm*",
+    "zig*",
+]
 
 [tool.setuptools.package-data]
 stdlib = ["*.poly"]
+api = ["static/*.html"]
 
 [tool.pytest.ini_options]
 markers = [

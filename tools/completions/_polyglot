@@ -6,6 +6,10 @@ _polyglot() {
         "run:Compile and execute a file"
         "build:Compile a file"
         "check:Parse, translate, and check termination"
+        "lsp:Run the language server over stdio"
+        "exec:Compile and execute with machine-readable metrics"
+        "visualizer:Serve the interactive AST/monomorphization visualizer"
+        "gui:Alias for visualizer"
         "compile:Compatibility compile command"
     )
 
@@ -19,11 +23,17 @@ _polyglot() {
             ;;
         args)
             case $words[1] in
-                run|build|check)
+                run|build|check|exec)
                     _files -g "*.poly"
                     ;;
+                visualizer|gui)
+                    _arguments "--host[Interface to bind]:host" \
+                               "--port[Port to bind]:port" \
+                               "--no-open[Do not open a browser]" \
+                               "--verbose[Log HTTP requests]"
+                    ;;
                 compile)
-                    _arguments "--backend[Backend]:backend:(python native)" \
+                    _arguments "--backend[Backend]:backend:(python native wasm jit)" \
                                "--stdin[Read from stdin]" \
                                "--file[Input file]:file:_files" \
                                "--trusted[Trusted mode]" \
