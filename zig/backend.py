@@ -88,7 +88,10 @@ class ZigCodegen:
             self.emit("_ = self;")
             for idx, (pname, ztype) in enumerate(params):
                 if ztype == "f64":
-                    self.emit(f"const {pname}: f64 = py.PyFloat_AsDouble(py.PyTuple_GetItem())")
+                    self.emit(
+                        f"const {pname}: f64 = py.PyFloat_AsDouble(py.PyTuple_GetItem())"
+                    )
+
     def _emit_expr(self, expr: Any) -> str:
         if isinstance(expr, LitInt):
             return str(expr.value)
