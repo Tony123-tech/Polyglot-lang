@@ -6,15 +6,19 @@ Subcommands:
     build Compile only and produce an artifact when applicable.
     check Parse, translate, and run termination checks without executing.
     compile  (compatibility) Compile and print exported names.
+    exec  Compile and execute with JSON timing/memory metadata.
+    visualizer  Serve the interactive AST/monomorphization visualizer.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -151,6 +155,109 @@ def _run_main(namespace: dict[str, Any]) -> Any:
     return main()
 
 
+def _jsonable_result(value: Any) -> Any:
+    """Convert a program return value into something ``json.dumps`` accepts."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else repr(value)
+    if isinstance(value, dict):
+        return {str(key): _jsonable_result(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable_result(item) for item in value]
+    text = repr(value)
+    return text if len(text) <= 4000 else text[:4000] + "..."
+
+
+def _peak_memory_bytes() -> int | None:
+    """Return the runner's peak resident set size in bytes."""
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - Windows
+        return None
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    value = int(usage.ru_maxrss)
+    if value <= 0:
+        return None
+    # macOS reports bytes; Linux and the BSDs report kibibytes.
+    if sys.platform != "darwin":
+        value *= 1024
+    return value
+
+
+def _write_exec_payload(path: str | None, payload: dict[str, Any]) -> None:
+    if not path:
+        return
+    try:
+        Path(path).write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def cmd_exec(args: argparse.Namespace) -> int:
+    """Compile + execute with structured timing, memory, and diagnostics."""
+    started = time.perf_counter()
+    source = sys.stdin.read() if args.stdin else _read_source(args.file)
+    payload: dict[str, Any] = {
+        "ok": False,
+        "backend": args.backend,
+        "compile_ms": None,
+        "run_ms": None,
+        "total_ms": None,
+        "peak_memory_bytes": None,
+        "return_value": None,
+        "diagnostics": [],
+    }
+    exit_code = 0
+    compile_started: float | None = None
+    run_started: float | None = None
+    try:
+        program = _parse_program(source)
+        backend = get_backend(
+            args.backend,
+            trusted=True,
+            target_width=args.target_width,
+        )
+        compile_started = time.perf_counter()
+        namespace = backend.compile(program)
+        payload["compile_ms"] = round((time.perf_counter() - compile_started) * 1000, 3)
+
+        run_started = time.perf_counter()
+        result = _run_main(namespace)
+        payload["run_ms"] = round((time.perf_counter() - run_started) * 1000, 3)
+        payload["return_value"] = _jsonable_result(result)
+        payload["ok"] = True
+    except Exception as error:
+        from api.visualizer import diagnostic
+
+        if compile_started is not None and payload["compile_ms"] is None:
+            payload["compile_ms"] = round(
+                (time.perf_counter() - compile_started) * 1000, 3
+            )
+        if run_started is not None and payload["run_ms"] is None:
+            payload["run_ms"] = round((time.perf_counter() - run_started) * 1000, 3)
+        phase = (
+            "parse"
+            if type(error).__name__ in {"LexError", "ParseError"}
+            else args.backend
+        )
+        payload["diagnostics"] = [diagnostic(error, source, phase=phase)]
+        _print_error(
+            error,
+            verbose=args.verbose,
+            error_format=args.error_format,
+        )
+        exit_code = 1
+    finally:
+        payload["total_ms"] = round((time.perf_counter() - started) * 1000, 3)
+        payload["peak_memory_bytes"] = _peak_memory_bytes()
+        _write_exec_payload(args.result_file, payload)
+    return exit_code
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     program = load_program(args.file)
     backend = get_backend(args.backend, trusted=True, target_width=args.target_width)
@@ -207,6 +314,17 @@ def cmd_lsp(args: argparse.Namespace) -> int:
     from api.lsp import main as lsp_main
 
     return lsp_main()
+
+
+def cmd_visualizer(args: argparse.Namespace) -> int:
+    from api.visualizer_server import serve
+
+    return serve(
+        host=args.host,
+        port=args.port,
+        open_browser=args.open_browser,
+        verbose=args.verbose,
+    )
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -385,6 +503,90 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     lsp_p.set_defaults(func=cmd_lsp)
+
+    exec_p = sub.add_parser(
+        "exec",
+        help="Compile and execute with machine-readable metrics",
+        description=(
+            "Compile and execute a program, printing its output. When "
+            "--result-file is given, structured timing, peak memory, return "
+            "value, and diagnostics are written to that path as JSON. Used by "
+            "the visualizer's /api/run endpoint, which never executes user "
+            "code inside the HTTP server."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  polyglot exec --stdin --backend python --result-file out.json\n"
+            "  polyglot exec hello.poly --backend native"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    exec_src = exec_p.add_mutually_exclusive_group(required=True)
+    exec_src.add_argument("file", nargs="?", help="Path to the .poly file")
+    exec_src.add_argument("--stdin", action="store_true")
+    exec_p.add_argument(
+        "--backend",
+        choices=["python", "native", "wasm", "jit"],
+        default="python",
+        help="Backend to use (default: python)",
+    )
+    exec_p.add_argument(
+        "--target-width",
+        type=int,
+        dest="target_width",
+        default=None,
+        help="Simulate a 32- or 64-bit usize/isize target (Python backend only)",
+    )
+    exec_p.add_argument(
+        "--result-file",
+        dest="result_file",
+        default=None,
+        help="Write structured execution metadata (JSON) to this path",
+    )
+    exec_p.add_argument(
+        "--verbose", action="store_true", help="Print full tracebacks on error"
+    )
+    _add_error_format(exec_p)
+    exec_p.set_defaults(func=cmd_exec)
+
+    visualizer_p = sub.add_parser(
+        "visualizer",
+        aliases=["gui"],
+        help="Serve the interactive AST and monomorphization visualizer",
+        description=(
+            "Start a local, dependency-free web UI that visualizes the AST, "
+            "the monomorphization pass, E001-E008 diagnostics, and side-by-side "
+            "Python/native execution. The server binds to 127.0.0.1 by default "
+            "and runs submitted programs as trusted local code."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  polyglot visualizer\n"
+            "  polyglot visualizer --port 9000 --no-open"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    visualizer_p.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Interface to bind (default: 127.0.0.1)",
+    )
+    visualizer_p.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Port to bind; use 0 to choose a free port (default: 8765)",
+    )
+    visualizer_p.add_argument(
+        "--no-open",
+        dest="open_browser",
+        action="store_false",
+        help="Do not open a web browser automatically",
+    )
+    visualizer_p.add_argument(
+        "--verbose", action="store_true", help="Log every HTTP request"
+    )
+    visualizer_p.set_defaults(func=cmd_visualizer, open_browser=True)
 
     compile_p = sub.add_parser(
         "compile",

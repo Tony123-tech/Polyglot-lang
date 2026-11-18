@@ -1,0 +1,1675 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polyglot — AST &amp; Monomorphization Visualizer</title>
+<style>
+  :root {
+    --bg: #070b14;
+    --bg-soft: #0b1220;
+    --panel: #0f172a;
+    --panel-2: #111c31;
+    --border: #1e293b;
+    --border-strong: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --dim: #64748b;
+    --accent: #60a5fa;
+    --green: #34d399;
+    --red: #f87171;
+    --amber: #fbbf24;
+    --pink: #f472b6;
+    --violet: #a78bfa;
+    --cyan: #22d3ee;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --editor-font-size: 13px;
+    --editor-line-height: 20.15px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1000px 500px at 12% -10%, rgba(37, 99, 235, .18), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(168, 85, 247, .12), transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: rgba(96, 165, 250, .35); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #24324a; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #334155; background-clip: content-box; }
+  button { font: inherit; color: inherit; }
+
+  .app-header {
+    position: sticky; top: 0; z-index: 30;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 12px 20px;
+    background: rgba(7, 11, 20, .78);
+    border-bottom: 1px solid rgba(51, 65, 85, .55);
+    backdrop-filter: blur(14px);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .logo {
+    width: 36px; height: 36px; flex: none;
+    display: grid; place-items: center;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #1d4ed8, #7c3aed);
+    box-shadow: 0 0 0 1px rgba(148, 163, 184, .18), 0 8px 24px -10px rgba(59, 130, 246, .8);
+    font-size: 18px; font-weight: 800;
+  }
+  .brand h1 { margin: 0; font-size: 16px; letter-spacing: -.01em; white-space: nowrap; }
+  .brand p { margin: 2px 0 0; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+  .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  .status-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 9px; border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(15, 23, 42, .75);
+    color: var(--muted);
+    font-size: 11px; line-height: 1; white-space: nowrap;
+  }
+  .pill.ok { color: #a7f3d0; border-color: rgba(52, 211, 153, .3); background: rgba(6, 78, 59, .28); }
+  .pill.warn { color: #fde68a; border-color: rgba(251, 191, 36, .3); background: rgba(120, 53, 15, .25); }
+  .pill.bad { color: #fecaca; border-color: rgba(248, 113, 113, .3); background: rgba(127, 29, 29, .25); }
+  .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: #16233a; color: var(--text);
+    font-size: 12.5px; font-weight: 600;
+    cursor: pointer; transition: background .15s, border-color .15s, transform .05s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: #1c2c47; border-color: #475569; }
+  .btn:active { transform: translateY(1px); }
+  .btn:disabled { opacity: .6; cursor: progress; }
+  .btn.primary {
+    border-color: rgba(96, 165, 250, .55);
+    background: linear-gradient(180deg, #2563eb, #1d4ed8);
+    box-shadow: 0 8px 20px -12px rgba(59, 130, 246, .9);
+  }
+  .btn.primary:hover { background: linear-gradient(180deg, #3b82f6, #2563eb); }
+  .btn.ghost { background: transparent; }
+  .btn .spinner {
+    width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, .35);
+    border-top-color: #fff;
+    display: none;
+    animation: spin .7s linear infinite;
+  }
+  .btn.running .spinner { display: inline-block; }
+  .btn.busy { opacity: .65; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  main.layout {
+    max-width: 1680px;
+    margin: 0 auto;
+    padding: 16px 20px 28px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+    grid-template-areas:
+      "editor meta"
+      "editor ast"
+      "diff diff"
+      "python native";
+    gap: 14px;
+    align-items: stretch;
+  }
+
+  .panel {
+    min-width: 0;
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(17, 28, 49, .92), rgba(10, 17, 31, .96));
+    box-shadow: 0 18px 40px -28px rgba(0, 0, 0, .8);
+    overflow: hidden;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(15, 23, 42, .55);
+    min-height: 48px;
+  }
+  .panel-head h2 { margin: 0; font-size: 12.5px; letter-spacing: .055em; text-transform: uppercase; color: #cbd5e1; }
+  .panel-head .hint { display: block; margin-top: 2px; color: var(--dim); font-size: 11px; }
+  .mini { color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .editor-panel { grid-area: editor; }
+  .meta-panel { grid-area: meta; }
+  .ast-panel { grid-area: ast; }
+  .diff-panel { grid-area: diff; }
+  #panel-python { grid-area: python; }
+  #panel-native { grid-area: native; }
+
+  .editor-tools { display: flex; align-items: center; gap: 8px; }
+  .editor-shell {
+    position: relative;
+    height: clamp(380px, 48vh, 640px);
+    background: #0a1120;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .editor-shell::before {
+    content: "";
+    position: absolute; inset: 0;
+    background-image: linear-gradient(rgba(148, 163, 184, .028) 1px, transparent 1px);
+    background-size: 100% var(--editor-line-height);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .editor-shell:focus-within { box-shadow: inset 0 0 0 1px rgba(96, 165, 250, .45); }
+  #highlight, #source {
+    position: absolute; inset: 0;
+    margin: 0; padding: 14px 16px;
+    border: 0;
+    font-family: var(--mono);
+    font-size: var(--editor-font-size);
+    line-height: var(--editor-line-height);
+    font-variant-ligatures: none;
+    tab-size: 4;
+    white-space: pre;
+    overflow-wrap: normal;
+  }
+  #highlight {
+    z-index: 1;
+    color: #dbeafe;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  #source {
+    z-index: 2;
+    resize: none;
+    outline: none;
+    background: transparent;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: #f8fafc;
+    overflow: auto;
+  }
+  #source::selection { background: rgba(96, 165, 250, .32); }
+  .diag-span {
+    background: rgba(248, 113, 113, .26);
+    text-decoration: underline wavy rgba(248, 113, 113, .9);
+    text-underline-offset: 3px;
+    border-radius: 2px;
+  }
+  .focus-span {
+    background: rgba(251, 191, 36, .22);
+    box-shadow: inset 0 0 0 1px rgba(251, 191, 36, .55);
+    border-radius: 2px;
+  }
+
+  .diagnostics {
+    padding: 8px;
+    max-height: 190px;
+    overflow: auto;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .empty { color: var(--dim); font-size: 12px; padding: 8px 6px; }
+  .diag {
+    width: 100%;
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--red);
+    border-radius: 8px;
+    background: rgba(127, 29, 29, .12);
+    text-align: left; cursor: pointer;
+  }
+  .diag:hover { background: rgba(127, 29, 29, .22); border-color: rgba(248, 113, 113, .4); }
+  .diag-code {
+    flex: none;
+    padding: 2px 6px; border-radius: 5px;
+    background: rgba(248, 113, 113, .16);
+    border: 1px solid rgba(248, 113, 113, .38);
+    color: #fecaca;
+    font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+  }
+  .diag-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .diag-msg { color: #f1f5f9; font-size: 12.5px; line-height: 1.35; }
+  .diag-meta { color: var(--dim); font-family: var(--mono); font-size: 10.5px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 12px 4px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 9px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: rgba(2, 6, 23, .45);
+    color: var(--muted);
+    font-family: var(--mono); font-size: 11.5px;
+    cursor: pointer;
+  }
+  .chip:hover { border-color: rgba(96, 165, 250, .55); background: rgba(30, 64, 175, .18); }
+  .chip .base { color: var(--pink); }
+  .chip .arrow { color: var(--dim); }
+  .chip .concrete { color: #bfdbfe; }
+  .chip .kind { color: var(--dim); font-family: var(--sans); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 4px; border-top: 1px solid rgba(30, 41, 59, .7); margin-top: 8px; }
+  .legend .lg { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); font-size: 10.5px; }
+  .legend .swatch { width: 8px; height: 8px; border-radius: 2px; }
+
+  .facts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    margin: 12px 12px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--border);
+  }
+  .fact {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 10px;
+    background: rgba(2, 6, 23, .45);
+  }
+  .fact span { color: var(--dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+  .fact b { color: #cbd5e1; font-family: var(--mono); font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .fact b.good { color: #6ee7b7; }
+  .fact b.bad { color: #fca5a5; }
+
+  .pipeline {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
+    padding: 10px 12px 12px;
+    border-top: 1px solid rgba(30, 41, 59, .7);
+    margin-top: auto;
+  }
+  .pipeline .step {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 8px; border-radius: 6px;
+    background: rgba(15, 23, 42, .8);
+    border: 1px solid var(--border);
+    color: var(--muted); font-size: 11px;
+  }
+  .pipeline .step b { color: #cbd5e1; font-family: var(--mono); font-weight: 600; font-size: 10.5px; }
+  .pipeline .pipe-arrow { color: #334155; }
+
+  .ast-tree {
+    padding: 8px 6px 10px;
+    max-height: 440px;
+    min-height: 260px;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .node-row {
+    display: flex; align-items: baseline; gap: 6px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    cursor: default;
+    white-space: nowrap;
+    line-height: 1.55;
+  }
+  .node-row:hover { background: rgba(148, 163, 184, .1); }
+  .node-row.selected { background: rgba(96, 165, 250, .16); outline: 1px solid rgba(96, 165, 250, .42); outline-offset: -1px; }
+  .node-children { margin-left: 13px; padding-left: 6px; border-left: 1px dashed rgba(148, 163, 184, .16); }
+  .node:not(.open) > .node-children { display: none; }
+  .toggle { flex: none; width: 12px; color: #475569; cursor: pointer; user-select: none; font-size: 10px; }
+  .toggle:hover { color: var(--accent); }
+  .type-badge {
+    flex: none;
+    padding: 0 5px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    font-size: 10px; font-weight: 600; letter-spacing: .01em;
+  }
+  .node-label { color: #cbd5e1; font-size: 11.5px; }
+  .node-label.truncate { max-width: 64ch; overflow: hidden; text-overflow: ellipsis; }
+  .role { flex: none; color: #475569; font-size: 10px; }
+  .node-loc { flex: none; color: #3f4e63; font-size: 10px; }
+  .kids-count { flex: none; color: #334155; font-size: 9.5px; }
+
+  .node-row[data-cat="program"] .type-badge { color: #f8fafc; background: rgba(248, 250, 252, .1); border-color: rgba(248, 250, 252, .22); }
+  .node-row[data-cat="function"] .type-badge { color: #93c5fd; background: rgba(59, 130, 246, .16); border-color: rgba(59, 130, 246, .38); }
+  .node-row[data-cat="struct"] .type-badge { color: #6ee7b7; background: rgba(16, 185, 129, .14); border-color: rgba(16, 185, 129, .36); }
+  .node-row[data-cat="enum"] .type-badge { color: #c4b5fd; background: rgba(139, 92, 246, .16); border-color: rgba(139, 92, 246, .4); }
+  .node-row[data-cat="impl"] .type-badge { color: #fcd34d; background: rgba(245, 158, 11, .14); border-color: rgba(245, 158, 11, .38); }
+  .node-row[data-cat="generic"] .type-badge { color: #f9a8d4; background: rgba(236, 72, 153, .15); border-color: rgba(236, 72, 153, .4); }
+  .node-row[data-cat="type"] .type-badge { color: #67e8f9; background: rgba(6, 182, 212, .13); border-color: rgba(6, 182, 212, .36); }
+  .node-row[data-cat="pattern"] .type-badge { color: #d8b4fe; background: rgba(168, 85, 247, .13); border-color: rgba(168, 85, 247, .36); }
+  .node-row[data-cat="literal"] .type-badge { color: #fde68a; background: rgba(251, 191, 36, .12); border-color: rgba(251, 191, 36, .32); }
+  .node-row[data-cat="statement"] .type-badge { color: #cbd5e1; background: rgba(100, 116, 139, .2); border-color: rgba(100, 116, 139, .38); }
+  .node-row[data-cat="attribute"] .type-badge { color: #fca5a5; background: rgba(239, 68, 68, .12); border-color: rgba(239, 68, 68, .3); }
+  .node-row[data-cat="item"] .type-badge { color: #a5b4fc; background: rgba(99, 102, 241, .13); border-color: rgba(99, 102, 241, .34); }
+  .node-row[data-cat="expression"] .type-badge { color: #cbd5e1; background: rgba(148, 163, 184, .12); border-color: rgba(148, 163, 184, .24); }
+  .node-row[data-cat="truncated"] .type-badge { color: #fca5a5; background: rgba(127, 29, 29, .3); }
+
+  .diff-grid { display: grid; grid-template-columns: 1fr 1fr; min-height: 260px; }
+  .diff-column { min-width: 0; display: flex; flex-direction: column; }
+  .diff-column + .diff-column { border-left: 1px solid var(--border); }
+  .diff-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 12px;
+    background: rgba(2, 6, 23, .45);
+    border-bottom: 1px solid var(--border);
+    color: var(--dim); font-size: 10.5px; font-family: var(--mono);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .code-lines {
+    position: relative;
+    max-height: 390px;
+    min-height: 210px;
+    overflow: auto;
+    font-family: var(--mono); font-size: 12px; line-height: 18px;
+    background: rgba(5, 10, 20, .55);
+  }
+  .diff-line { display: flex; align-items: flex-start; min-height: 18px; }
+  .diff-line .ln {
+    flex: none; width: 42px; padding-right: 10px;
+    text-align: right; color: #334155; user-select: none;
+    font-size: 10px;
+  }
+  .diff-line code {
+    flex: 1; min-width: 0;
+    padding-right: 16px;
+    color: #cbd5e1;
+    white-space: pre;
+    font-family: inherit;
+    font-size: inherit;
+    tab-size: 4;
+  }
+  .diff-line.added { background: rgba(34, 197, 94, .11); }
+  .diff-line.added .ln { color: #4ade80; }
+  .diff-line.removed { background: rgba(239, 68, 68, .1); }
+  .diff-line.removed .ln { color: #f87171; }
+  .diff-line.flash { animation: flash-row 1.35s ease-out; }
+  @keyframes flash-row {
+    0% { background: rgba(96, 165, 250, .42); }
+    100% { background: transparent; }
+  }
+  .code-note { padding: 14px; color: var(--dim); font-size: 12px; font-family: var(--sans); }
+
+  .console-panel { transition: border-color .2s, opacity .2s; }
+  .console-panel.ok { border-color: rgba(52, 211, 153, .28); }
+  .console-panel.error { border-color: rgba(248, 113, 113, .32); }
+  .console-panel.stale { opacity: .62; }
+  .console-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #475569; flex: none; box-shadow: 0 0 0 3px rgba(71, 85, 105, .15); }
+  .console-panel.ok .status-dot { background: var(--green); box-shadow: 0 0 0 3px rgba(52, 211, 153, .16); }
+  .console-panel.error .status-dot { background: var(--red); box-shadow: 0 0 0 3px rgba(248, 113, 113, .16); }
+  .console-panel.running .status-dot { background: var(--amber); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .console-status { color: var(--dim); font-family: var(--mono); font-size: 10.5px; }
+  .console-panel.ok .console-status { color: #6ee7b7; }
+  .console-panel.error .console-status { color: #fca5a5; }
+  .console-panel.running .console-status { color: #fcd34d; }
+  .metrics { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px 12px 0; min-height: 28px; }
+  .metric {
+    padding: 3px 7px; border-radius: 5px;
+    background: rgba(15, 23, 42, .85);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--mono); font-size: 10.5px;
+  }
+  .metric b { color: #e2e8f0; font-weight: 600; }
+  .metric.accent { color: #bfdbfe; border-color: rgba(96, 165, 250, .35); background: rgba(30, 64, 175, .16); }
+  .console-output {
+    margin: 9px 12px 0;
+    padding: 10px 12px;
+    min-height: 120px;
+    max-height: 230px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #060b15;
+    color: #d1fae5;
+    font-family: var(--mono); font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .console-output.empty { color: var(--dim); font-style: italic; }
+  .stderr-wrap { margin: 8px 12px 12px; }
+  .stderr-wrap summary {
+    cursor: pointer; color: var(--dim); font-size: 10.5px;
+    font-family: var(--mono); user-select: none;
+  }
+  .stderr-wrap summary:hover { color: var(--muted); }
+  .console-stderr {
+    margin: 6px 0 0; padding: 8px 10px;
+    max-height: 180px; overflow: auto;
+    border-radius: 7px;
+    background: rgba(127, 29, 29, .12);
+    border: 1px solid rgba(248, 113, 113, .18);
+    color: #fecaca;
+    font-family: var(--mono); font-size: 11px; line-height: 1.45;
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 22px; z-index: 100;
+    transform: translate(-50%, 16px);
+    max-width: min(720px, calc(100vw - 32px));
+    padding: 10px 14px;
+    border-radius: 9px;
+    border: 1px solid var(--border-strong);
+    background: #16233a;
+    color: var(--text);
+    font-size: 12.5px;
+    box-shadow: 0 18px 50px -18px rgba(0, 0, 0, .9);
+    opacity: 0; pointer-events: none;
+    transition: opacity .18s, transform .18s;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.error { border-color: rgba(248, 113, 113, .5); background: #2a1118; color: #fecaca; }
+
+  footer {
+    max-width: 1680px; margin: 0 auto;
+    padding: 0 20px 24px;
+    color: #475569; font-size: 11px; line-height: 1.5;
+    display: flex; flex-wrap: wrap; gap: 6px 16px;
+  }
+  footer b { color: var(--muted); font-weight: 600; }
+  kbd {
+    padding: 1px 5px; border-radius: 4px;
+    border: 1px solid var(--border-strong);
+    background: #0f172a;
+    font-family: var(--mono); font-size: 10px; color: #cbd5e1;
+  }
+
+  @media (max-width: 1080px) {
+    main.layout {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "editor" "meta" "ast" "diff" "python" "native";
+    }
+    .editor-shell { height: 420px; }
+    .diff-grid { grid-template-columns: 1fr; }
+    .diff-column + .diff-column { border-left: 0; border-top: 1px solid var(--border); }
+  }
+  @media (max-width: 640px) {
+    .app-header { padding: 10px 12px; align-items: flex-start; flex-direction: column; }
+    main.layout { padding: 12px; }
+    .brand p { display: none; }
+    .header-right { width: 100%; justify-content: space-between; }
+    .status-pills { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="app-header">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">◈</div>
+    <div>
+      <h1>Polyglot Visualizer</h1>
+      <p>AST · monomorphization · dual-backend execution</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="status-pills">
+      <span class="pill" id="health-pill"><span class="dot"></span>connecting…</span>
+      <span class="pill" id="timing-pill">—</span>
+      <span class="pill warn" title="Programs submitted here execute on this machine. The server is not a sandbox.">trusted local execution</span>
+    </div>
+    <button class="btn ghost" id="analyze-btn" type="button">Re-analyze</button>
+    <button class="btn primary" id="run-btn" type="button">
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="run-label">Run both</span>
+    </button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="panel editor-panel">
+    <header class="panel-head">
+      <div>
+        <h2>Source</h2>
+        <span class="hint">Edit to re-parse · <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run</span>
+      </div>
+      <div class="editor-tools">
+        <span class="mini" id="cursor-pill">Ln 1, Col 1</span>
+      </div>
+    </header>
+    <div class="editor-shell" id="editor-shell">
+      <pre id="highlight" aria-hidden="true"></pre>
+      <textarea id="source" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Polyglot source code"></textarea>
+    </div>
+    <div class="diagnostics" id="diagnostics" aria-live="polite">
+      <div class="empty">No diagnostics.</div>
+    </div>
+  </section>
+
+  <section class="panel meta-panel">
+    <header class="panel-head">
+      <div>
+        <h2>Monomorphization summary</h2>
+        <span class="hint">generic declaration → concrete instantiation</span>
+      </div>
+      <span class="mini" id="mono-count"></span>
+    </header>
+    <div class="chips" id="instantiations">
+      <div class="empty">Waiting for analysis…</div>
+    </div>
+    <div class="legend" aria-label="AST node colors">
+      <span class="lg"><span class="swatch" style="background:#60a5fa"></span>function</span>
+      <span class="lg"><span class="swatch" style="background:#34d399"></span>struct</span>
+      <span class="lg"><span class="swatch" style="background:#a78bfa"></span>enum</span>
+      <span class="lg"><span class="swatch" style="background:#f59e0b"></span>impl</span>
+      <span class="lg"><span class="swatch" style="background:#f472b6"></span>generic</span>
+      <span class="lg"><span class="swatch" style="background:#22d3ee"></span>type</span>
+      <span class="lg"><span class="swatch" style="background:#c084fc"></span>pattern</span>
+      <span class="lg"><span class="swatch" style="background:#94a3b8"></span>expression</span>
+    </div>
+    <div class="facts">
+      <div class="fact"><span>Source</span><b id="fact-source">—</b></div>
+      <div class="fact"><span>AST items</span><b id="fact-items">—</b></div>
+      <div class="fact"><span>Generic decls</span><b id="fact-generics">—</b></div>
+      <div class="fact"><span>Concrete decls</span><b id="fact-concrete">—</b></div>
+      <div class="fact"><span>Diagnostics</span><b id="fact-diagnostics">—</b></div>
+      <div class="fact"><span>Tree cap</span><b>20k nodes</b></div>
+    </div>
+    <div class="pipeline">
+      <span class="step" id="step-parse">lex + parse <b>—</b></span>
+      <span class="pipe-arrow">→</span>
+      <span class="step" id="step-mono">monomorphize <b>—</b></span>
+      <span class="pipe-arrow">→</span>
+      <span class="step" id="step-backends">backends <b>python · native</b></span>
+    </div>
+  </section>
+
+  <section class="panel ast-panel">
+    <header class="panel-head">
+      <div>
+        <h2>Abstract syntax tree</h2>
+        <span class="hint">click a node to highlight its source span</span>
+      </div>
+      <span class="mini" id="ast-count"></span>
+    </header>
+    <div class="ast-tree" id="ast">
+      <div class="empty">Waiting for analysis…</div>
+    </div>
+  </section>
+
+  <section class="panel diff-panel">
+    <header class="panel-head">
+      <div>
+        <h2>Monomorphization inspector</h2>
+        <span class="hint">generic source vs. fully concrete output</span>
+      </div>
+      <span class="mini" id="diff-summary"></span>
+    </header>
+    <div class="diff-grid">
+      <div class="diff-column">
+        <div class="diff-head"><span>generic source</span><span id="diff-generic-meta"></span></div>
+        <div class="code-lines" id="diff-generic"></div>
+      </div>
+      <div class="diff-column">
+        <div class="diff-head"><span>monomorphized source</span><span id="diff-concrete-meta"></span></div>
+        <div class="code-lines" id="diff-concrete"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel console-panel" id="panel-python" data-backend="python">
+    <header class="panel-head">
+      <div class="console-title">
+        <span class="status-dot" aria-hidden="true"></span>
+        <h2>Python backend</h2>
+        <span class="console-status">idle</span>
+      </div>
+      <span class="mini">AST → Python</span>
+    </header>
+    <div class="metrics"></div>
+    <pre class="console-output empty">Press “Run both” to execute.</pre>
+    <details class="stderr-wrap"><summary>stderr</summary><pre class="console-stderr"></pre></details>
+  </section>
+
+  <section class="panel console-panel" id="panel-native" data-backend="native">
+    <header class="panel-head">
+      <div class="console-title">
+        <span class="status-dot" aria-hidden="true"></span>
+        <h2>Native backend</h2>
+        <span class="console-status">idle</span>
+      </div>
+      <span class="mini">Rust + PyO3</span>
+    </header>
+    <div class="metrics"></div>
+    <pre class="console-output empty">Press “Run both” to execute.</pre>
+    <details class="stderr-wrap"><summary>stderr</summary><pre class="console-stderr"></pre></details>
+  </section>
+</main>
+
+<footer>
+  <span><b>Diagnostics</b> E001–E008 are captured with exact character spans.</span>
+  <span><b>Analysis</b> is read-only and never executes source.</span>
+  <span><b>Run</b> executes trusted local code in isolated subprocesses.</span>
+</footer>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+
+const SAMPLE = `// Generics expand in the inspector; Run compiles on both backends.
+struct Box<T: Clone> { value: T }
+
+impl<T: Clone> Box<T> {
+    fn new(value: T) -> Box<T> { Box { value: value } }
+    fn get(&self) -> T { self.value.clone() }
+}
+
+fn identity<T>(x: T) -> T { x }
+
+fn main() -> i64 {
+    let a: Box<i64> = Box::new(40);
+    let b: Box<String> = Box::new("polyglot".to_string());
+    println!("string length: {}", b.get().len() as i64);
+    a.get() + identity::<i64>(2)
+}
+`;
+
+const BACKENDS = ["python", "native"];
+
+const els = {
+  source: document.getElementById("source"),
+  highlight: document.getElementById("highlight"),
+  editorShell: document.getElementById("editor-shell"),
+  diagnostics: document.getElementById("diagnostics"),
+  ast: document.getElementById("ast"),
+  astCount: document.getElementById("ast-count"),
+  instChips: document.getElementById("instantiations"),
+  monoCount: document.getElementById("mono-count"),
+  diffGeneric: document.getElementById("diff-generic"),
+  diffConcrete: document.getElementById("diff-concrete"),
+  diffGenericMeta: document.getElementById("diff-generic-meta"),
+  diffConcreteMeta: document.getElementById("diff-concrete-meta"),
+  diffSummary: document.getElementById("diff-summary"),
+  healthPill: document.getElementById("health-pill"),
+  timingPill: document.getElementById("timing-pill"),
+  cursorPill: document.getElementById("cursor-pill"),
+  analyzeBtn: document.getElementById("analyze-btn"),
+  runBtn: document.getElementById("run-btn"),
+  runLabel: document.getElementById("run-label"),
+  stepParse: document.getElementById("step-parse"),
+  stepMono: document.getElementById("step-mono"),
+  stepBackends: document.getElementById("step-backends"),
+  factSource: document.getElementById("fact-source"),
+  factItems: document.getElementById("fact-items"),
+  factGenerics: document.getElementById("fact-generics"),
+  factConcrete: document.getElementById("fact-concrete"),
+  factDiagnostics: document.getElementById("fact-diagnostics"),
+  toast: document.getElementById("toast"),
+  panels: {
+    python: document.getElementById("panel-python"),
+    native: document.getElementById("panel-native"),
+  },
+};
+
+const state = {
+  analysis: null,
+  analyzeDiagnostics: [],
+  runDiagnostics: [],
+  runResults: [],
+  focusSpan: null,
+  selectedRow: null,
+  running: false,
+  lastRunSource: null,
+  analyzeTimer: null,
+  analyzeSeq: 0,
+  analyzeController: null,
+  toastTimer: null,
+};
+
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (ch) => {
+    if (ch === "&") return "&amp;";
+    if (ch === "<") return "&lt;";
+    if (ch === ">") return "&gt;";
+    if (ch === '"') return "&quot;";
+    return "&#39;";
+  });
+}
+
+function clamp(value, low, high) {
+  return Math.max(low, Math.min(high, value));
+}
+
+function formatMs(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "—";
+  }
+  const ms = Number(value);
+  if (ms < 1) return ms.toFixed(2) + " ms";
+  if (ms < 1000) return ms.toFixed(1) + " ms";
+  return (ms / 1000).toFixed(2) + " s";
+}
+
+function formatBytes(value) {
+  if (!Number.isFinite(Number(value)) || value === null || value === undefined) {
+    return "—";
+  }
+  let bytes = Number(value);
+  const units = ["B", "KiB", "MiB", "GiB"];
+  let unit = 0;
+  while (bytes >= 1024 && unit < units.length - 1) {
+    bytes /= 1024;
+    unit += 1;
+  }
+  return (unit === 0 ? bytes.toFixed(0) : bytes.toFixed(1)) + " " + units[unit];
+}
+
+function formatValue(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  try {
+    const text = JSON.stringify(value);
+    return text.length > 90 ? text.slice(0, 87) + "..." : text;
+  } catch {
+    return String(value);
+  }
+}
+
+function make(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function toast(message, isError) {
+  els.toast.textContent = message;
+  els.toast.className = "toast show" + (isError ? " error" : "");
+  clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => {
+    els.toast.className = "toast" + (isError ? " error" : "");
+  }, 4200);
+}
+
+async function postJSON(url, body, signal) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
+  if (!response.ok) {
+    const message =
+      data && typeof data.error === "string"
+        ? data.error
+        : "HTTP " + response.status + " " + response.statusText;
+    throw new Error(message);
+  }
+  if (!data || typeof data !== "object") {
+    throw new Error("invalid JSON response from server");
+  }
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Source coordinates and editor overlay
+// ---------------------------------------------------------------------------
+
+function lineStartOffsets(text) {
+  const offsets = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === "\n") offsets.push(index + 1);
+  }
+  return offsets;
+}
+
+function offsetFromLineCol(text, line, col) {
+  const starts = lineStartOffsets(text);
+  const index = clamp(Number(line) - 1, 0, starts.length - 1);
+  return clamp(starts[index] + Math.max(0, Number(col) - 1), 0, text.length);
+}
+
+function lineColFromOffset(text, offset) {
+  const safe = clamp(offset, 0, text.length);
+  const before = text.slice(0, safe);
+  const line = before.split("\n").length;
+  const last = before.lastIndexOf("\n");
+  return { line, col: safe - last };
+}
+
+function spanForDiagnostic(diagnostic) {
+  const text = els.source.value;
+  if (
+    Array.isArray(diagnostic.span) &&
+    diagnostic.span.length === 2 &&
+    Number.isFinite(Number(diagnostic.span[0])) &&
+    Number.isFinite(Number(diagnostic.span[1])) &&
+    Number(diagnostic.span[1]) > Number(diagnostic.span[0])
+  ) {
+    const start = clamp(Number(diagnostic.span[0]), 0, text.length);
+    const end = clamp(Number(diagnostic.span[1]), start, text.length);
+    if (end > start) return [start, end];
+  }
+  if (
+    Number.isFinite(Number(diagnostic.line)) &&
+    Number.isFinite(Number(diagnostic.col))
+  ) {
+    const start = offsetFromLineCol(text, diagnostic.line, diagnostic.col);
+    const match = text.slice(start).match(/[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|\S/);
+    return [start, clamp(start + (match ? match[0].length : 1), 0, text.length)];
+  }
+  return null;
+}
+
+function renderMarked(text, spans) {
+  const cleaned = spans
+    .filter(
+      (span) =>
+        Number.isFinite(span.start) &&
+        Number.isFinite(span.end) &&
+        span.end > span.start
+    )
+    .map((span) => ({
+      start: clamp(span.start, 0, text.length),
+      end: clamp(span.end, 0, text.length),
+      cls: span.cls,
+    }))
+    .sort((left, right) => {
+      if (left.start !== right.start) return left.start - right.start;
+      return left.cls === "diag-span" ? -1 : 1;
+    });
+
+  let html = "";
+  let cursor = 0;
+  for (const span of cleaned) {
+    if (span.end <= cursor) continue;
+    if (span.start < cursor) continue;
+    html += escapeHtml(text.slice(cursor, span.start));
+    html += '<span class="' + span.cls + '">';
+    html += escapeHtml(text.slice(span.start, span.end));
+    html += "</span>";
+    cursor = span.end;
+  }
+  html += escapeHtml(text.slice(cursor));
+  return html;
+}
+
+function activeDiagnostics() {
+  const merged = [];
+  const seen = new Set();
+  const add = (diagnostic, backend) => {
+    const key = [
+      diagnostic.code || "",
+      diagnostic.line || "",
+      diagnostic.col || "",
+      diagnostic.message || "",
+      backend || diagnostic.backend || "",
+    ].join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push({ ...diagnostic, backend: backend || diagnostic.backend || null });
+  };
+  for (const diagnostic of state.analyzeDiagnostics) add(diagnostic);
+  for (const diagnostic of state.runDiagnostics) add(diagnostic);
+  merged.sort((left, right) => {
+    const leftLine = Number.isFinite(Number(left.line)) ? Number(left.line) : 1e9;
+    const rightLine = Number.isFinite(Number(right.line)) ? Number(right.line) : 1e9;
+    if (leftLine !== rightLine) return leftLine - rightLine;
+    const leftCol = Number.isFinite(Number(left.col)) ? Number(left.col) : 1e9;
+    const rightCol = Number.isFinite(Number(right.col)) ? Number(right.col) : 1e9;
+    return leftCol - rightCol;
+  });
+  return merged;
+}
+
+function renderEditorHighlight() {
+  const text = els.source.value;
+  const spans = [];
+  for (const diagnostic of activeDiagnostics()) {
+    const span = spanForDiagnostic(diagnostic);
+    if (span) spans.push({ start: span[0], end: span[1], cls: "diag-span" });
+  }
+  if (state.focusSpan) {
+    spans.push({
+      start: state.focusSpan[0],
+      end: state.focusSpan[1],
+      cls: "focus-span",
+    });
+  }
+  els.highlight.innerHTML = renderMarked(text, spans) + "\n";
+}
+
+function updateFacts() {
+  const text = els.source.value;
+  const lines = text ? text.split("\n").length : 0;
+  const bytes = new TextEncoder().encode(text).length;
+  els.factSource.textContent = lines + " lines · " + formatBytes(bytes);
+
+  const original = state.analysis && state.analysis.original;
+  const monomorphized = state.analysis && state.analysis.monomorphized;
+  els.factItems.textContent = original ? String(original.item_count) : "—";
+  els.factGenerics.textContent = original ? String(original.generic_count) : "—";
+  els.factConcrete.textContent = monomorphized
+    ? String(monomorphized.item_count)
+    : "—";
+
+  const diagnostics = activeDiagnostics();
+  els.factDiagnostics.textContent = diagnostics.length
+    ? String(diagnostics.length)
+    : "clean";
+  els.factDiagnostics.className = diagnostics.length ? "bad" : "good";
+}
+
+function renderDiagnostics() {
+  const diagnostics = activeDiagnostics();
+  els.diagnostics.replaceChildren();
+  updateFacts();
+  if (!diagnostics.length) {
+    els.diagnostics.append(
+      make("div", "empty", "No diagnostics — the source parses and monomorphizes cleanly.")
+    );
+    return;
+  }
+  for (const diagnostic of diagnostics) {
+    const button = make("button", "diag");
+    button.type = "button";
+    const code = make(
+      "span",
+      "diag-code" + (diagnostic.code ? " coded" : ""),
+      diagnostic.code || "ERROR"
+    );
+    const body = make("span", "diag-body");
+    const message = make(
+      "span",
+      "diag-msg",
+      diagnostic.message || "translation failed"
+    );
+    const meta = make("span", "diag-meta");
+    const bits = [];
+    if (diagnostic.backend) bits.push(diagnostic.backend);
+    else if (diagnostic.phase) bits.push(diagnostic.phase);
+    if (Number.isFinite(Number(diagnostic.line))) {
+      let location = "line " + diagnostic.line;
+      if (Number.isFinite(Number(diagnostic.col))) {
+        location += ", col " + diagnostic.col;
+      }
+      bits.push(location);
+    }
+    if (diagnostic.help) bits.push(diagnostic.help);
+    meta.textContent = bits.join(" · ");
+    body.append(message, meta);
+    button.append(code, body);
+    if (diagnostic.detail) button.title = String(diagnostic.detail);
+    button.addEventListener("click", () => focusDiagnostic(diagnostic));
+    els.diagnostics.append(button);
+  }
+}
+
+function focusRange(start, end) {
+  state.focusSpan = [start, end];
+  els.source.focus({ preventScroll: true });
+  els.source.setSelectionRange(start, end);
+  renderEditorHighlight();
+  scrollEditorToOffset(start);
+}
+
+function scrollEditorToOffset(offset) {
+  const { line } = lineColFromOffset(els.source.value, offset);
+  const lineHeight =
+    parseFloat(getComputedStyle(els.source).lineHeight) ||
+    parseFloat(getComputedStyle(els.source).fontSize) * 1.55 ||
+    20;
+  const target = Math.max(0, (line - 1) * lineHeight - els.source.clientHeight / 3);
+  els.source.scrollTop = target;
+  els.highlight.scrollTop = target;
+  els.highlight.scrollLeft = els.source.scrollLeft;
+}
+
+function focusDiagnostic(diagnostic) {
+  const span = spanForDiagnostic(diagnostic);
+  if (span) {
+    focusRange(span[0], span[1]);
+    return;
+  }
+  if (Number.isFinite(Number(diagnostic.line))) {
+    const start = offsetFromLineCol(els.source.value, diagnostic.line, 1);
+    focusRange(start, Math.min(start + 1, els.source.value.length));
+  }
+}
+
+function updateCursor() {
+  const { line, col } = lineColFromOffset(
+    els.source.value,
+    els.source.selectionStart || 0
+  );
+  els.cursorPill.textContent = "Ln " + line + ", Col " + col;
+}
+
+// ---------------------------------------------------------------------------
+// Analysis
+// ---------------------------------------------------------------------------
+
+function scheduleAnalyze() {
+  clearTimeout(state.analyzeTimer);
+  state.analyzeTimer = setTimeout(runAnalyze, 320);
+}
+
+async function runAnalyze() {
+  clearTimeout(state.analyzeTimer);
+  const source = els.source.value;
+  const seq = ++state.analyzeSeq;
+  if (state.analyzeController) state.analyzeController.abort();
+  const controller = new AbortController();
+  state.analyzeController = controller;
+  els.analyzeBtn.classList.add("busy");
+  els.analyzeBtn.disabled = true;
+  try {
+    const data = await postJSON("/api/analyze", { source }, controller.signal);
+    if (seq !== state.analyzeSeq) return;
+    state.analysis = data;
+    state.analyzeDiagnostics = Array.isArray(data.diagnostics)
+      ? data.diagnostics
+      : [];
+    renderAST(data);
+    renderMonomorphization(data);
+    updateTiming(data);
+    renderDiagnostics();
+    renderEditorHighlight();
+  } catch (error) {
+    if (error.name === "AbortError" || seq !== state.analyzeSeq) return;
+    toast("Analysis failed: " + error.message, true);
+  } finally {
+    if (seq === state.analyzeSeq) {
+      els.analyzeBtn.classList.remove("busy");
+      els.analyzeBtn.disabled = false;
+    }
+  }
+}
+
+function updateTiming(analysis) {
+  const timing = (analysis && analysis.timing) || {};
+  const parts = [];
+  if (Number.isFinite(Number(timing.parse_ms))) {
+    parts.push("parse " + formatMs(timing.parse_ms));
+  }
+  if (Number.isFinite(Number(timing.monomorphize_ms))) {
+    parts.push("mono " + formatMs(timing.monomorphize_ms));
+  }
+  if (Number.isFinite(Number(timing.total_ms))) {
+    parts.push("total " + formatMs(timing.total_ms));
+  }
+  els.timingPill.textContent = parts.join(" · ") || "—";
+
+  const parseValue = els.stepParse.querySelector("b");
+  const monoValue = els.stepMono.querySelector("b");
+  parseValue.textContent = Number.isFinite(Number(timing.parse_ms))
+    ? formatMs(timing.parse_ms)
+    : "—";
+  monoValue.textContent = Number.isFinite(Number(timing.monomorphize_ms))
+    ? formatMs(timing.monomorphize_ms)
+    : analysis && analysis.original
+      ? "skipped"
+      : "—";
+}
+
+// ---------------------------------------------------------------------------
+// AST tree
+// ---------------------------------------------------------------------------
+
+function nodeSpan(node) {
+  const text = els.source.value;
+  if (
+    Array.isArray(node.span) &&
+    node.span.length === 2 &&
+    Number.isFinite(Number(node.span[0])) &&
+    Number(node.span[1]) > Number(node.span[0])
+  ) {
+    return [
+      clamp(Number(node.span[0]), 0, text.length),
+      clamp(Number(node.span[1]), 0, text.length),
+    ];
+  }
+  if (Number.isFinite(Number(node.line)) && Number(node.line) > 0) {
+    const start = offsetFromLineCol(
+      text,
+      Number(node.line),
+      Number(node.col) || 1
+    );
+    const match = text.slice(start).match(/[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|\S/);
+    return [start, clamp(start + (match ? match[0].length : 1), 0, text.length)];
+  }
+  return null;
+}
+
+function createTreeNode(node, depth) {
+  const box = make("div", "node");
+  const row = make("div", "node-row");
+  row.dataset.cat = node.category || "expression";
+  const children = Array.isArray(node.children) ? node.children : [];
+
+  const toggle = make("span", "toggle");
+  const canToggle = children.length > 0;
+  let loaded = false;
+  const childBox = make("div", "node-children");
+
+  const loadChildren = () => {
+    if (loaded) return;
+    loaded = true;
+    for (const child of children) {
+      childBox.append(createTreeNode(child, depth + 1));
+    }
+  };
+
+  const setOpen = (open) => {
+    box.classList.toggle("open", open);
+    if (open) loadChildren();
+    toggle.textContent = canToggle ? (open ? "▾" : "▸") : "·";
+  };
+
+  const toggleOpen = () => {
+    if (!canToggle) return;
+    setOpen(!box.classList.contains("open"));
+  };
+
+  const initiallyOpen = depth < 2 && children.length > 0 && children.length <= 80;
+
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleOpen();
+  });
+
+  row.addEventListener("click", () => {
+    if (state.selectedRow) state.selectedRow.classList.remove("selected");
+    state.selectedRow = row;
+    row.classList.add("selected");
+    const span = nodeSpan(node);
+    if (span) focusRange(span[0], span[1]);
+  });
+
+  row.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    toggleOpen();
+  });
+
+  const role = node.role || null;
+  row.append(toggle);
+  if (role) row.append(make("span", "role", role));
+  row.append(make("span", "type-badge", node.type || "Node"));
+  const label = make("span", "node-label", node.label || "");
+  if ((node.label || "").length > 72) label.classList.add("truncate");
+  row.append(label);
+  if (Number.isFinite(Number(node.line)) && Number(node.line) > 0) {
+    row.append(
+      make(
+        "span",
+        "node-loc",
+        node.col ? node.line + ":" + node.col : String(node.line)
+      )
+    );
+  }
+  if (children.length) {
+    row.append(make("span", "kids-count", "(" + children.length + ")"));
+  }
+  if (node.props && Object.keys(node.props).length) {
+    row.title = Object.entries(node.props)
+      .slice(0, 12)
+      .map(([key, value]) => key + ": " + String(value))
+      .join("\n");
+  }
+
+  box.append(row, childBox);
+  setOpen(initiallyOpen);
+  return box;
+}
+
+function renderAST(analysis) {
+  els.ast.replaceChildren();
+  const original = analysis && analysis.original;
+  if (!original || !original.tree) {
+    els.ast.append(make("div", "empty", "No AST: fix the parse error above."));
+    els.astCount.textContent = "";
+    return;
+  }
+  els.ast.append(createTreeNode(original.tree, 0));
+  els.astCount.textContent =
+    original.item_count + " items · " + original.generic_count + " generic";
+}
+
+// ---------------------------------------------------------------------------
+// Monomorphization inspector
+// ---------------------------------------------------------------------------
+
+function renderMonomorphization(analysis) {
+  els.instChips.replaceChildren();
+  const monomorphized = analysis && analysis.monomorphized;
+  const originalSource =
+    (analysis && analysis.original && analysis.original.source) || els.source.value;
+
+  if (!monomorphized) {
+    els.instChips.append(
+      make("div", "empty", "No concrete output: monomorphization did not complete.")
+    );
+    els.monoCount.textContent = "";
+    els.diffSummary.textContent = "";
+    renderDiff(originalSource, "");
+    return;
+  }
+
+  const instantiations = Array.isArray(monomorphized.instantiations)
+    ? monomorphized.instantiations
+    : [];
+  if (!instantiations.length) {
+    els.instChips.append(
+      make("div", "empty", "No generic instantiations in this program.")
+    );
+  } else {
+    for (const instantiation of instantiations) {
+      const chip = make("button", "chip");
+      chip.type = "button";
+      chip.title =
+        (instantiation.signature || "") +
+        "\nClick to reveal in the concrete source.";
+      chip.append(
+        make("span", "base", instantiation.base),
+        make("span", "arrow", "→"),
+        make("span", "concrete", instantiation.concrete),
+        make("span", "kind", instantiation.kind || "")
+      );
+      chip.addEventListener("click", () =>
+        revealInConcrete(instantiation.concrete, monomorphized.source)
+      );
+      els.instChips.append(chip);
+    }
+  }
+  els.monoCount.textContent = instantiations.length + " concrete decls";
+  els.diffSummary.textContent =
+    monomorphized.item_count + " items after expansion";
+  renderDiff(originalSource, monomorphized.source || "");
+}
+
+function diffLines(left, right) {
+  const n = left.length;
+  const m = right.length;
+  if (n * m > 2000000) {
+    const fallback = [];
+    left.forEach((text, index) =>
+      fallback.push({ type: "removed", text, a: index + 1 })
+    );
+    right.forEach((text, index) =>
+      fallback.push({ type: "added", text, b: index + 1 })
+    );
+    return fallback;
+  }
+  const table = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      table[i][j] =
+        left[i] === right[j]
+          ? table[i + 1][j + 1] + 1
+          : Math.max(table[i + 1][j], table[i][j + 1]);
+    }
+  }
+  const ops = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (left[i] === right[j]) {
+      ops.push({ type: "same", text: left[i], a: i + 1, b: j + 1 });
+      i += 1;
+      j += 1;
+    } else if (table[i + 1][j] >= table[i][j + 1]) {
+      ops.push({ type: "removed", text: left[i], a: i + 1 });
+      i += 1;
+    } else {
+      ops.push({ type: "added", text: right[j], b: j + 1 });
+      j += 1;
+    }
+  }
+  while (i < n) {
+    ops.push({ type: "removed", text: left[i], a: i + 1 });
+    i += 1;
+  }
+  while (j < m) {
+    ops.push({ type: "added", text: right[j], b: j + 1 });
+    j += 1;
+  }
+  return ops;
+}
+
+function diffRow(entry, lineNumber) {
+  const row = make("div", "diff-line " + entry.type);
+  row.append(make("span", "ln", String(lineNumber)));
+  row.append(make("code", "", entry.text.length ? entry.text : " "));
+  row.dataset.line = String(lineNumber);
+  return row;
+}
+
+function renderDiff(leftText, rightText) {
+  const left = leftText.split("\n");
+  const right = rightText ? rightText.split("\n") : [];
+  els.diffGenericMeta.textContent = left.length + " lines";
+  els.diffConcreteMeta.textContent = right.length ? right.length + " lines" : "";
+
+  els.diffGeneric.replaceChildren();
+  els.diffConcrete.replaceChildren();
+
+  if (!rightText) {
+    for (let index = 0; index < left.length; index += 1) {
+      els.diffGeneric.append(
+        diffRow({ type: "removed", text: left[index] }, index + 1)
+      );
+    }
+    els.diffConcrete.append(
+      make("div", "code-note", "No monomorphized source is available.")
+    );
+    return;
+  }
+
+  const ops = diffLines(left, right);
+  const leftEntries = ops.filter((entry) => entry.type !== "added");
+  const rightEntries = ops.filter((entry) => entry.type !== "removed");
+
+  for (const entry of leftEntries) {
+    const type = entry.type === "removed" ? "removed" : "same";
+    els.diffGeneric.append(diffRow({ ...entry, type }, entry.a));
+  }
+  for (const entry of rightEntries) {
+    const type = entry.type === "added" ? "added" : "same";
+    els.diffConcrete.append(diffRow({ ...entry, type }, entry.b));
+  }
+}
+
+function revealInConcrete(name, concreteSource) {
+  if (!concreteSource) return;
+  const index = concreteSource.indexOf(name);
+  if (index < 0) return;
+  const lineNumber = concreteSource.slice(0, index).split("\n").length;
+  const row = els.diffConcrete.querySelector(
+    '.diff-line[data-line="' + lineNumber + '"]'
+  );
+  if (!row) return;
+  els.diffConcrete.scrollTop = Math.max(
+    0,
+    row.offsetTop - els.diffConcrete.clientHeight / 2
+  );
+  row.classList.remove("flash");
+  void row.offsetWidth;
+  row.classList.add("flash");
+  setTimeout(() => row.classList.remove("flash"), 1500);
+}
+
+// ---------------------------------------------------------------------------
+// Execution results
+// ---------------------------------------------------------------------------
+
+function collectRunDiagnostics(results) {
+  const diagnostics = [];
+  for (const result of results) {
+    const backend = result.backend || "backend";
+    const own = Array.isArray(result.diagnostics) ? result.diagnostics : [];
+    for (const diagnostic of own) {
+      diagnostics.push({ ...diagnostic, backend });
+    }
+    if (result.timed_out) {
+      diagnostics.push({
+        code: null,
+        phase: backend,
+        backend,
+        message: "execution timed out",
+        note: "Timeout",
+        line: null,
+        col: null,
+        span: null,
+        detail: result.stderr || "",
+      });
+    } else if (!result.ok && own.length === 0 && (result.stderr || "").trim()) {
+      const firstLine = result.stderr.trim().split("\n")[0];
+      diagnostics.push({
+        code: null,
+        phase: backend,
+        backend,
+        message: firstLine,
+        note: "BackendProcess",
+        line: null,
+        col: null,
+        span: null,
+        detail: result.stderr,
+      });
+    }
+  }
+  return diagnostics;
+}
+
+function statusText(result) {
+  if (result.timed_out) return "timed out";
+  if (result.ok) return "ok";
+  return "failed";
+}
+
+function metric(label, value, accent) {
+  const chip = make("span", "metric" + (accent ? " accent" : ""));
+  chip.append(document.createTextNode(label + " "));
+  chip.append(make("b", "", value));
+  return chip;
+}
+
+function renderResult(result) {
+  const panel = els.panels[result.backend];
+  if (!panel) return;
+  const status = panel.querySelector(".console-status");
+  const metrics = panel.querySelector(".metrics");
+  const output = panel.querySelector(".console-output");
+  const details = panel.querySelector(".stderr-wrap");
+  const stderr = panel.querySelector(".console-stderr");
+
+  panel.classList.remove("running", "stale", "ok", "error");
+  panel.classList.add(result.ok ? "ok" : "error");
+  status.textContent = statusText(result);
+
+  metrics.replaceChildren();
+  metrics.append(
+    metric("compile", formatMs(result.compile_ms)),
+    metric("run", formatMs(result.run_ms)),
+    metric("peak", formatBytes(result.peak_memory_bytes)),
+    metric("exit", result.exit_code === null ? "—" : String(result.exit_code))
+  );
+  if (result.return_value !== null && result.return_value !== undefined) {
+    metrics.append(metric("returned", formatValue(result.return_value), true));
+  }
+  metrics.append(metric("wall", formatMs(result.duration_ms)));
+
+  let text = result.stdout || "";
+  if (result.timed_out) {
+    text +=
+      (text && !text.endsWith("\n") ? "\n" : "") +
+      "[visualizer] execution timed out; the process group was killed.";
+  }
+  output.textContent = text || "(no stdout)";
+  output.classList.toggle("empty", !text);
+
+  stderr.textContent = result.stderr || "(empty)";
+  details.open = !result.ok && Boolean((result.stderr || "").trim());
+}
+
+function markConsolesRunning() {
+  for (const backend of BACKENDS) {
+    const panel = els.panels[backend];
+    if (!panel) continue;
+    panel.classList.remove("ok", "error", "stale");
+    panel.classList.add("running");
+    panel.querySelector(".console-status").textContent = "compiling…";
+    panel.querySelector(".metrics").replaceChildren();
+    const output = panel.querySelector(".console-output");
+    output.textContent = "Compiling and executing…";
+    output.classList.add("empty");
+    const details = panel.querySelector(".stderr-wrap");
+    details.open = false;
+    panel.querySelector(".console-stderr").textContent = "";
+  }
+}
+
+function markConsolesStale() {
+  if (state.lastRunSource === null) return;
+  if (els.source.value === state.lastRunSource) return;
+  for (const backend of BACKENDS) {
+    const panel = els.panels[backend];
+    if (panel) panel.classList.add("stale");
+  }
+}
+
+function setRunBusy(busy) {
+  state.running = busy;
+  els.runBtn.disabled = busy;
+  els.runBtn.classList.toggle("running", busy);
+  els.runLabel.textContent = busy ? "Running…" : "Run both";
+}
+
+async function runBoth() {
+  if (state.running) return;
+  const source = els.source.value;
+  setRunBusy(true);
+  markConsolesRunning();
+  try {
+    const data = await postJSON("/api/run", {
+      source,
+      backends: BACKENDS,
+      timeout: 180,
+    });
+    state.lastRunSource = source;
+    state.runResults = Array.isArray(data.results) ? data.results : [];
+    state.runDiagnostics = collectRunDiagnostics(state.runResults);
+    for (const result of state.runResults) renderResult(result);
+    for (const backend of BACKENDS) {
+      if (!state.runResults.some((result) => result.backend === backend)) {
+        const panel = els.panels[backend];
+        if (panel) {
+          panel.classList.remove("running");
+          panel.classList.add("error");
+          panel.querySelector(".console-status").textContent = "no result";
+        }
+      }
+    }
+    renderDiagnostics();
+    renderEditorHighlight();
+    const okCount = state.runResults.filter((result) => result.ok).length;
+    els.timingPill.textContent =
+      "run " +
+      formatMs(data.duration_ms) +
+      " · " +
+      okCount +
+      "/" +
+      state.runResults.length +
+      " ok";
+    if (okCount < state.runResults.length) {
+      toast("One or more backends failed; see diagnostics below.", true);
+    }
+  } catch (error) {
+    toast("Run failed: " + error.message, true);
+    for (const backend of BACKENDS) {
+      const panel = els.panels[backend];
+      if (!panel) continue;
+      panel.classList.remove("running");
+      panel.classList.add("error");
+      panel.querySelector(".console-status").textContent = "request failed";
+      panel.querySelector(".console-output").textContent = error.message;
+      panel.querySelector(".console-output").classList.remove("empty");
+    }
+  } finally {
+    setRunBusy(false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Health, events, init
+// ---------------------------------------------------------------------------
+
+async function loadHealth() {
+  try {
+    const response = await fetch("/api/health", { cache: "no-store" });
+    const health = await response.json();
+    if (!response.ok || !health.ok) throw new Error("health check failed");
+    els.healthPill.replaceChildren();
+    els.healthPill.append(make("span", "dot"));
+    const native = health.native_available ? "native ready" : "native cargo missing";
+    els.healthPill.append(
+      document.createTextNode(
+        "python " + health.python + " · " + native
+      )
+    );
+    els.healthPill.className = "pill " + (health.native_available ? "ok" : "warn");
+    if (!health.native_available) {
+      toast(
+        "cargo was not found; the native backend will report a compile failure.",
+        true
+      );
+    }
+  } catch (error) {
+    els.healthPill.className = "pill bad";
+    els.healthPill.textContent = "server offline";
+    toast("Cannot reach the visualizer API: " + error.message, true);
+  }
+}
+
+function onSourceChanged() {
+  updateCursor();
+  state.focusSpan = null;
+  if (state.analysis) {
+    state.analyzeDiagnostics = [];
+  }
+  if (state.lastRunSource !== null && els.source.value !== state.lastRunSource) {
+    state.runDiagnostics = [];
+  }
+  markConsolesStale();
+  renderEditorHighlight();
+  updateFacts();
+  scheduleAnalyze();
+}
+
+function bindEvents() {
+  els.source.addEventListener("input", onSourceChanged);
+  els.source.addEventListener("keyup", updateCursor);
+  els.source.addEventListener("click", updateCursor);
+  els.source.addEventListener("select", updateCursor);
+  els.source.addEventListener("scroll", () => {
+    els.highlight.scrollTop = els.source.scrollTop;
+    els.highlight.scrollLeft = els.source.scrollLeft;
+  });
+  els.source.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      runBoth();
+      return;
+    }
+    if (event.key === "Tab" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      const start = els.source.selectionStart;
+      const end = els.source.selectionEnd;
+      els.source.setRangeText("    ", start, end, "end");
+      onSourceChanged();
+    }
+  });
+  els.analyzeBtn.addEventListener("click", runAnalyze);
+  els.runBtn.addEventListener("click", runBoth);
+  window.addEventListener("resize", () => {
+    els.highlight.scrollTop = els.source.scrollTop;
+    els.highlight.scrollLeft = els.source.scrollLeft;
+  });
+}
+
+function init() {
+  els.source.value = SAMPLE;
+  updateCursor();
+  renderEditorHighlight();
+  bindEvents();
+  loadHealth();
+  runAnalyze();
+}
+
+init();
+</script>
+</body>
+</html>
