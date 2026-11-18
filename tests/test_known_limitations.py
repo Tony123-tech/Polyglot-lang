@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from backends.python.translator import TranslateError, compile_rust
+from backends.python.translator import compile_rust
 from backends.rust.codegen import RustCodegen
 from lexer import lex
 from parser import ParseError, parse
@@ -83,15 +83,20 @@ def test_async_impl_method_native_codegen_returns_pyfuture():
     assert "let __self_value = self.value.clone();" in method
 
 
-def test_async_mut_self_method_native_codegen_is_rejected():
-    with pytest.raises(TranslateError) as excinfo:
-        _rust_source(
-            "struct Counter { value: i64 }\n"
-            "impl Counter { async fn bump(&mut self) { self.value += 1; } }\n"
-        )
-    message = str(excinfo.value)
-    assert "&mut self" in message
-    assert "not supported" in message
+def test_async_mut_self_method_native_codegen_uses_borrow_guard():
+    generated = _rust_source(
+        "struct Counter { value: i64 }\n"
+        "impl Counter { async fn bump(&mut self) { self.value += 1; } }\n"
+    )
+    method = generated.split("impl Counter")[-1]
+    assert (
+        "fn bump(slf: pyo3::Py<Self>, py: pyo3::Python<'_>) -> PyResult<PyFuture>"
+        in method
+    )
+    assert 'PolyglotBorrowGuard::acquire_mut(&__borrow_state, "Counter")' in method
+    assert "let mut __self_mut_value = __this.value.clone();" in method
+    assert "__this.value = __self_mut_value;" in method
+    assert "not supported" not in method
 
 
 # ---------------------------------------------------------------------------

@@ -828,6 +828,42 @@ fn polyglot_pending_future() -> PyFuture {
     py_future(std::future::pending::<PyResult<PyObject>>())
 }
 
+struct PolyglotBorrowGuard {
+    state: std::sync::Arc<std::sync::atomic::AtomicU8>,
+}
+
+impl PolyglotBorrowGuard {
+    fn acquire_mut(
+        state: &std::sync::Arc<std::sync::atomic::AtomicU8>,
+        type_name: &str,
+    ) -> pyo3::PyResult<Self> {
+        if state
+            .compare_exchange(
+                0,
+                2,
+                std::sync::atomic::Ordering::Acquire,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "{} is already borrowed by an active async method",
+                type_name
+            )));
+        }
+        Ok(Self {
+            state: state.clone(),
+        })
+    }
+}
+
+impl Drop for PolyglotBorrowGuard {
+    fn drop(&mut self) {
+        self.state.store(0, std::sync::atomic::Ordering::Release);
+    }
+}
+
+
 /// Poll `future` until it is ready or `seconds` elapse.
 ///
 /// Readiness is delivered by the reactor waker to a condition variable, so the
@@ -1196,6 +1232,13 @@ class RustCodegen:
             for item in node:
                 self._collect_async_self_usage(item, fields, bare)
 
+    def _prepare_async_mut_fields(self, fn: FnDecl) -> dict[str, str]:
+        struct_name = self._current_impl_type
+        if not struct_name:
+            return {}
+        fields = self.struct_field_types.get(struct_name, {})
+        return {name: f"__self_mut_{name}" for name in fields}
+
     def _prepare_async_self_fields(self, fn: FnDecl) -> dict[str, str]:
         """Return field aliases to clone before an async ``&self`` body runs."""
         fields: set[str] = set()
@@ -1306,29 +1349,59 @@ class RustCodegen:
         unsafe_prefix = "unsafe " if fn.is_unsafe else ""
 
         receiver_kind = self._async_receiver_kind(fn) if as_method else None
-        if fn.is_async and receiver_kind == "mut":
-            raise TranslateError(
-                f"async method '{fn.name}' takes `&mut self`; async &mut self "
-                "methods are not supported by the native backend yet"
-            )
         if fn.is_async and receiver_kind == "value":
             raise TranslateError(
                 f"async method '{fn.name}' takes `self` by value; async methods "
-                "must take `&self` or no receiver"
+                "must take `&self`, `&mut self`, or no receiver"
             )
 
         if fn.is_async:
             aliases: dict[str, str] = {}
             if receiver_kind == "shared" and fn.body is not None:
                 aliases = self._prepare_async_self_fields(fn)
+            elif receiver_kind == "mut" and fn.body is not None:
+                aliases = self._prepare_async_mut_fields(fn)
+                other_params = [
+                    p for p in param_str.split(", ") if "&mut self" not in p
+                ]
+                sig_parts = [
+                    "slf: pyo3::Py<Self>",
+                    "py: pyo3::Python<'_>",
+                    *other_params,
+                ]
+                param_str = ", ".join(sig_parts)
+
             self.emit(f"fn {fn.name}({param_str}) -> PyResult<PyFuture> {{")
             self.indent()
             previous_aliases = self._self_field_aliases
             self._self_field_aliases = aliases
-            for name, alias in aliases.items():
-                self.emit(f"let {alias} = self.{name}.clone();")
+
+            if receiver_kind == "mut":
+                impl_name = self._current_impl_type or "Self"
+                self.emit(
+                    "let __borrow_state = slf.borrow(py).__polyglot_borrow_state.clone();"
+                )
+                self.emit(
+                    f'let __borrow_guard = PolyglotBorrowGuard::acquire_mut(&__borrow_state, "{impl_name}")?;'
+                )
+                self.emit("{")
+                self.indent()
+                self.emit("let __this = slf.borrow(py);")
+                for name, alias in aliases.items():
+                    self.emit(f"let mut {alias} = __this.{name}.clone();")
+                self.dedent()
+                self.emit("}")
+            else:
+                for name, alias in aliases.items():
+                    self.emit(f"let {alias} = self.{name}.clone();")
+
             self.emit("Ok(py_future(async move {")
             self.indent()
+            if receiver_kind == "mut":
+                self.emit("let _guard = __borrow_guard;")
+                self.emit("let __async_res = async {")
+                self.indent()
+
             if fn.body is not None:
                 self.generate_block_body(
                     fn.body,
@@ -1339,6 +1412,23 @@ class RustCodegen:
                 self.emit("Err(pyo3::exceptions::PyRuntimeError::new_err(")
                 self.emit('    "async function has no body",')
                 self.emit("))")
+
+            if receiver_kind == "mut":
+                self.dedent()
+                self.emit("}.await;")
+                self.emit("if __async_res.is_ok() {")
+                self.indent()
+                self.emit("pyo3::Python::with_gil(|py| {")
+                self.indent()
+                self.emit("let mut __this = slf.borrow_mut(py);")
+                for name, alias in aliases.items():
+                    self.emit(f"__this.{name} = {alias};")
+                self.dedent()
+                self.emit("});")
+                self.dedent()
+                self.emit("}")
+                self.emit("__async_res")
+
             self.dedent()
             self.emit("}))")
             self._self_field_aliases = previous_aliases
@@ -1378,6 +1468,9 @@ class RustCodegen:
         for name, ty, _is_pub in s.fields:
             self.emit("#[pyo3(get, set)]")
             self.emit(f"{name}: {self.type_to_rust(ty)},")
+        self.emit(
+            "__polyglot_borrow_state: std::sync::Arc<std::sync::atomic::AtomicU8>,"
+        )
         self.dedent()
         self.emit("}")
         self.emit()
@@ -1473,10 +1566,10 @@ class RustCodegen:
                 self.emit(f"pyo3::Python::with_gil(|py| {tail}.into_py_any(py))")
             else:
                 self.emit(tail)
-        elif as_fn_body and not block.stmts:
+        elif as_fn_body:
             if async_wrap:
                 self.emit("pyo3::Python::with_gil(|py| ().into_py_any(py))")
-            else:
+            elif not block.stmts:
                 self.emit("()")
 
     def generate_stmt(self, stmt: Stmt) -> None:
@@ -2590,7 +2683,12 @@ class RustCodegen:
             return f"vec![{self.expr_to_rust(e.elem)}; {self.expr_to_rust(e.count)}]"
         if isinstance(e, StructLiteral):
             name = e.path.split("::")[-1]
-            fields = ", ".join(f"{k}: {self.expr_to_rust(v)}" for k, v in e.fields)
+            field_items = [f"{k}: {self.expr_to_rust(v)}" for k, v in e.fields]
+            if e.rest is None and name in self.struct_names:
+                field_items.append(
+                    "__polyglot_borrow_state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0))"
+                )
+            fields = ", ".join(field_items)
             rest = ""
             if e.rest is not None:
                 rest = f", ..{self.expr_to_rust(e.rest)}"
@@ -2992,11 +3090,12 @@ class RustCodegen:
                 elems += ","
             return f"({elems})"
         if isinstance(pat, PatStruct):
+            struct_short_name = pat.path.split("::")[-1]
             fields = ", ".join(
                 f"{name}: {self.pattern_to_rust(field_pattern)}"
                 for name, field_pattern in pat.fields
             )
-            if pat.rest:
+            if pat.rest or struct_short_name in self.struct_names:
                 fields = f"{fields}, .." if fields else ".."
             return f"{pat.path} {{ {fields} }}"
         if isinstance(pat, PatEnum):
