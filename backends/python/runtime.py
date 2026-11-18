@@ -408,3 +408,27 @@ def _iflet_match(opt, then_fn, else_fn):
     if hasattr(opt, "is_some") and hasattr(opt, "unwrap") and opt.is_some():
         return then_fn(opt.unwrap())
     return else_fn()
+
+
+def _saturating_op(
+    left, right, op: str, ty: str | None = None, target_width: int | None = None
+):
+    """Zig-style saturating arithmetic (+|, -|, *|) clamping to target integer bounds."""
+    if op == "+":
+        raw = left + right
+    elif op == "-":
+        raw = left - right
+    elif op == "*":
+        raw = left * right
+    else:
+        raise ValueError(f"unsupported saturating op {op!r}")
+
+    if ty is None or ty not in (*_INT_SPECS, "isize", "usize"):
+        # Default to i64 bounds when unannotated
+        ty = "i64"
+    lo, hi = _int_range(ty, target_width)
+    if raw < lo:
+        return lo
+    if raw > hi:
+        return hi
+    return raw

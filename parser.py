@@ -54,6 +54,7 @@ from ast_nodes import (
     Continue,
     EnumDecl,
     EnumVariant,
+    ErrDeferStmt,
     Expr,
     ExprStmt,
     Field,
@@ -167,9 +168,12 @@ INFIX_PREC: dict[TokenType, int] = {
     TokenType.AMP: 7,
     TokenType.PLUS: 8,
     TokenType.MINUS: 8,
+    TokenType.PLUS_PIPE: 8,
+    TokenType.MINUS_PIPE: 8,
     TokenType.STAR: 9,
     TokenType.SLASH: 9,
     TokenType.PERCENT: 9,
+    TokenType.STAR_PIPE: 9,
 }
 
 PREFIX_PREC = 10
@@ -316,7 +320,16 @@ class Parser:
                     self.advance()
                 args = "".join(t.value for t in self.tokens[start : self.i - 1])
             self.expect(TokenType.RBRACKET)
-            attrs.append(Attr(tok.line, tok.col, name_tok.value, args))
+            end_tok = self.tokens[self.i - 1]
+            attrs.append(
+                Attr(
+                    tok.line,
+                    tok.col,
+                    name_tok.value,
+                    args,
+                    span=(tok.pos, end_tok.pos + len(end_tok.value)),
+                )
+            )
         return attrs
 
     # ---- items -------------------------------------------------------------
@@ -350,6 +363,7 @@ class Parser:
                 is_async,
                 is_unsafe,
                 terminates=terminates,
+                attributes=attrs,
             )
         if tok.type == TokenType.STRUCT:
             return self.parse_struct(is_pub)
@@ -388,6 +402,7 @@ class Parser:
         is_unsafe: bool,
         *,
         terminates: bool = False,
+        attributes: list[Attr] | None = None,
     ) -> FnDecl:
         tok = self.expect(TokenType.FN)
         name = self.expect(TokenType.IDENT).value
@@ -421,6 +436,7 @@ class Parser:
             is_async,
             is_unsafe,
             terminates,
+            attributes or [],
             span=span,
         )
 
@@ -553,6 +569,7 @@ class Parser:
                     False,
                     False,
                     terminates=any(attr.name == "terminates" for attr in attrs),
+                    attributes=attrs,
                 )
                 items.append(TraitItem(fn.line, fn.col, fn, None))
             elif self.check(TokenType.TYPE):
@@ -962,6 +979,10 @@ class Parser:
                 stmts.append(self.parse_let())
                 continue
 
+            if self.check(TokenType.ERRDEFER):
+                stmts.append(self.parse_errdefer())
+                continue
+
             e = self.parse_expr()
             if (
                 self.eat(TokenType.SEMI)
@@ -1001,6 +1022,15 @@ class Parser:
             ):
                 return True
         return False
+
+    def parse_errdefer(self) -> ErrDeferStmt:
+        tok = self.expect(TokenType.ERRDEFER)
+        if self.check(TokenType.LBRACE):
+            body: Block | Expr = self.parse_block()
+        else:
+            body = self.parse_expr()
+            self.expect(TokenType.SEMI)
+        return ErrDeferStmt(tok.line, tok.col, body)
 
     def parse_let(self) -> LetStmt:
         tok = self.expect(TokenType.LET)
@@ -1055,6 +1085,9 @@ class Parser:
                     TokenType.MINUSEQ,
                     TokenType.STAREQ,
                     TokenType.SLASHEQ,
+                    TokenType.PLUS_PIPE_EQ,
+                    TokenType.MINUS_PIPE_EQ,
+                    TokenType.STAR_PIPE_EQ,
                 )
                 and min_prec <= ASSIGN_PREC
             ):
@@ -1187,6 +1220,9 @@ class Parser:
             TokenType.AMP: "&",
             TokenType.CARET: "^",
             TokenType.PIPE: "|",
+            TokenType.PLUS_PIPE: "+|",
+            TokenType.MINUS_PIPE: "-|",
+            TokenType.STAR_PIPE: "*|",
         }[ttype]
 
     def _at_expr_end(self) -> bool:

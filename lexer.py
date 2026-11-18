@@ -44,6 +44,7 @@ class TokenType(Enum):
 
     # keywords
     IF = auto()
+    ERRDEFER = auto()
     ELSE = auto()
     WHILE = auto()
     FOR = auto()
@@ -82,6 +83,12 @@ class TokenType(Enum):
     STAR = auto()
     SLASH = auto()
     PERCENT = auto()
+    PLUS_PIPE = auto()
+    MINUS_PIPE = auto()
+    STAR_PIPE = auto()
+    PLUS_PIPE_EQ = auto()
+    MINUS_PIPE_EQ = auto()
+    STAR_PIPE_EQ = auto()
 
     # comparison
     EQEQ = auto()
@@ -201,6 +208,7 @@ KEYWORDS: dict[str, TokenType] = {
     "async": TokenType.ASYNC,
     "await": TokenType.AWAIT,
     "dyn": TokenType.DYN,
+    "errdefer": TokenType.ERRDEFER,
 }
 
 
@@ -212,6 +220,12 @@ OPERATORS: list[tuple[str, TokenType]] = [
     # 3 chars
     ("..=", TokenType.DOTDOTEQ),
     ("...", TokenType.DOTDOTDOT),
+    ("+|=", TokenType.PLUS_PIPE_EQ),
+    ("-|=", TokenType.MINUS_PIPE_EQ),
+    ("*|=", TokenType.STAR_PIPE_EQ),
+    ("+|", TokenType.PLUS_PIPE),
+    ("-|", TokenType.MINUS_PIPE),
+    ("*|", TokenType.STAR_PIPE),
     # 2 chars
     ("::", TokenType.COLONCOLON),
     ("->", TokenType.ARROW),

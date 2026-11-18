@@ -28,6 +28,7 @@ __all__ = [
     "Continue",
     "EnumDecl",
     "EnumVariant",
+    "ErrDeferStmt",
     "Expr",
     "ExprStmt",
     "Field",
@@ -708,7 +709,14 @@ class ItemStmt(Node):
     item: Item
 
 
-Stmt = LetStmt | ExprStmt | ItemStmt
+@dataclass
+class ErrDeferStmt(Node):
+    """Zig-style errdefer: runs cleanup only when the enclosing function returns Err."""
+
+    body: Block | Expr
+
+
+Stmt = LetStmt | ExprStmt | ItemStmt | ErrDeferStmt
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +741,7 @@ class FnDecl(Node):
     is_async: bool = False
     is_unsafe: bool = False
     terminates: bool = False
+    attributes: list[Attr] = field(default_factory=list)
 
 
 @dataclass
