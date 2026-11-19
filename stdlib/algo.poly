@@ -145,3 +145,70 @@ fn count_occurrences(values: Vec<i64>, target: i64) -> i64 {
     }
     count
 }
+
+// Sum each non-overlapping window of `size` elements; a zero size yields [].
+fn chunk_sum(values: Vec<i64>, size: usize) -> Vec<i64> {
+    if size == 0 { return [].to_vec(); }
+    let chunks = values.chunks(size);
+    let mut out: Vec<i64> = [].to_vec();
+    let mut i = 0;
+    while i < chunks.len() {
+        out.push(sum(chunks[i].clone()));
+        i = i + 1;
+    }
+    out
+}
+
+// Prefix maxima: result[i] is the largest value in values[0..=i].
+fn running_max(values: Vec<i64>) -> Vec<i64> {
+    let mut out: Vec<i64> = [].to_vec();
+    if values.is_empty() { return out; }
+    let mut best = values[0];
+    let mut i = 0;
+    while i < values.len() {
+        if values[i] > best { best = values[i]; }
+        out.push(best);
+        i = i + 1;
+    }
+    out
+}
+
+fn find_index(values: Vec<i64>, target: i64) -> Option<i64> {
+    let mut i = 0;
+    while i < values.len() {
+        if values[i] == target { return Some(i as i64); }
+        i = i + 1;
+    }
+    None
+}
+
+fn all_equal(values: Vec<i64>) -> bool {
+    if values.len() < 2 { return true; }
+    let mut i = 1;
+    while i < values.len() {
+        if values[i] != values[0] { return false; }
+        i = i + 1;
+    }
+    true
+}
+
+// Rotate left by `k`, wrapping with a modulo so large k stays in range.
+fn rotate_left(values: Vec<i64>, k: usize) -> Vec<i64> {
+    let mut out = values.clone();
+    if out.is_empty() { return out; }
+    let amount = k % out.len();
+    out.rotate_left(amount);
+    out
+}
+
+// Element-wise sums, truncated to the shorter input.
+fn zip_sum(a: Vec<i64>, b: Vec<i64>) -> Vec<i64> {
+    let n = if a.len() < b.len() { a.len() } else { b.len() };
+    let mut out: Vec<i64> = [].to_vec();
+    let mut i = 0;
+    while i < n {
+        out.push(a[i] + b[i]);
+        i = i + 1;
+    }
+    out
+}

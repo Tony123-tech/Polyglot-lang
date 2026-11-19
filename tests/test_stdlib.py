@@ -538,3 +538,94 @@ def test_stdlib_python_backend_dedups_numpy_and_prelude(tmp_path: Path):
 @pytest.mark.parametrize(("probe", "_module", "_source"), PROBES)
 def test_stdlib_native_backend(native_ns, probe: str, _module: str, _source: str):
     assert native_ns[probe]() == EXPECTED[probe]
+
+
+# ---------------------------------------------------------------------------
+# Added pure helpers (str_utils / algo)
+# ---------------------------------------------------------------------------
+
+
+def _extra_module_ns(tmp_path: Path, module: str) -> dict:
+    from backends.python.translator import compile_rust
+
+    path = tmp_path / f"{module}_extra.poly"
+    path.write_text(
+        f'include!("std:{module}");\nfn main() -> i64 {{ 0 }}\n',
+        encoding="utf-8",
+    )
+    return compile_rust(load_program(path))
+
+
+def test_str_utils_added_helpers_python_backend(tmp_path: Path):
+    ns = _extra_module_ns(tmp_path, "str_utils")
+
+    assert ns["trim_matches"]("xxabcxx", "xy") == "abc"
+    assert ns["replace_first"]("a-b-c", "-", "+") == "a+b-c"
+    assert ns["replace_first"]("abc", "-", "+") == "abc"
+
+    remainder = ns["split_once"]("a:b:c", ":")
+    assert remainder.is_some()
+    assert remainder.unwrap() == "b:c"
+    assert ns["split_once"]("abc", ":").is_none()
+
+    assert ns["is_empty_text"]("") is True
+    assert ns["is_empty_text"]("x") is False
+    assert ns["capitalize"]("hello world") == "Hello world"
+    assert ns["capitalize"]("") == ""
+    assert ns["contains_any"]("hello", ["xyz", "ell"]) is True
+    assert ns["contains_any"]("hello", ["xyz", "abc"]) is False
+    assert ns["count_lines"]("a\nb\nc") == 3
+    assert ns["count_lines"]("") == 0
+
+
+def test_algo_added_helpers_python_backend(tmp_path: Path):
+    ns = _extra_module_ns(tmp_path, "algo")
+
+    assert ns["chunk_sum"]([1, 2, 3, 4, 5], 2) == [3, 7, 5]
+    assert ns["chunk_sum"]([1, 2, 3], 0) == []
+    assert ns["running_max"]([1, 3, 2, 5, 4]) == [1, 3, 3, 5, 5]
+    assert ns["running_max"]([]) == []
+
+    index = ns["find_index"]([1, 2, 3], 2)
+    assert index.is_some()
+    assert index.unwrap() == 1
+    assert ns["find_index"]([1, 2, 3], 9).is_none()
+
+    assert ns["all_equal"]([2, 2, 2]) is True
+    assert ns["all_equal"]([2, 2, 3]) is False
+    assert ns["all_equal"]([]) is True
+    assert ns["rotate_left"]([1, 2, 3, 4], 1) == [2, 3, 4, 1]
+    assert ns["rotate_left"]([1, 2, 3, 4], 7) == [4, 1, 2, 3]
+    assert ns["zip_sum"]([1, 2, 3], [10, 20]) == [11, 22]
+    assert ns["zip_sum"]([], [1]) == []
+
+
+def test_prelude_exposes_added_pure_helpers(tmp_path: Path):
+    ns = _extra_module_ns(tmp_path, "prelude")
+    assert ns["capitalize"]("hi") == "Hi"
+    assert ns["zip_sum"]([1, 2], [3, 4]) == [4, 6]
+    assert "read_text_or" in ns
+
+
+@pytest.mark.native
+def test_str_utils_added_helpers_native_backend(native_ns):
+    assert native_ns["trim_matches"]("xxabcxx", "xy") == "abc"
+    assert native_ns["replace_first"]("a-b-c", "-", "+") == "a+b-c"
+    assert native_ns["split_once"]("a:b:c", ":") == "b:c"
+    assert native_ns["split_once"]("abc", ":") is None
+    assert native_ns["is_empty_text"]("") is True
+    assert native_ns["capitalize"]("hello world") == "Hello world"
+    assert native_ns["contains_any"]("hello", ["xyz", "ell"]) is True
+    assert native_ns["count_lines"]("a\nb\nc") == 3
+
+
+@pytest.mark.native
+def test_algo_added_helpers_native_backend(native_ns):
+    assert native_ns["chunk_sum"]([1, 2, 3, 4, 5], 2) == [3, 7, 5]
+    assert native_ns["chunk_sum"]([1, 2, 3], 0) == []
+    assert native_ns["running_max"]([1, 3, 2, 5, 4]) == [1, 3, 3, 5, 5]
+    assert native_ns["find_index"]([1, 2, 3], 2) == 1
+    assert native_ns["find_index"]([1, 2, 3], 9) is None
+    assert native_ns["all_equal"]([2, 2, 2]) is True
+    assert native_ns["rotate_left"]([1, 2, 3, 4], 7) == [4, 1, 2, 3]
+    assert native_ns["zip_sum"]([1, 2, 3], [10, 20]) == [11, 22]

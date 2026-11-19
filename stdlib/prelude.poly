@@ -6,6 +6,7 @@
 include!("std:math");
 include!("std:algo");
 include!("std:str_utils");
+include!("std:fs");
 include!("std:collections");
 include!("std:numpy");
 include!("std:linalg");

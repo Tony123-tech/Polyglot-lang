@@ -1,0 +1,49 @@
+// std:fs — practical file helpers returning Result
+//
+// Thin wrappers over the host seam. All error messages produced by the host
+// are passed through unchanged; the combinators add only their own documented
+// behaviour. No path normalization is performed here.
+
+fn read_text(path: String) -> Result<String, String> {
+    __fs_read_text(path)
+}
+
+fn write_text(path: String, contents: String) -> Result<(), String> {
+    __fs_write_text(path, contents)
+}
+
+fn append_text(path: String, contents: String) -> Result<(), String> {
+    __fs_append_text(path, contents)
+}
+
+fn exists(path: String) -> bool {
+    __fs_exists(path)
+}
+
+fn remove(path: String) -> Result<(), String> {
+    __fs_remove(path)
+}
+
+fn read_text_or(path: String, fallback: String) -> String {
+    match read_text(path) {
+        Ok(text) => text,
+        Err(_) => fallback,
+    }
+}
+
+fn write_text_if_missing(path: String, contents: String) -> Result<bool, String> {
+    if exists(path.clone()) { return Ok(false); }
+    match write_text(path, contents) {
+        Ok(_) => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+fn read_text_nonempty(path: String) -> Result<String, String> {
+    match read_text(path) {
+        Ok(text) => {
+            if text.is_empty() { Err("file is empty".to_string()) } else { Ok(text) }
+        },
+        Err(error) => Err(error),
+    }
+}

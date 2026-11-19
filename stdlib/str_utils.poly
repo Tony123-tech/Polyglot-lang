@@ -103,3 +103,51 @@ fn is_palindrome(text: String) -> bool {
     }
     true
 }
+
+// Trim every leading/trailing character found in `chars`.
+fn trim_matches(text: String, chars: String) -> String {
+    text.trim_matches(|c: char| chars.contains(c.to_string()))
+}
+
+// Replace only the first occurrence of `needle`.
+fn replace_first(text: String, needle: String, replacement: String) -> String {
+    text.replacen(needle, replacement, 1)
+}
+
+// Return the part after the first `separator`, or None when absent.
+fn split_once(text: String, separator: String) -> Option<String> {
+    match text.split_once(separator) {
+        Some((_first, rest)) => Some(rest),
+        None => None,
+    }
+}
+
+fn is_empty_text(text: String) -> bool {
+    text.is_empty()
+}
+
+// Uppercase the first character and keep the rest unchanged.
+fn capitalize(text: String) -> String {
+    let chars = text.chars();
+    if chars.is_empty() { return text; }
+    let mut out = chars[0].to_uppercase().to_string();
+    let mut i = 1;
+    while i < chars.len() {
+        out = format!("{}{}", out, chars[i].to_string());
+        i = i + 1;
+    }
+    out
+}
+
+fn contains_any(text: String, needles: Vec<String>) -> bool {
+    let mut i = 0;
+    while i < needles.len() {
+        if text.contains(needles[i].clone()) { return true; }
+        i = i + 1;
+    }
+    false
+}
+
+fn count_lines(text: String) -> i64 {
+    text.lines().len() as i64
+}
