@@ -34,7 +34,8 @@ binary link against the configured interpreter. The tests exercise:
 
 - owned executable regions and real machine-code sleds;
 - atomic pointer-cell swaps and alignment rejection;
-- Mach-O/ELF GOT discovery for a bound libc symbol;
+- value-scan GOT discovery for a bound libc symbol (Mach-O GOT-like sections
+  or Linux writable mappings), not a full ELF relocation walk;
 - RCU grace periods, reclamation, and unbalanced exits;
 - before-image rollback, commit, and nested checkpoint order;
 - `mio::Poll` migration with a datagram queued before the swap.

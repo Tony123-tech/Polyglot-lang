@@ -75,6 +75,11 @@ impl PyExecutableRegion {
         self.inner.is_jit()
     }
 
+    #[getter]
+    fn closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+
     fn write(&mut self, offset: usize, data: Vec<u8>) -> PyResult<()> {
         self.inner
             .write(offset, &data)
@@ -169,6 +174,24 @@ impl NativeTrampolinePatch {
             self.kind, self.slot, self.old_value, self.new_value
         )
     }
+
+    fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf
+    }
+
+    /// Roll back on an exception, matching the Python ``TrampolinePatch`` API.
+    fn __exit__(
+        &mut self,
+        py: Python<'_>,
+        exc_type: Option<Bound<'_, PyAny>>,
+        _exc: Option<Bound<'_, PyAny>>,
+        _traceback: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        if exc_type.is_some() {
+            self.rollback(py)?;
+        }
+        Ok(())
+    }
 }
 
 fn replacement_address(py: Python<'_>, replacement: &Bound<'_, PyAny>) -> PyResult<u64> {
@@ -195,6 +218,7 @@ fn verify_signature(
     py: Python<'_>,
     replacement: &Bound<'_, PyAny>,
     expected: &str,
+    span: Option<(usize, usize)>,
 ) -> PyResult<()> {
     let helper = py
         .import("runtime.hotpatch.trampoline")?
@@ -206,11 +230,12 @@ fn verify_signature(
         Err(hotpatch_error(
             "replacement ABI signature does not match the expected signature",
             format!("expected {}", expected.replace(' ', "")),
-            None,
+            span,
         ))
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn delegate_trampoline(
     py: Python<'_>,
     symbol: Option<String>,
@@ -301,7 +326,7 @@ pub fn hotpatch_live_dylib_trampoline(
     }
     if let Some(expected) = expected_signature.as_deref() {
         if replacement.hasattr("restype")? {
-            verify_signature(py, &replacement, expected)?;
+            verify_signature(py, &replacement, expected, span)?;
         }
     }
     let address = replacement_address(py, &replacement)?;
@@ -348,7 +373,7 @@ pub fn hotpatch_live_dylib_trampoline(
             .filter(|info| {
                 library
                     .as_deref()
-                    .map_or(true, |library| info.image.contains(library))
+                    .is_none_or(|library| info.image.contains(library))
             })
             .collect();
         if filtered.is_empty() {
@@ -419,16 +444,17 @@ pub fn native_read_pointer(slot: u64) -> PyResult<u64> {
             None,
         ));
     }
-    if slot as usize % std::mem::align_of::<usize>() != 0 {
+    if !(slot as usize).is_multiple_of(std::mem::align_of::<usize>()) {
         return Err(hotpatch_error(
             "pointer cell is not word-aligned",
             format!("{slot:#x} is not 8-byte aligned"),
             None,
         ));
     }
-    // SAFETY: the caller owns the cell; this is the same contract as
-    // `atomic_load_ptr` in the Python trampoline module.
-    Ok(unsafe { trampoline::load_pointer(slot as usize) })
+    // `read_pointer` validates that the FFI-supplied cell is mapped and
+    // aligned before the (now-contained) raw load.
+    trampoline::read_pointer(slot as usize)
+        .map_err(|reason| hotpatch_error("cannot read the pointer cell", reason, None))
 }
 
 /// Discover bound GOT/PLT cells for `symbol`.
@@ -581,6 +607,11 @@ impl NativeRcuDomain {
         )
     }
 
+    #[getter]
+    fn reclaim_failures(&self) -> usize {
+        self.domain.stats().reclaim_failures
+    }
+
     fn __repr__(&self) -> String {
         let stats = self.stats();
         format!(
@@ -642,9 +673,13 @@ impl NativeJournal {
     /// Capture `[address, address + size)` before mutating it.
     #[pyo3(signature = (address, size, label=""))]
     fn capture(&self, address: u64, size: usize, label: &str) -> PyResult<()> {
-        // SAFETY: the caller registers a live range; the Python helper
-        // `runtime.hotpatch.journal` derives addresses from buffers it keeps
-        // alive for the duration of the checkpoint.
+        // FFI callers can pass arbitrary integers.  Refuse NULL, overflowing,
+        // and unmapped ranges before the raw copy.  The caller still owns the
+        // range lifetime; validation only closes the obvious segfault cases.
+        trampoline::validate_mapped_range(address as usize, size)
+            .map_err(|reason| hotpatch_error("invalid native journal range", reason, None))?;
+        // SAFETY: the range was validated as mapped above, and the caller must
+        // keep it alive for the duration of the checkpoint.
         unsafe { self.inner.capture(address as usize, size, label) }
             .map(|_| ())
             .map_err(|reason| hotpatch_error("cannot capture a before-image", reason, None))
@@ -887,8 +922,29 @@ impl NativeMioMigration {
                 None,
             ));
         }
-        self.new_poller.bind(py).borrow_mut().close();
-        self.rolled_back = true;
+        if !self.rolled_back {
+            self.new_poller.bind(py).borrow_mut().close();
+            self.rolled_back = true;
+        }
+        Ok(())
+    }
+
+    fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        py: Python<'_>,
+        exc_type: Option<Bound<'_, PyAny>>,
+        _exc: Option<Bound<'_, PyAny>>,
+        _traceback: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        if exc_type.is_some() {
+            self.rollback(py)?;
+        } else {
+            self.commit(py)?;
+        }
         Ok(())
     }
 }

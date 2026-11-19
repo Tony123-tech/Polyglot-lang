@@ -112,6 +112,7 @@ impl RcuDomain {
     }
 
     /// Enter a read-side critical section on the current thread.
+    #[allow(dead_code)] // exercised by the pure-Rust unit tests
     pub fn enter(&self) -> ReadGuard<'_> {
         let slot = self.slot_for(std::thread::current().id());
         let previous = slot.depth.fetch_add(1, Ordering::AcqRel);
@@ -130,7 +131,7 @@ impl RcuDomain {
                 if readers
                     .slots
                     .get(&thread)
-                    .map_or(false, |current| Arc::ptr_eq(current, slot))
+                    .is_some_and(|current| Arc::ptr_eq(current, slot))
                 {
                     readers.slots.remove(&thread);
                 }
@@ -174,6 +175,7 @@ impl RcuDomain {
     }
 
     /// Retire a value with an explicit reclamation callback.
+    #[allow(dead_code)] // exercised by the pure-Rust unit tests
     pub fn retire<F>(&self, reclaim: F) -> usize
     where
         F: FnOnce() + Send + 'static,
@@ -269,6 +271,7 @@ impl RcuDomain {
         }
     }
 
+    #[allow(dead_code)] // exercised by the pure-Rust unit tests
     pub fn drain(&self, timeout: Option<Duration>) -> Result<usize, String> {
         let mut total = 0;
         loop {
@@ -281,6 +284,7 @@ impl RcuDomain {
 }
 
 /// A read-side critical section; exiting it may release a grace period.
+#[allow(dead_code)] // exercised by the pure-Rust unit tests
 pub struct ReadGuard<'a> {
     domain: &'a RcuDomain,
     slot: Arc<ReaderSlot>,
@@ -293,12 +297,14 @@ impl Drop for ReadGuard<'_> {
 }
 
 /// An RCU-protected `Arc` root with monotonic versions.
+#[allow(dead_code)] // exercised by the pure-Rust unit tests
 pub struct EpochRoot<T> {
     root: Mutex<Arc<T>>,
     version: AtomicUsize,
     domain: Arc<RcuDomain>,
 }
 
+#[allow(dead_code)] // exercised by the pure-Rust unit tests
 impl<T: Send + Sync + 'static> EpochRoot<T> {
     pub fn new(value: T) -> Self {
         Self {
@@ -348,6 +354,7 @@ impl<T: Send + Sync + 'static> EpochRoot<T> {
 }
 
 /// A root read that keeps the grace period open until dropped.
+#[allow(dead_code)] // exercised by the pure-Rust unit tests
 pub struct RootRead<'a, T> {
     _guard: ReadGuard<'a>,
     pub version: usize,

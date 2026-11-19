@@ -229,21 +229,72 @@ pub unsafe fn load_pointer(slot: usize) -> u64 {
     AtomicUsize::from_ptr(slot as *mut usize).load(Ordering::SeqCst) as u64
 }
 
+/// Validate an FFI-supplied pointer cell before any raw dereference.
+///
+/// PyO3 callers hand us arbitrary integers.  Dereferencing an unmapped address
+/// would segfault the interpreter, so confirm the page is live and the address
+/// is word-aligned first.  This narrows (but cannot eliminate) the TOCTOU
+/// window inherent to raw-address APIs; embedders still own the lifetime.
+fn validate_pointer_cell(slot: usize) -> Result<(), String> {
+    if slot == 0 {
+        return Err("cannot access a NULL pointer cell".to_string());
+    }
+    if !slot.is_multiple_of(std::mem::align_of::<usize>()) {
+        return Err(format!("pointer cell {slot:#x} is not word-aligned"));
+    }
+    if page_protection(slot).is_none() {
+        return Err(format!(
+            "pointer cell {slot:#x} is not in a mapped page"
+        ));
+    }
+    Ok(())
+}
+
+/// Safe entry point used by the PyO3 bridge to read a pointer cell.
+pub fn read_pointer(slot: usize) -> Result<u64, String> {
+    validate_pointer_cell(slot)?;
+    // SAFETY: validate_pointer_cell confirmed the cell is mapped and aligned.
+    Ok(unsafe { load_pointer(slot) })
+}
+
+/// Validate every page covering `[address, address + size)` before a raw copy.
+///
+/// Callers still own the range lifetime; this only refuses obviously invalid
+/// FFI addresses (NULL, overflow, unmapped pages) instead of segfaulting.
+pub fn validate_mapped_range(address: usize, size: usize) -> Result<(), String> {
+    if address == 0 {
+        return Err("cannot access a NULL memory range".to_string());
+    }
+    if size == 0 {
+        return Err("cannot access an empty memory range".to_string());
+    }
+    let end = address
+        .checked_add(size)
+        .ok_or_else(|| "memory range overflows the address space".to_string())?;
+    let page = page_size();
+    let mut cursor = address & !(page - 1);
+    loop {
+        if page_protection(cursor).is_none() {
+            return Err(format!(
+                "range {address:#x}..{end:#x} includes an unmapped page at {cursor:#x}"
+            ));
+        }
+        if cursor >= end - 1 {
+            return Ok(());
+        }
+        cursor += page;
+    }
+}
+
 /// Atomically store a pointer and return the previous value.
 ///
 /// The store is a single aligned machine-word write; a thread executing the
 /// previous target continues there, while the next indirect call observes the
 /// new target.
 pub fn patch_pointer(slot: usize, value: u64) -> Result<u64, String> {
-    if slot == 0 {
-        return Err("cannot patch a NULL pointer cell".to_string());
-    }
-    if slot % std::mem::align_of::<usize>() != 0 {
-        return Err(format!("pointer cell {slot:#x} is not word-aligned"));
-    }
-    // SAFETY: the caller owns the cell (a GOT entry, dispatch table, or
-    // explicitly allocated word).  Reading before widening the page is safe on
-    // read-only data.
+    validate_pointer_cell(slot)?;
+    // SAFETY: validate_pointer_cell confirmed the cell is mapped and aligned;
+    // reading before widening the page is safe on read-only data.
     let old = unsafe { load_pointer(slot) };
     let guard = make_writable(slot, std::mem::size_of::<usize>())?;
     // SAFETY: the guard made the containing page writable.
@@ -292,7 +343,12 @@ pub struct GotSlotInfo {
 }
 
 #[cfg(target_os = "macos")]
-fn mach_o_images() -> Vec<(String, usize, isize, Vec<(String, String, u64, u64)>)> {
+type MachSection = (String, String, u64, u64);
+#[cfg(target_os = "macos")]
+type MachImage = (String, usize, isize, Vec<MachSection>);
+
+#[cfg(target_os = "macos")]
+fn mach_o_images() -> Vec<MachImage> {
     let mut images = Vec::new();
     // SAFETY: dyld's image list is process-wide and stable while the GIL is
     // held; every header is validated against the Mach-O 64-bit magic.
@@ -310,7 +366,9 @@ fn mach_o_images() -> Vec<(String, usize, isize, Vec<(String, String, u64, u64)>
             let ncmds = read_u32(header_bytes, 16) as usize;
             let mut offset = 32usize;
             let mut sections = Vec::new();
-            for _ in 0..ncmds {
+            // Cap the walk so a corrupt load-command chain cannot run off the
+            // mapped Mach-O header image.
+            for _ in 0..ncmds.min(1024) {
                 if offset + 8 > 4096 {
                     break;
                 }
@@ -318,10 +376,16 @@ fn mach_o_images() -> Vec<(String, usize, isize, Vec<(String, String, u64, u64)>
                 let command = read_u32(command_bytes, 0);
                 let command_size = read_u32(command_bytes, 4) as usize;
                 if command == LC_SEGMENT_64 {
+                    if command_size < 72 || offset + command_size > 4096 {
+                        break;
+                    }
                     let segment = std::slice::from_raw_parts(header.cast::<u8>().add(offset), 72);
                     let nsects = read_u32(segment, 64) as usize;
                     let mut section_offset = offset + 72;
-                    for _ in 0..nsects {
+                    for _ in 0..nsects.min(512) {
+                        if section_offset + 80 > offset + command_size {
+                            break;
+                        }
                         let section =
                             std::slice::from_raw_parts(header.cast::<u8>().add(section_offset), 80);
                         let sectname = fixed_name(&section[0..16]);
@@ -527,7 +591,7 @@ pub struct ExecutableRegion {
 impl ExecutableRegion {
     pub fn new(size: usize) -> Result<Self, String> {
         let page = page_size();
-        let size = ((size.max(1) + page - 1) / page) * page;
+        let size = size.max(1).div_ceil(page) * page;
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         {
             // SAFETY: anonymous, private mapping with no file descriptor.
@@ -604,10 +668,7 @@ impl ExecutableRegion {
         if self.closed {
             return Err("executable region is closed".to_string());
         }
-        if offset
-            .checked_add(length)
-            .map_or(true, |end| end > self.size)
-        {
+        if offset.checked_add(length).is_none_or(|end| end > self.size) {
             return Err(format!(
                 "write of {length} bytes at offset {offset} exceeds {} bytes",
                 self.size

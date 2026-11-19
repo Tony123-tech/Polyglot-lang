@@ -209,7 +209,7 @@ mod tests {
         let mut buffer = [0u8; 64];
         let (length, _) = server.recv_from(&mut buffer).unwrap();
         assert_eq!(&buffer[..length], b"queued-before-migration");
-        assert_eq!(new.poll_fd().is_some(), true);
+        assert!(new.poll_fd().is_some());
     }
 
     #[test]

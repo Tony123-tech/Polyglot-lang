@@ -40,6 +40,8 @@ struct Layout {
     argcount: usize,
     posonly: usize,
     kwonly: usize,
+    // `co_nlocals` is implied by `varnames`/`freevars` for the checks we need.
+    #[allow(dead_code)]
     nlocals: usize,
     stacksize: usize,
     flags: i64,
@@ -101,7 +103,7 @@ impl Layout {
 struct FrameSnapshot {
     frame: Py<PyAny>,
     values: Vec<(String, Py<PyAny>)>,
-    label: String,
+    added: Vec<String>,
 }
 
 fn code_of<'py>(object: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
@@ -132,7 +134,7 @@ fn resolve_function<'py>(target: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAn
     if let Ok(text) = target.extract::<String>() {
         let (module_name, qualname) = text
             .split_once(':')
-            .or_else(|| text.rsplit_once('.').map(|(module, name)| (module, name)))
+            .or_else(|| text.rsplit_once('.'))
             .ok_or_else(|| {
                 hotpatch_error(
                     format!("cannot resolve frame target {text:?}"),
@@ -183,7 +185,6 @@ fn migrate_frame(
     new: &Layout,
     defaults: &HashMap<String, Py<PyAny>>,
     span: Option<(usize, usize)>,
-    label: &str,
 ) -> PyResult<(FrameSnapshot, usize)> {
     let locals = frame.getattr("f_locals")?;
     let mut current: Vec<(String, Py<PyAny>)> = Vec::new();
@@ -217,6 +218,7 @@ fn migrate_frame(
     }
 
     let mut migrated: Vec<(String, Py<PyAny>)> = Vec::new();
+    let mut added = Vec::new();
     for name in &new.varnames {
         if let Some(value) = lookup.get(name.as_str()) {
             migrated.push((name.clone(), value.clone_ref(py)));
@@ -228,13 +230,14 @@ fn migrate_frame(
                     .map(|value| value.clone_ref(py))
                     .unwrap_or_else(|| default_value(py, name)),
             ));
+            added.push(name.clone());
         }
     }
 
     let snapshot = FrameSnapshot {
         frame: frame.clone().unbind(),
         values: current,
-        label: label.to_string(),
+        added,
     };
     for (name, value) in &migrated {
         locals.set_item(name, value.bind(py)).map_err(|error| {
@@ -246,6 +249,21 @@ fn migrate_frame(
         })?;
     }
     Ok((snapshot, migrated.len()))
+}
+
+/// Replay completed frame snapshots in reverse order after a failed patch.
+fn restore_snapshots(py: Python<'_>, snapshots: &[FrameSnapshot]) {
+    for snapshot in snapshots.iter().rev() {
+        let Ok(locals) = snapshot.frame.bind(py).getattr("f_locals") else {
+            continue;
+        };
+        for (name, value) in &snapshot.values {
+            let _ = locals.set_item(name, value.bind(py));
+        }
+        for name in &snapshot.added {
+            let _ = locals.call_method1("__delitem__", (name,));
+        }
+    }
 }
 
 fn collect_frames(py: Python<'_>) -> PyResult<Vec<Bound<'_, PyAny>>> {
@@ -313,76 +331,90 @@ fn patch_function(
     }
 
     let defaults = defaults.unwrap_or_default();
+    let generators = generators.unwrap_or_default();
     let mut snapshots = Vec::new();
     let mut migrated_locals = 0usize;
     let mut pinned_frames = 0usize;
 
-    for frame in collect_frames(py)? {
-        let code = frame.getattr("f_code")?;
-        if !code.is(old_code.clone()) {
-            continue;
-        }
-        let (snapshot, count) = migrate_frame(
-            py,
-            &frame,
-            &old_layout,
-            &new_layout,
-            &defaults,
-            span,
-            "live",
-        )?;
-        snapshots.push(snapshot);
-        migrated_locals += count;
-        pinned_frames += 1;
-    }
-
-    for generator in generators.unwrap_or_default() {
-        let generator = generator.bind(py);
-        let frame = generator_frame(generator).map_err(|error| {
-            hotpatch_error(
-                "generator frame does not match the patched function",
-                error.to_string(),
+    // All mutations happen inside one fallible block.  If anything fails
+    // part-way (a later generator, for example), replay every snapshot so a
+    // rejected patch cannot leave half-migrated frames behind.  The handle is
+    // constructed only after the block succeeds, so `snapshots` stays available
+    // for rollback on the error path.
+    let outcome: PyResult<usize> = (|| -> PyResult<usize> {
+        for frame in collect_frames(py)? {
+            let code = frame.getattr("f_code")?;
+            if !code.is(&old_code) {
+                continue;
+            }
+            let (snapshot, count) = migrate_frame(
+                py,
+                &frame,
+                &old_layout,
+                &new_layout,
+                &defaults,
                 span,
-            )
-        })?;
-        let code = frame.getattr("f_code")?;
-        if !code.is(old_code.clone()) {
-            return Err(hotpatch_error(
-                "generator frame does not match the patched function",
-                format!(
-                    "got {}",
-                    code.getattr("co_qualname")
-                        .and_then(|name| name.extract::<String>())
-                        .unwrap_or_else(|_| "<anonymous>".to_string())
-                ),
-                span,
-            ));
+            )?;
+            snapshots.push(snapshot);
+            migrated_locals += count;
+            pinned_frames += 1;
         }
-        let (snapshot, count) = migrate_frame(
-            py,
-            &frame,
-            &old_layout,
-            &new_layout,
-            &defaults,
-            span,
-            "generator",
-        )?;
-        snapshots.push(snapshot);
-        migrated_locals += count;
-    }
 
-    function.setattr("__code__", &new_code)?;
-    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    Ok(NativeFramePatch {
-        function: function.unbind(),
-        old_code: old_code.unbind(),
-        new_code: new_code.unbind(),
-        snapshots,
-        pinned_frames,
-        migrated_locals,
-        generation,
-        rolled_back: false,
-    })
+        for generator in &generators {
+            let generator = generator.bind(py);
+            let frame = generator_frame(generator).map_err(|error| {
+                hotpatch_error(
+                    "generator frame does not match the patched function",
+                    error.to_string(),
+                    span,
+                )
+            })?;
+            let code = frame.getattr("f_code")?;
+            if !code.is(&old_code) {
+                return Err(hotpatch_error(
+                    "generator frame does not match the patched function",
+                    format!(
+                        "got {}",
+                        code.getattr("co_qualname")
+                            .and_then(|name| name.extract::<String>())
+                            .unwrap_or_else(|_| "<anonymous>".to_string())
+                    ),
+                    span,
+                ));
+            }
+            let (snapshot, count) = migrate_frame(
+                py,
+                &frame,
+                &old_layout,
+                &new_layout,
+                &defaults,
+                span,
+            )?;
+            snapshots.push(snapshot);
+            migrated_locals += count;
+        }
+
+        function.setattr("__code__", &new_code)?;
+        Ok(GENERATION.fetch_add(1, Ordering::SeqCst) + 1)
+    })();
+
+    match outcome {
+        Ok(generation) => Ok(NativeFramePatch {
+            function: function.unbind(),
+            old_code: old_code.unbind(),
+            new_code: new_code.unbind(),
+            snapshots,
+            pinned_frames,
+            migrated_locals,
+            generation,
+            rolled_back: false,
+        }),
+        Err(error) => {
+            let _ = function.setattr("__code__", &old_code);
+            restore_snapshots(py, &snapshots);
+            Err(error)
+        }
+    }
 }
 
 /// The handle returned by [`hotpatch_cpython_frame_eval`].
@@ -417,6 +449,9 @@ impl NativeFramePatch {
             for (name, value) in &snapshot.values {
                 locals.set_item(name, value.bind(py))?;
             }
+            for name in &snapshot.added {
+                let _ = locals.call_method1("__delitem__", (name,));
+            }
             restored += 1;
         }
         self.rolled_back = true;
@@ -443,6 +478,23 @@ impl NativeFramePatch {
             "NativeFramePatch(generation={}, pinned={}, migrated={})",
             self.generation, self.pinned_frames, self.migrated_locals
         )
+    }
+
+    fn __enter__(slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &mut self,
+        py: Python<'_>,
+        exc_type: Option<Bound<'_, PyAny>>,
+        _exc: Option<Bound<'_, PyAny>>,
+        _traceback: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        if exc_type.is_some() {
+            self.rollback(py)?;
+        }
+        Ok(())
     }
 }
 

@@ -24,4 +24,7 @@ mio = { version = "1", features = ["os-poll", "os-ext"] }
 [profile.release]
 lto = "thin"
 codegen-units = 1
-panic = "abort"
+# PyO3 converts Rust panics to Python exceptions via unwinding at the FFI
+# boundary, and RcuDomain::synchronize relies on catch_unwind to contain a
+# panicking reclaimer. An abort-on-panic strategy would defeat both and abort
+# the whole interpreter, so the profile must stay at the default ("unwind").

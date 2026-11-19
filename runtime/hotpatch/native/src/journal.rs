@@ -154,6 +154,7 @@ impl Journal {
         self.lock_entries().len()
     }
 
+    #[allow(dead_code)] // used by the pure-Rust unit tests and by users of the rlib
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
