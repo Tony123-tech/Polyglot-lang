@@ -17,9 +17,11 @@ from runtime.capabilities import (
     install_capability_bridge,
     invoke,
     reject,
+    resolve,
+    span_of,
 )
 from runtime.diagnostics import ERROR_CODES, PillarError
-from runtime.native_bindings import generate_lib_rs, write_crate
+from runtime.native_bindings import generate_cargo_toml, generate_lib_rs, write_crate
 
 __all__ = [
     "CAPABILITIES",
@@ -31,9 +33,12 @@ __all__ = [
     "capability_namespace",
     "capability_signature",
     "describe",
+    "generate_cargo_toml",
     "generate_lib_rs",
     "install_capability_bridge",
     "invoke",
     "reject",
+    "resolve",
+    "span_of",
     "write_crate",
 ]

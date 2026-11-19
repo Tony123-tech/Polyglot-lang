@@ -128,6 +128,8 @@ class SpeculativeTransmuter:
             raise PillarError("E003", "threshold must be at least 1")
         if max_deopts < 0:
             raise PillarError("E003", "max_deopts must be non-negative")
+        if max_signatures < 1:
+            raise PillarError("E003", "max_signatures must be at least 1")
         self.name = name
         self.fallback = fallback
         self.specializer = specializer
@@ -137,9 +139,13 @@ class SpeculativeTransmuter:
         self.raise_on_compile_error = raise_on_compile_error
 
         self._owns_executor = executor is None
-        self._executor = executor or concurrent.futures.ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix=f"transmute-{name}",
+        self._executor = (
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=f"transmute-{name}",
+            )
+            if executor is None
+            else executor
         )
         self._lock = threading.RLock()
         self._counts: Counter[TypeSignature] = Counter()
@@ -155,7 +161,9 @@ class SpeculativeTransmuter:
         self._compilations = 0
         self._failures = 0
         self._disabled = False
-        self._last_error: PillarError | None = None
+        self._closed = False
+        # Keep the signature so a successful retry can clear exactly this error.
+        self._last_error: tuple[TypeSignature, PillarError] | None = None
 
     # -- calling -----------------------------------------------------------
 
@@ -186,7 +194,7 @@ class SpeculativeTransmuter:
     # -- profiling ---------------------------------------------------------
 
     def _profile_locked(self, signature: TypeSignature) -> None:
-        if self._disabled:
+        if self._disabled or self._closed:
             return
         if signature not in self._counts and len(self._counts) >= self.max_signatures:
             return
@@ -199,7 +207,13 @@ class SpeculativeTransmuter:
         ):
             return
         self._pending.add(signature)
-        future = self._executor.submit(self._compile, signature)
+        try:
+            future = self._executor.submit(self._compile, signature)
+        except RuntimeError:
+            # A shut-down executor can no longer accept work.  The fallback is
+            # authoritative; do not leave a pending marker that blocks retries.
+            self._pending.discard(signature)
+            return
         self._futures.append(future)
 
     def _deopt_locked(self) -> None:
@@ -209,7 +223,7 @@ class SpeculativeTransmuter:
         self._deopts += 1
         self._path = None
         self._generation += 1
-        if self.max_deopts and self._deopts > self.max_deopts:
+        if self._deopts > self.max_deopts:
             self._disabled = True
 
     # -- compilation -------------------------------------------------------
@@ -258,7 +272,13 @@ class SpeculativeTransmuter:
             self._failed.discard(signature)
             self._generation += 1
             self._compilations += 1
-            self._last_error = None
+            if self._last_error is not None and self._last_error[0] == signature:
+                self._last_error = None
+            if self._closed or self._disabled:
+                # A deopt budget may have been exhausted (or close() called)
+                # while this compilation was running.  Never resurrect a path
+                # after specialization has been permanently disabled.
+                return
             self._path = CompiledPath(
                 signature=signature,
                 fn=fn,
@@ -272,19 +292,25 @@ class SpeculativeTransmuter:
             self._pending.discard(signature)
             self._failed.add(signature)
             self._failures += 1
-            self._last_error = error
+            self._last_error = (signature, error)
 
     # -- control -----------------------------------------------------------
 
     def wait(self, timeout: float | None = 10.0) -> bool:
-        """Wait for outstanding compilations and return whether a path is live."""
+        """Wait for outstanding compilations and return whether a path is live.
+
+        Finished futures are pruned so a long-lived transmuter does not retain
+        every compilation it has ever requested.
+        """
         with self._lock:
+            self._futures = [future for future in self._futures if not future.done()]
             futures = list(self._futures)
         if futures:
             concurrent.futures.wait(futures, timeout=timeout)
         with self._lock:
+            self._futures = [future for future in self._futures if not future.done()]
             if self.raise_on_compile_error and self._last_error is not None:
-                raise self._last_error
+                raise self._last_error[1]
             return self._path is not None
 
     def force_specialize(
@@ -292,6 +318,8 @@ class SpeculativeTransmuter:
     ) -> CompiledPath | None:
         """Synchronously compile a signature (mainly for startup/warm-up)."""
         with self._lock:
+            if self._closed or self._disabled:
+                return None
             if signature is None:
                 if not self._counts:
                     return None
@@ -302,7 +330,8 @@ class SpeculativeTransmuter:
             self._pending.add(signature)
         self._compile(signature)
         with self._lock:
-            return self._path
+            path = self._path
+            return path if path is not None and path.signature == signature else None
 
     def deoptimize(self) -> None:
         """Drop the active path immediately; the fallback stays authoritative."""
@@ -336,8 +365,22 @@ class SpeculativeTransmuter:
             )
 
     def close(self) -> None:
+        """Stop scheduling work and release an owned executor (idempotent).
+
+        Calls after ``close()`` stay on the fallback instead of raising a raw
+        ``RuntimeError`` from the shut-down executor.  Compilations already in
+        flight are allowed to finish but are not installed as new paths.
+        """
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._path = None
+            self._pending.clear()
         if self._owns_executor:
             self._executor.shutdown(wait=True)
+        with self._lock:
+            self._futures.clear()
 
     def __enter__(self) -> Self:
         return self
@@ -355,7 +398,7 @@ def transmute(
 ) -> SpeculativeTransmuter:
     """Wrap an untyped callable in a speculative transmutation layer."""
     return SpeculativeTransmuter(
-        name or getattr(fallback, "__name__", "anonymous"),
+        name or getattr(fallback, "__name__", None) or "anonymous",
         fallback,
         specializer,
         **kwargs,
@@ -405,11 +448,11 @@ class PolyglotSpecializer:
         fallback: Callable[..., Any],
     ) -> Specialization:
         del fallback
-        source = self.source_for(name, signature)
-        program = parse(lex(source))
-        from backends import get_backend
-
         try:
+            source = self.source_for(name, signature)
+            program = parse(lex(source))
+            from backends import get_backend
+
             namespace = get_backend(self.backend, trusted=True).compile(program)
         except PillarError:
             raise
@@ -445,7 +488,8 @@ def jit_inline_cache_polymorphic(
     """
     if ways < 1:
         raise PillarError("E003", "ways must be at least 1")
-    return tuple(list(profile)[:ways])
+    hottest = sorted(profile, key=lambda item: item[1], reverse=True)
+    return tuple(hottest[:ways])
 
 
 __all__ = [

@@ -2,20 +2,41 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+
 from ast_nodes import FnDecl, Node, Program
 from runtime.diagnostics import PillarError
 
+# Pure source metadata: it never contains child nodes, and `source_lines` can
+# be large enough that walking it would be wasteful.
+_SKIP_FIELDS = frozenset({"line", "col", "span", "source_lines"})
 
-def _walk(value: object):
+
+def _walk(value: object, seen: set[int] | None = None) -> Iterator[Node]:
+    """Yield every :class:`Node` reachable from ``value`` exactly once.
+
+    ``Node`` dataclasses are unhashable and callers may hand us a DAG (shared
+    subtrees) or even a cyclic graph, so identity tracking is explicit.  Only
+    dataclass fields and container values are traversed; scalar metadata and
+    ``None`` are ignored.
+    """
+    if seen is None:
+        seen = set()
     if isinstance(value, Node):
+        if id(value) in seen:
+            return
+        seen.add(id(value))
         yield value
         for field_name in getattr(value, "__dataclass_fields__", {}):
-            if field_name in {"line", "col", "span", "source_lines"}:
+            if field_name in _SKIP_FIELDS:
                 continue
-            yield from _walk(getattr(value, field_name))
+            yield from _walk(getattr(value, field_name), seen)
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            yield from _walk(item, seen)
     elif isinstance(value, (list, tuple)):
         for item in value:
-            yield from _walk(item)
+            yield from _walk(item, seen)
 
 
 def validate_program_features(program: Program) -> None:
