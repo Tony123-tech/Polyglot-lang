@@ -885,6 +885,15 @@ def accel_emit_metal_cuda_spirv(
             line=line,
             col=col,
         )
+    if not isinstance(target, str):
+        _fail(
+            "E003",
+            "target must be a string",
+            node=desc,
+            span=span,
+            line=line,
+            col=col,
+        )
     normalized = target.strip().lower()
     if normalized not in _TARGETS:
         _device_failure(
@@ -1355,6 +1364,14 @@ def accel_kernel_fusion_epilogue(
         )
         for index, item in enumerate(items)
     ]
+    if len({len(stage.shape) for stage in stages}) != 1:
+        _fail(
+            "E003",
+            "fusion stages must have the same tensor rank",
+            span=span,
+            line=line,
+            col=col,
+        )
     for stage in stages:
         if not stage.kind:
             _fail(
@@ -1724,7 +1741,7 @@ def accel_auto_tune_tile_sizes(
             TileChoice(
                 tile=tile,
                 cost_cycles=cost,
-                estimated_us=round(cost / 2.4, 6),
+                estimated_us=round(cost / 2400.0, 6),
                 details=f"shape={shape} accesses={len(desc.accesses)} op={desc.op}",
             )
         )
@@ -1988,7 +2005,7 @@ def accel_nanosecond_cpu_fallback(
     if lanes == 1:
         estimated_cycles = scalar_cycles
     else:
-        vector_iters = (iterations + lanes - 1) // lanes
+        vector_iters = iterations // lanes
         tail = iterations % lanes
         estimated_cycles = setup + vector_iters * work * 2 + tail * work
     estimated_ns = round(estimated_cycles / float(cycles_per_ns), 6)

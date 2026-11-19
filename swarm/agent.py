@@ -520,10 +520,12 @@ def swarm_neural_panic_detector(
                 break
             if warning:
                 status = "warning"
-        score = min(
-            1.0,
-            max(peak_ratio / panic_ratio, peak_errors / panic_error),
+        error_component = (
+            peak_errors / panic_error
+            if panic_error > 0
+            else (1.0 if peak_errors > 0 else 0.0)
         )
+        score = min(1.0, max(peak_ratio / panic_ratio, error_component))
         assessments.append(
             PanicAssessment(
                 node=node,
@@ -1545,7 +1547,7 @@ def _epidemic_broadcast(
     fanout: int,
 ) -> dict[str, int]:
     infected = {issuer}
-    deliveries: dict[str, int] = {}
+    deliveries: dict[str, int] = {issuer: 0} if issuer in recipients else {}
     frontier = [issuer]
     for round_index in range(1, rounds + 1):
         next_frontier: list[str] = []
@@ -1629,8 +1631,8 @@ def swarm_epidemic_rollback_kill(
         if quorum is None
         else _integer(quorum, label="quorum", loc=loc, minimum=1)
     )
-    if needed > len(targets) + 1:
-        raise loc.fail("E003", "quorum exceeds the number of kill-switch participants")
+    if needed > len(targets):
+        raise loc.fail("E003", "quorum exceeds the number of kill-switch recipients")
     deliveries = _epidemic_broadcast(signed.issuer, targets, max_rounds, spread)
     verifications = {
         target: (

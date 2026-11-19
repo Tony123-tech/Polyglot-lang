@@ -294,7 +294,11 @@ class MprotectIsolationPlan:
 def _coerce_heap_region(item: Any, loc: SourceLocation, index: int) -> HeapRegionSpec:
     label = f"regions[{index}]"
     if isinstance(item, HeapRegionSpec):
-        return item
+        item = {
+            "name": item.name,
+            "size": item.size,
+            "permissions": item.permissions,
+        }
     if isinstance(item, Mapping):
         allowed = {"name", "size", "permissions"}
         unknown = set(item) - allowed
@@ -536,7 +540,12 @@ def _coerce_syscall_rule(
 ) -> SyscallRule:
     label = f"rules[{index}]"
     if isinstance(item, SyscallRule):
-        return item
+        item = {
+            "name": item.name,
+            "action": item.action,
+            "number": item.number,
+            "constraints": item.constraints,
+        }
     if isinstance(item, str):
         name = _require_str(item, label, loc, identifier=True)
         return SyscallRule(name=name, action=action_default)
@@ -736,7 +745,11 @@ class PkuDomainPlan:
 def _coerce_pku_domain(item: Any, loc: SourceLocation, index: int) -> PkuDomainSpec:
     label = f"domains[{index}]"
     if isinstance(item, PkuDomainSpec):
-        return item
+        item = {
+            "name": item.name,
+            "pkey": item.pkey,
+            "permissions": item.permissions,
+        }
     if isinstance(item, Mapping):
         allowed = {"name", "pkey", "permissions"}
         unknown = set(item) - allowed
@@ -1231,7 +1244,11 @@ class CfiShadowStackPlan:
 def _coerce_cfi_target(item: Any, loc: SourceLocation, index: int) -> CfiTargetSpec:
     label = f"targets[{index}]"
     if isinstance(item, CfiTargetSpec):
-        return item
+        item = {
+            "name": item.name,
+            "return_sites": item.return_sites,
+            "signature": item.signature,
+        }
     if isinstance(item, Mapping):
         allowed = {"name", "return_sites", "signature"}
         unknown = set(item) - allowed

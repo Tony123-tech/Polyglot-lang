@@ -1163,8 +1163,11 @@ def dsm_vector_clock_causality(
                     f"event {event_id!r} depends on unknown or future event {dep!r}",
                     note="CausalityViolation",
                 )
-            dep_node, dep_vector = seen[dep]
-            if raw_vector.get(dep_node, 0) < dep_vector.get(dep_node, 0):
+            dep_vector = seen[dep][1]
+            if any(
+                raw_vector.get(other_node, 0) < count
+                for other_node, count in dep_vector.items()
+            ):
                 ctx.fail(
                     "E008",
                     f"vector clock of {event_id!r} omits dependency {dep!r}",
@@ -1612,7 +1615,9 @@ def dsm_false_sharing_page_split(
         for index in range(parts):
             start = index * size // parts
             end = (index + 1) * size // parts
-            touched = [a for a in writes if start <= a.offset < end]
+            touched = [
+                a for a in writes if a.offset < end and a.offset + a.size > start
+            ]
             writers = tuple(sorted({a.node for a in touched}))
             sub_pages.append(
                 SubPage(pid, index, start, end, len(touched), writers, len(writers) > 1)
@@ -1711,6 +1716,7 @@ def dsm_distributed_gc_lease(
     clock = _integer(now, "now", ctx, minimum=0)
     grants: dict[str, list[LeaseGrant]] = {}
     tokens: dict[str, int] = {}
+    counted_expirations: set[tuple[str, int, int]] = set()
     reclaimed: list[str] = []
     log: list[str] = []
     issued = 0
@@ -1747,8 +1753,11 @@ def dsm_distributed_gc_lease(
             for object_id, history in grants.items():
                 for grant in history:
                     if grant.expires_at <= clock and grant.epoch == current_epoch:
-                        expired += 1
-                        log.append(f"expire:{object_id}:{grant.holder}")
+                        marker = (object_id, grant.token, grant.epoch)
+                        if marker not in counted_expirations:
+                            counted_expirations.add(marker)
+                            expired += 1
+                            log.append(f"expire:{object_id}:{grant.holder}")
             reclaim()
         elif isinstance(op, Acquire):
             object_id = _text(op.object_id, "object_id", ctx)
