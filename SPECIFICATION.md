@@ -118,7 +118,7 @@ A requirement is marked Normative when it applies to both backends without platf
 - **5.1** `Option<T>` and `Result<T, E>` MUST be available in both backends.
 - **5.2** The `?` operator MUST have consistent propagation semantics across backends for synchronous functions. See Section 8.5.1. The concrete `Err` representation follows Section 8.5.2.
 - **5.3** The behaviour of `?` inside an async function is Platform-defined. See Section 8.5.3.
-- **5.4** `if let Some(binding) = expr` MUST be supported. Other if-let pattern forms MUST raise a translation error until they are implemented.
+- **5.4** `if let` MUST be supported for the builtin `Some`, `None`, `Ok`, and `Err` patterns in both statement and expression positions (including `let` initialisers and call arguments). Other if-let pattern forms MUST raise a translation error until they are implemented.
 - **5.5** The concrete representation of `Err` is Platform-defined. See Section 8.5.2.
 - **5.6** Native `Result::and_then` and `Result::or_else` MUST be supported. Their continuations operate on the native `PyErr` error representation described in 8.5.4.
 - **5.7** Method dispatch MUST be type-aware. `Option` and `Result` receivers—including `Some`/`None`/`Ok`/`Err` expressions, annotated bindings, `pop`/`next` results, and free calls whose declared return type is `Option` or `Result`—MUST lower `map` to the matching combinator. `Vec` receivers MUST retain collection semantics. See 7.2.1, 7.2.3, and 7.2.4.
@@ -188,7 +188,8 @@ A requirement is marked Normative when it applies to both backends without platf
 | `rotate_left`, `rotate_right`, `fill`, `swap` | Normative | out-of-range behaviour per 8.8       |
 | `extend_from_slice`, `resize`, `split_off`    | Normative | —                                    |
 | `partition`, `sort_by_key`, `is_sorted`       | Normative | —                                    |
-| `vec![...]` macro | **Unsupported** | parsed, not lowered; use `[...].to_vec()` |
+| `vec![...]` macro                           | Normative | lowered to the shared array AST; both forms below |
+| `vec![a, b, ...]` / `vec![value; count]`    | Normative | `vec![value; count]` requires a `usize` count |
 
 ### 7.2.2 `String` (core)
 
@@ -209,7 +210,7 @@ A requirement is marked Normative when it applies to both backends without platf
 | `lines`, `split_whitespace`                                                | Normative                                     | —                                |
 | `as_bytes`, `is_char_boundary`, `to_ascii_lowercase`, `to_ascii_uppercase` | Normative                                     | —                                |
 | `rfind`, `strip_prefix`, `strip_suffix`, `split_once`, `rsplit_once`       | Normative                                     | —                                |
-| `String::from(...)` | **Unsupported** | not lowered; use `"...".to_string()` |
+| `String::from(...)`                                                           | Normative                                     | —                               |
 
 ### 7.2.3 `Option<T>` (core)
 
@@ -217,6 +218,7 @@ A requirement is marked Normative when it applies to both backends without platf
 | ------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- |
 | construction `Some`, `None`                 | Normative                                        | —                                                                |
 | `is_some`, `is_none`, `unwrap`, `unwrap_or` | Normative                                        | —                                                                |
+| `unwrap_or_else`                            | Normative; the fallback closure is lazy          | —                                                                |
 | `and_then`, `or_else`, `filter`             | Normative; native uses Rust standard combinators | type-aware dispatch per 5.7                                      |
 | `map`                                       | Normative                                        | type-aware dispatch per 5.7                                      |
 | `ok_or`, `ok_or_else`                       | Platform-defined                                 | 5.8.2, 8.5.6                                                     |
@@ -230,6 +232,7 @@ A requirement is marked Normative when it applies to both backends without platf
 | `?` operator, asynchronous     | Platform-defined                                 | 5.3, 8.5.3            |
 | `is_ok`, `is_err`, `map_err`   | Platform-defined                                 | 5.8.1, 8.5.5          |
 | `map`                          | Normative                                        | type-aware dispatch per 5.7 |
+| `unwrap_or_else`               | Normative; the fallback closure is lazy          | —                     |
 | `ok`, `err`                    | Normative                                        | —                     |
 | `and_then`, `or_else` (native) | Normative; native errors use `PyErr`             | 5.6, 8.5.4            |
 | `and_then`, `or_else` (Python) | Normative                                        | —                     |
@@ -253,6 +256,7 @@ Every row MUST have an entry in Section 8 and a cross-reference in Section 10.
 | `HashMap::get_mut` Python-boundary result | 8.10.2             |
 | Numeric and index boundary errors         | 8.8                |
 | Non-exhaustive match diagnostic           | 8.9                |
+| `std:fs` host seam and `Err` payload      | 8.11               |
 
 ### 7.2.6 Collections and platform-specific types
 
@@ -276,6 +280,7 @@ Every row MUST have an entry in Section 8 and a cross-reference in Section 10.
 | `entry(k).or_insert_with(f)`                                                                  | Normative (M3)                          | 7.2.6         |
 | `entry(k).and_modify(f)`                                                                      | Normative (M3)                          | 7.2.6         |
 | `entry(k).or_insert_with_key(f)`                                                              | Normative (M3)                          | 7.2.6         |
+| `entry(k).or_default()`                                                                       | Normative                               | 7.2.6         |
 
 ### 7.2.8 `BTreeMap<K, V>` and `HashSet<T>` (collections)
 
@@ -420,13 +425,24 @@ This section defines the platform differences permitted by this specification. E
 - Tests cover the supported key/value types, operations, dictionary conversion, `usize` length boundaries, and iteration in both backends.
 - Python `get_mut` returns a mutable view; native `get_mut` returns a copied value at the Python boundary.
 
+### 8.11 `std:fs` host seam
+
+- **8.11.1** The `std:fs` module MUST be a pure `.poly` wrapper over a small compiler-reserved host seam: `__fs_read_text(path)`, `__fs_write_text(path, contents)`, `__fs_append_text(path, contents)`, `__fs_exists(path)`, and `__fs_remove(path)`. Reads and writes return `Result<String, String>` or `Result<(), String>`; `exists` returns `bool`. Malformed host calls MUST raise a span-aware `E003` in both backends.
+- **8.11.2** Host-seam calls MUST be gated by backend trust. They are available to the Python backend only when it is constructed with `trusted=True` and to the native backend only in its trusted compile path. Untrusted programs MUST NOT be able to reach the filesystem through `std:fs`.
+- **8.11.3** In the Python backend an `Err` payload from `std:fs` is a raw `String`. In the native backend the language-level `Result<T, String>` is internally represented as `Result<T, PyErr>`; the payload is surfaced as a `PyErr` rather than a language string. Programs that need portable behaviour MUST match on `Err(_)` and MUST NOT propagate the payload into a language string.
+
+**Acceptance criteria**
+
+- A cross-backend parity test performs write/read/append/exists/remove round-trips through `std:fs` and asserts identical results.
+- A test asserts `E003` with a character span for each host-seam arity violation in both backends.
+
 ## 9. Toolchain and Delivery
 
 - **9.1** The toolchain MUST include a lexer, a parser, an AST, both backends, diagnostics that map native errors to source positions, and a module mechanism.
 - **9.2** The module mechanism MUST provide a one-way inclusion directive. `include!("path/to/file.poly");` at item position parses the included file and splices its items at the include site. Relative paths resolve relative to the including file's directory; absolute paths are allowed. Included files MAY contain includes recursively. Cyclic includes MUST be detected and rejected with a five-line error that prints the include chain. Full `mod` and `use` syntax remains Deferred.
 - **9.2.1** A bundled standard-library namespace MUST be available as `std:`. `include!("std:<name>");` resolves the name inside the packaged `stdlib/` directory and appends `.poly` when the name has no suffix. The equivalent bare `include("std:<name>");` form MUST be accepted at item position. Names that are absolute, escape `stdlib/`, or do not name a module MUST be rejected with `E006`; cyclic standard-library includes MUST still report `E005`.
 - **9.2.2** Standard-library includes MUST be deduplicated by resolved path across the whole program expansion. Ordinary (non-`std:`) includes remain textual and MAY splice duplicate items, preserving the pre-v0.3.8 contract.
-- **9.2.3** The bundled standard library MUST consist of pure `.poly` modules: `math`, `algo`, `str_utils`, `collections`, `numpy`, `linalg`, `random`, and `prelude`. `prelude` includes the other modules, and `numpy` may be re-included by `linalg` and `prelude` without duplicating `NdArray` or its impl blocks. The `stdlib/` package and its `.poly` files MUST ship with the wheel.
+- **9.2.3** The bundled standard library MUST consist of pure `.poly` modules: `math`, `algo`, `str_utils`, `fs`, `collections`, `numpy`, `linalg`, `random`, and `prelude`. `prelude` includes the other modules, and `numpy` may be re-included by `linalg` and `prelude` without duplicating `NdArray` or its impl blocks. The `stdlib/` package and its `.poly` files MUST ship with the wheel.
 - **9.3** Diagnostics MUST map native errors back to original source lines and MUST include a stable error code and, where available, a character span.
 - **9.4** A command-line interface SHOULD provide a run command and a build command.
 - **9.5** The README Quick Start MUST allow a new user to run a first program without reading this specification.
@@ -460,7 +476,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.9 (Retired in v0.2.5).** The transitional `usize`/`isize` behavior is retired; implementations use distinct pointer-sized types and explicit casts. See 2.4.5.
 - **10.10 (Retired in v0.3.3).** Additional fixed-width integer types are specified in 2.5 and implemented in scope of M4-remaining. See 2.5 and 8.1.
 - **10.11 (Retired in v0.3.3).** Python backend `as` conversion behavior for additional integer types is specified in 8.1 and 10.26. See 2.5 and 2.7.
-- **10.12** `if let` forms other than `if let Some(binding) = expr` raise a translation error. See 5.4.
+- **10.12 (Retired in v0.3.9).** The restriction to `if let Some(binding) = expr` is lifted: the builtin `Some`, `None`, `Ok`, and `Err` patterns are supported in both statement and expression positions. Other if-let pattern forms still raise a translation error. See 5.4.
 - **10.13** `String::parse` failure behaviour differs across backends. See 8.7.
 - **10.14** Negative `String::repeat` counts and out-of-range `Vec::rotate_*` / `Vec::swap` arguments raise in the Python backend and panic natively. See 8.8.
 - **10.15** Non-exhaustive match produces a translation-time warning in the Python backend and a `RustCompileError` in the native backend. See 8.9.
@@ -470,7 +486,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.19** No platform difference may be removed from this section without a corresponding SPEC version increase. See 11.1.
 - **10.20** Native `HashMap::get_mut` returns a copied `Option<V>` at the Python boundary; the copy cannot mutate the input dictionary. See 8.10.2.
 - **10.21** M3-remaining extends the collection targets in 7.2.6–7.2.8. Native and Python support for `BTreeMap`, `HashSet`, extended entry methods, nested HashMap depth-1 values, and collection `get_mut` semantics is implemented for those types. Deeper nesting and unsupported type combinations remain Deferred. See 10.25 and 10.27.
-- **10.22** Multiple self-recursive calls are accepted when each strictly decreases an argument under a lower-bound guard. Termination proofs for mutual recursion, loops with `break`, complex arithmetic, non-recursive function calls, and async suspension are Deferred. Such constructs are conservatively rejected in an annotated function when the checker cannot prove termination.
+- **10.22** Multiple self-recursive calls are accepted when each strictly decreases an argument under a lower-bound guard in scope at that call site; an `E002` points at the offending call rather than the function header. Guards from an enclosing scope are not visible inside a nested function or closure body, whose self-calls must be proved from guards inside that body. Termination proofs for mutual recursion, loops with `break`, complex arithmetic, non-recursive function calls, and async suspension are Deferred. Such constructs are conservatively rejected in an annotated function when the checker cannot prove termination.
 - **10.23** Cyclic includes are rejected. Full `mod` and `use` syntax remains Deferred. See 9.2.
 - **10.24** AST spans are best-effort; nodes with a single token have span equal to that token's span. See 2.4.7 and 9.3.
 - **10.25** Nested `HashMap` value depth is 1 (e.g. `HashMap<K, HashMap<K2, V2>>` where `K2`/`V2` are supported). Deeper nesting is Deferred. See 7.2.6.
@@ -480,12 +496,16 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.29** Integer-to-`char` `as` casts accept only `u8` natively (Rust restriction); the Python backend accepts Unicode scalar values and rejects surrogates and values above `0x10FFFF`. See 8.1.6.
 - **10.30** `i64 as bool` is a truthiness conversion in the Python backend and a native compile error (Rust has no such cast). `bool as i64` is `0`/`1` in both backends. See 8.1.7.
 - **10.31** `TranslateError` (E003) is raised only by the Python backend translation path. The native backend reports unsupported constructs as `UnsupportedNativePatternError` (E007) or `RustCompileError` (E004); there is no native E003 path. See 9.3.
-- **10.32** `String::from(...)` is parsed but not lowered by either backend; use "...".to_string() instead. See 7.2.2.
-- **10.33** The `vec![...]` macro expression is parsed as a token stream but not lowered by either backend; use `[...].to_vec()` instead. See 7.2.1.
+- **10.32 (Retired in v0.3.9).** `String::from(...)` is lowered by both backends; `"...".to_string()` remains equivalent. See 7.2.2.
+- **10.33 (Retired in v0.3.9).** The `vec![...]` macro is lowered by both backends to the shared array AST, including `vec![value; count]`. See 7.2.1.
 - **10.34** The native reactor, its timers, and Unix fd readiness are runtime-internal. The language does not expose async timer or I/O primitives; `polyglot_sleep_ms` and `polyglot_readable` are helpers used by the runtime and tests. See 8.2.2.
 - **10.35** The bundled `std:` modules are pure `.poly` and inherit the language subset in this specification. They do not add a package manager, arbitrary crate dependencies, or float math beyond the provided helpers. Only `std:` includes are deduplicated; ordinary includes still splice textually. See 9.2.
 - **10.36** The experimental pillar modules (`backends/hotpatch.py`, `compiler/`, `proofs/`, `debug/`, `runtime/transmute.py`, and `runtime/hotpatch/`) are opt-in research foundations and are not part of the stable conformance surface. They confine patches to writable process GOT/PLT cells and owned executable pages or to quiescent/PEP 667 safe points, never patch foreign loaded executable text or a running frame's `f_code` mid-instruction, never rewind an opaque CPython/PyO3 stack, prove only within their documented interval/polynomial grammar, and deoptimise through a guard plus fallback rather than a nanosecond guarantee. The quantum subsystem adds real GOT/PLT, frame-local, reactor, RCU, and before-image journal primitives under those boundaries. They reuse the `E001`–`E008` diagnostics. See `docs/quantum_hotpatch.md` and `docs/experimental_pillars.md`.
 - **10.37** The unified 10-pillar / 100-function surface is a capability registry (`runtime/capabilities.py`), not a claim that every requested mechanism is implementable. `runtime/capabilities.CAPABILITIES` classifies each function as `foundation`, `modelled`, or `rejected`; both backends expose the same 100 names through `capability_namespace()` and emit identical span-aware `E001`–`E008` diagnostics. Requests that require unstable interpreter internals, executable-text patching, privileged OS primitives, real accelerator dispatch, or cryptographic threshold signatures are uniformly rejected. The generated `native_pillars/` PyO3 scaffold is opt-in and is not part of `polyglot build`. See `docs/unified_pillars.md`.
+- **10.38** The `std:fs` host seam is available only to trusted compilation paths, and the native `Err` payload is a `PyErr` rather than a language string. See 8.11.
+- **10.39** Diagnostic fix hints are deterministic and local: an edit is emitted only when the replacement can be derived from the diagnostic itself (currently implicit `as` casts under `E001`). Other codes may carry an actionable message without a text edit, and no hint is produced when the correct fix cannot be determined. See 9.3.
+- **10.40** The language server publishes at most one diagnostic per validation event and converts 0-based character offsets to LSP positions without applying UTF-16 code-unit encoding; non-BMP text before a diagnostic can shift the reported column. LSP 3.17 has no `publishDiagnosticsProvider` capability, so diagnostics are unsolicited notifications on `didOpen`, `didChange`, and `didSave`. See 9.3.
+- **10.41** The `HashMap` entry API supports `or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`, and `or_default`. `Entry::insert` is not lowered by the native backend and remains Deferred. See 7.2.7.
 
 ## 11. Versioning
 
@@ -510,6 +530,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.18** v0.3.8 records the bundled zero-dependency standard library: the `std:` include namespace, path containment and `E006` handling, `std:`-only deduplication, the eight shipped modules, and wheel packaging for `stdlib/*.poly`. It adds 9.2.1–9.2.3 and 10.35.
 - **11.19** v0.3.8 also records the opt-in experimental pillar foundations: quiescent-point hot-patching, sandboxed compiler-pass evolution, bounded certificate-checked synthesis, deterministic cross-FFI checkpoint replay, and guarded speculative specialization. They are explicitly outside the stable conformance surface; 10.36 records their safety boundaries.
 - **11.20** v0.3.8+ records the unified capability registry for the ten pillars (100 functions), the dual-backend host bridge and generated PyO3 binding scaffold, and the `#[gpu]`/`#[npu]` span-aware `E007` feature gate. Parity is defined as identical names and diagnostics on both backends, not as universal availability of privileged mechanisms. See 10.37 and `docs/unified_pillars.md`.
+- **11.21** v0.3.9 lowers `vec![...]` (including `vec![value; count]`) and `String::from(...)` in both backends, adds lazy `Option`/`Result::unwrap_or_else`, adds the pure-`.poly` `std:fs` module and its trusted host seam (8.11), broadens `if let` to expression positions and builtin `Ok`/`Err`/`None` patterns (5.4), adds `HashMap` `entry(k).or_default()`, extends `#[terminates]` proofs to multiple self-recursive calls with call-site `E002` spans, expands `stdlib/algo` and `stdlib/str_utils`, and adds structured fix hints plus LSP diagnostic publication. It retires 10.12, 10.32, and 10.33 and adds 10.38–10.41.
 
 ## 12. Conformance Status
 
@@ -521,10 +542,10 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 1557 passed, 6 skipped, 22 deselected.
-- `pytest -q -m slow`: 22 passed, 1563 deselected.
+- `pytest -q`: 1636 passed, 6 skipped, 22 deselected.
+- `pytest -q -m slow`: 22 passed, 1642 deselected.
 
-The suite reports 0 failed. The counts were re-measured after the experimental pillar suites, the generated edge-case audits, and the `assert!` lowering regression tests were added, replacing the earlier stale baseline.
+The suite reports 0 failed. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints) and its cross-backend parity tests were added, replacing the earlier stale baseline.
 
 - **12.1.1** The numbers above are from the current repository state at the time of writing. They MUST be updated whenever the test suite changes. The summary counts in 12.2.0 are derived from the 12.2 table below and MUST be recomputed whenever a row changes.
 - **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. The baseline is now restored; Blocked criteria have been re-evaluated in 12.2 and any that remain are marked **Partial** with a note recording what is still unverified.

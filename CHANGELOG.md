@@ -2,6 +2,39 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Priority language and tooling features (v0.3.9)
+
+- Lowered `vec![...]` in the parser to the shared `ArrayExpr`/`RepeatArray`
+  AST, covering `vec![a, b]`, `vec![value; count]`, and nested `vec!` in both
+  backends.
+- Lowered `String::from(...)` in both backends and fixed a double-wrapped
+  `String::from(String::from(...))` in generated Rust.
+- Added lazy `Option::unwrap_or_else` and `Result::unwrap_or_else`; the
+  fallback closure runs only on `None`/`Err`.
+- Added the pure `.poly` `std:fs` module (`read_text`, `write_text`,
+  `append_text`, `exists`, `remove`, `read_text_or`, `write_text_if_missing`,
+  `read_text_nonempty`) over a trusted-only host seam with a shared span-aware
+  `E003` arity check in both backends. See SPEC 8.11.
+- Broadened `if let` to expression positions and the builtin `Some`, `None`,
+  `Ok`, and `Err` patterns in both backends.
+- Added `HashMap::entry(k).or_default()` and fixed `or_insert_with_key` slot
+  typing. `Entry::insert` remains deferred on the native backend.
+- Extended `#[terminates]` proofs to multiple self-recursive calls with
+  per-call-site lower-bound guards; `E002` now points at the offending call,
+  and guards do not leak into closures or nested functions.
+- Expanded `stdlib/algo` (`chunk_sum`, `running_max`, `find_index`,
+  `all_equal`, `rotate_left`, `zip_sum`) and `stdlib/str_utils`
+  (`trim_matches`, `replace_first`, `split_once`, `is_empty_text`,
+  `capitalize`, `contains_any`, `count_lines`).
+- Added deterministic `FixHint` payloads to `polyglot exec --error-format=json`
+  and the diagnostic helper, plus `textDocument/publishDiagnostics` on open,
+  change, and save in the language server.
+- Added cross-backend parity and edge tests in
+  `tests/test_priority_features_parity.py` and `tests/test_stdlib_fs.py`, and
+  extended termination, CLI, LSP, diagnostics, stdlib, and visualizer tests.
+- Synced SPEC v0.3.9 (Sections 5, 7, 8, 9, 10, 11, 12), README, GUIDE, NOTES,
+  and the recorded test baseline.
+
 ## Unreleased — Quantum hot-patching subsystem
 
 - Added the opt-in `runtime/hotpatch` package with five concrete mechanisms:

@@ -92,7 +92,7 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | M4        | Done   | Additional fixed-width integer types and the cross-backend cast matrix                                                           |
 | M5        | Done   | Send-aware `PyFuture`, async `&self`/`&mut self` impl methods, drop-based cancellation, a `mio` reactor with timers, and an `asyncio` bridge |
 
-**Current test status:** 1557 passed, 6 skipped, 22 deselected (`pytest -q`); 22 passed, 1563 deselected (`pytest -q -m slow`).
+**Current test status:** 1636 passed, 6 skipped, 22 deselected (`pytest -q`); 22 passed, 1642 deselected (`pytest -q -m slow`).
 
 ## Support matrix
 
@@ -107,8 +107,17 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, isize, usize) | ✅               | ✅             |
 | `include!` directive                                                           | ✅               | ✅             |
 | Bundled `std:` standard library                                                | ✅               | ✅             |
+| `vec![...]` and `vec![value; count]`                                           | ✅               | ✅             |
+| `String::from(...)`                                                            | ✅               | ✅             |
+| Lazy `Option`/`Result::unwrap_or_else`                                         | ✅               | ✅             |
+| `std:fs` helpers (trusted host seam)                                           | ✅ (trusted)     | ✅ (trusted)   |
+| `if let` in expression position (`Some`/`None`/`Ok`/`Err`)                     | ✅               | ✅             |
+| HashMap `entry(k).or_default()`                                                | ✅               | ✅             |
 | Error codes (E001–E008)                                                        | ✅               | ✅             |
+| Structured fix hints in CLI JSON and LSP diagnostics                          | ✅               | ✅             |
+| LSP `publishDiagnostics` on open/change/save                                  | ✅               | ✅             |
 | `#[terminates]` checking                                                       | ✅               | ✅             |
+| Multiple self-recursive calls in `#[terminates]` proofs                       | ✅               | ✅             |
 | async free functions                                                           | ✅ (synchronous) | ✅             |
 | async `&self` / `&mut self` impl methods                                       | ✅               | ✅             |
 | cross-thread await with Send captures                                          | n/a              | ✅             |
@@ -141,7 +150,13 @@ The experimental WASM backend is not part of this matrix. It supports only
 - **N9:** Dedicated Python/native coverage for Platform-defined Result/Option combinators and native `Result::and_then`/`or_else`.
 - **M10:** `#[terminates]` enables conservative static termination checks for bounded ranges, decreasing `while` variants, and recursive descent.
 - **M5:** Send-aware `PyFuture`, async `&self`/`&mut self` impl methods with native borrow guards, drop-based cancellation, a single-threaded `mio` reactor for timer and Unix fd wakeups, cross-thread Send awaits, and an `asyncio` bridge for pending futures.
-- **Bundled stdlib:** `include!("std:...")` resolves eight pure-`.poly` modules (`math`, `algo`, `str_utils`, `collections`, `numpy`, `linalg`, `random`, `prelude`) from the installed package on both backends. `std:` includes are deduplicated; ordinary includes are still textual.
+- **Bundled stdlib:** `include!("std:...")` resolves nine pure-`.poly` modules (`math`, `algo`, `str_utils`, `fs`, `collections`, `numpy`, `linalg`, `random`, `prelude`) from the installed package on both backends. `std:` includes are deduplicated; ordinary includes are still textual.
+- **Convenience lowering:** `vec![...]` (including `vec![value; count]`) and `String::from(...)` lower to the same AST as `[...].to_vec()` and `"...".to_string()` on both backends.
+- **Lazy fallbacks:** `Option::unwrap_or_else` and `Result::unwrap_or_else` call their closure only when the value is absent or an `Err`.
+- **File helpers:** `std:fs` exposes `read_text`, `write_text`, `append_text`, `exists`, `remove`, `read_text_or`, `write_text_if_missing`, and `read_text_nonempty` as `Result`-returning wrappers over a trusted-only host seam. See SPEC 8.11.
+- **Broader `if let`:** `Some`, `None`, `Ok`, and `Err` patterns work in statement and expression positions (including `let` initialisers and call arguments) on both backends.
+- **Extended entry API:** `HashMap::entry` adds `or_default()` alongside `or_insert`, `or_insert_with`, `or_insert_with_key`, and `and_modify`.
+- **Richer toolchain diagnostics:** `polyglot exec --error-format=json` and the diagnostic helper carry deterministic fix hints, and the language server publishes `textDocument/publishDiagnostics` on open, change, and save.
 - **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
 - **Distributed actors (experimental):** An opt-in `distributed/` runtime moves actors between nodes with a versioned Python/native codec, checkpointable await journals, anchored connections, epoch/fencing leases, and checkpoint-based rollback. See [docs/distributed.md](docs/distributed.md).
 
@@ -213,8 +228,9 @@ The bundled modules are pure `.poly` and require no extra dependencies:
 | Module            | Contents                                                                       |
 | ----------------- | ------------------------------------------------------------------------------ |
 | `std:math`        | integer helpers, `gcd`/`lcm`/`pow_mod`/`is_prime`, and pure `f64` `sqrt`/`exp` |
-| `std:algo`        | sorting, searching, sums, extrema, `unique`, and occurrence counting           |
-| `std:str_utils`   | trimming, case conversion, split/join, padding, search, and reversal           |
+| `std:algo`        | sorting, searching, sums, extrema, `unique`, chunk sums, running maxima, and occurrence counting |
+| `std:str_utils`   | trimming, case conversion, split/join, padding, search, reversal, and `capitalize`/`count_lines` helpers |
+| `std:fs`          | `Result`-returning text read/write/append/exists/remove helpers over a trusted host seam |
 | `std:collections` | `Stack`, `Queue`, `SetI64`, and `Counter`                                      |
 | `std:numpy`       | dense `NdArray` creation, element-wise ops, reductions, and matrix products    |
 | `std:linalg`      | `inv`, `solve`, and `determinant` via Gauss-Jordan/Gaussian elimination        |
@@ -432,18 +448,26 @@ location is unavailable. The distributed runtime has its own guide at
   See SPEC 8.2 and 10.34.
 - The WASM backend is experimental and compute-only. It supports `i64`/`bool`
   values with no strings, aggregates, or host imports.
-- `HashMap` supports only the implemented entry subset (`or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`); other entry combinators are not yet lowered.
-- `vec![...]` macro syntax is parsed as a token stream and is not lowered; use `[...].to_vec()` instead.
-- `String::from(...)` is not lowered; use `"...".to_string()` instead.
+- `HashMap` supports the entry subset (`or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`, `or_default`); `Entry::insert` remains deferred on the native backend. See SPEC 10.41.
 - The `#[terminates]` checker accepts multiple self-recursive calls when each
   strictly decreases an argument under a lower-bound guard (e.g. classic
-  `fib(n-1) + fib(n-2)` with `n > 1`). Mutual recursion, loops with `break`,
-  complex arithmetic, non-recursive calls, and async suspension are deferred.
-  See SPEC 10.22.
-- `if let` is supported as a statement and as the final expression of a
-  block (e.g. the tail of `main()`), but not as a sub-expression inside a
-  `let` binding or a function argument. Use `match` when an `if let`
-  expression is required inside another expression.
+  `fib(n-1) + fib(n-2)` with `n > 1`); an `E002` points at the offending call.
+  Guards from an enclosing scope are not visible inside a nested function or
+  closure. Mutual recursion, loops with `break`, complex arithmetic,
+  non-recursive calls, and async suspension are deferred. See SPEC 10.22.
+- `if let` supports the builtin `Some`, `None`, `Ok`, and `Err` patterns in
+  statement and expression positions, including `let` initialisers and call
+  arguments. Other if-let pattern forms still raise a translation error. See
+  SPEC 5.4 and 10.12.
+- `std:fs` calls a compiler-reserved host seam and is available only to
+  trusted compilation paths. Native `Err` payloads are `PyErr` rather than
+  language strings, so portable code should match on `Err(_)` rather than
+  binding the payload. See SPEC 8.11 and 10.38.
+- Fix hints are local and deterministic (currently an edit only for implicit
+  `as` casts); other diagnostics may provide a message without a text edit.
+  The language server publishes at most one diagnostic per validation event
+  and does not apply UTF-16 code-unit encoding to positions. See SPEC 10.39
+  and 10.40.
 - `BTreeMap` and `HashSet` are available in both backends for the type sets in SPEC 7.2.6. Deeper composition and unsupported key/value combinations remain deferred. See SPEC 10.25 and 10.27.
 - Nested `HashMap` (`HashMap<K, HashMap<K2, V2>>`) is supported at depth 1 in both backends. Deeper nesting is deferred. See SPEC 10.25.
 - `get_mut` on `BTreeMap` and `HashSet` follows the same Python-boundary copy semantics as `HashMap` (Python: mutable view; native: owned copy that cannot mutate the input). See SPEC 8.10.2 and 10.20.

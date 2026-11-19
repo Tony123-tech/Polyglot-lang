@@ -14,8 +14,9 @@
 - M5: Async extensions (Send-aware PyFuture, async impl methods, cancellation, timeout)
 - F1: Deliverable CLI
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
+- Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 
-**Latest baseline:** 1557 passed, 6 skipped, 22 deselected; slow 22 passed, 1563 deselected.
+**Latest baseline:** 1636 passed, 6 skipped, 22 deselected; slow 22 passed, 1642 deselected.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -103,6 +104,41 @@ or a function argument". GUIDE adds a three-line note after the example.
 **Lesson:** "Expression position" is not a single concept. Parser support
 must be described by concrete syntactic contexts (statement / tail
 expression / sub-expression), not by a statement-vs-expression dichotomy.
+
+## Priority features — one lowering path, honest boundaries
+
+**Symptom:** The spec, README, and GUIDE still said `vec![...]` and
+`String::from(...)` were parsed but not lowered, `if let` worked only at a
+block tail, the entry API lacked `or_default()`, `#[terminates]` reported the
+function header rather than the offending recursive call, and the CLI/LSP
+had no fix hints or diagnostic publication.
+
+**Cause:** The front end and the two backends had accumulated separate,
+partially overlapping paths for the same syntax. `vec!` was left as a token
+stream; `String::from` produced a doubled `String::from(String::from(...))`
+in generated Rust; `if let` lowering only handled a `Some` pattern at a tail
+position; the `std:fs` host seam had no shared arity table; and the
+diagnostic payload was built independently by each tool.
+
+**Fix:** `vec![...]` now lowers in the parser into the existing `ArrayExpr`
+and `RepeatArray` nodes so both backends share one path. `String::from`
+lowers to a single `String::from` in Rust and the equivalent Python call.
+`Option`/`Result::unwrap_or_else` are lazy in both backends. `std:fs` is a
+pure `.poly` wrapper over a trusted-only host seam with a shared `E003`
+arity check and span. Expression-position `if let` uses the shared pattern
+machinery for `Some`/`None`/`Ok`/`Err`. Entry `or_default()` and a slot
+handling fix for `or_insert_with_key` were added. The termination checker
+accumulates lower-bound guards per call site, resets them inside closures
+and nested functions, and reports `E002` on the offending call. `FixHint`
+and span/range helpers are shared by the CLI JSON and LSP
+`publishDiagnostics`. SPEC 5.4, 7.2.x, 8.11, 9.2.3, 10.x, and 11.21 plus
+README, GUIDE, and CHANGELOG were updated together.
+
+**Lesson:** When a feature is implemented in a shared front-end node, the
+docs should describe that one path rather than backend-specific workarounds.
+Where a real difference remains — native `Err` payloads are `PyErr`, LSP
+positions are character-based, only local fix edits are safe — record it as
+an explicit limitation instead of implying parity.
 
 ## N1 complete
 

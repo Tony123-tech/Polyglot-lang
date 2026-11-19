@@ -169,9 +169,11 @@ fn main() -> i64 {
 }
 ```
 
-`[1, 2, 3].to_vec()` creates a list. `xs.push(4)` appends. `xs.pop()`
-removes the last element. `xs.len()` returns a `usize`, so you need
-`as i64` to return it as an `i64`.
+`[1, 2, 3].to_vec()` creates a list. `vec![1, 2, 3]` is an equivalent
+shortcut, and `vec![7; 3]` creates `[7, 7, 7]` (the count is a `usize`).
+Both forms work identically on the Python and native backends. `xs.push(4)`
+appends. `xs.pop()` removes the last element. `xs.len()` returns a
+`usize`, so you need `as i64` to return it as an `i64`.
 
 ### Why `as i64`?
 
@@ -202,7 +204,8 @@ fn main() -> i64 {
 }
 ```
 
-`"...".to_string()` creates a string. (`String::from("...")` is parsed but not yet lowered because it requires special handling of the `from` associated function; `to_string` is a method call and its lowering path is simpler. See SPEC 10.32.)
+`"...".to_string()` creates a string. `String::from("...")` is an equivalent
+shortcut and is lowered by both backends.
 `split`, `join`, `replace`, `trim`, and `contains` work like Python
 strings, but they return Polyglot types (`Vec<String>`, `Option<usize>`).
 
@@ -232,7 +235,8 @@ fn main() -> i64 {
 
 `Some(x)` wraps a value. `None` is the absence. `match` extracts the
 value safely; `unwrap_or` is the shorter form when you only need a
-default.
+default. `unwrap_or_else(|| expensive())` is the lazy form: the closure
+runs only when the value is `None`.
 
 ### Result
 
@@ -252,7 +256,8 @@ fn main() -> i64 {
 
 `Ok(n)` is a success. `Err(e)` is a failure. The `?` operator
 propagates an `Err` to the caller. `unwrap_or` returns the `Ok` value or
-a default on `Err`.
+a default on `Err`; `unwrap_or_else(|_| fallback())` computes that default
+only on `Err`.
 
 ### `if let` shortcut
 
@@ -266,12 +271,40 @@ fn main() -> i64 {
 }
 ```
 
-`if let` is shorter than `match` when you only care about the `Some`
-branch.
+`if let` is shorter than `match` when you only care about one branch. The
+builtin `Some`, `None`, `Ok`, and `Err` patterns are supported, and `if let`
+can be used as a statement or as an expression (including `let` initialisers
+and call arguments):
 
-Note: `if let` works as the final expression of a block, but not inside a
-`let` binding. If you need the conditional in the middle of another
-expression, move it into a helper function or restructure the block.
+```polyglot
+fn main() -> i64 {
+    let y = if let Some(v) = find_even([1, 3, 4].to_vec()) { v } else { 0 };
+    y
+}
+```
+
+Other if-let pattern forms still raise a translation error.
+
+### Reading and writing files
+
+`include!("std:fs");` adds `Result`-returning file helpers. They are only
+available to trusted compilation paths (`polyglot run`, `polyglot build`,
+and a trusted backend instance):
+
+```polyglot
+include!("std:fs");
+
+fn demo(path: String) -> Result<String, String> {
+    write_text(path, "hello".to_string())?;
+    read_text_nonempty(path)
+}
+```
+
+`read_text`, `write_text`, `append_text`, and `remove` return `Result`;
+`exists` returns `bool`. `read_text_or`, `write_text_if_missing`, and
+`read_text_nonempty` are convenience wrappers. On the native backend an
+`Err` payload is a `PyErr`, so portable code should match on `Err(_)`
+instead of binding the payload as a language string. See SPEC 8.11.
 
 ## 8. When to use the native backend
 
@@ -331,6 +364,14 @@ in the [README's error code table](README.md#error-codes):
 - `E006`: missing `include!` file.
 - `E007`: unsupported native pattern (e.g. Box pattern).
 - `E008`: invalid integer literal.
+
+When available, a diagnostic includes a deterministic fix hint. For example,
+an `E001` type mismatch adds an `as <type>` text edit. `polyglot exec
+--error-format=json` writes the hint as a `fix` object (a message plus LSP-style
+`edits`), and the language server sends the same payload in its
+`textDocument/publishDiagnostics` notifications on open, change, and save.
+Some diagnostics carry a message only, because the correct edit cannot be
+derived from the diagnostic alone.
 
 ## 10. What to do when you get stuck
 
