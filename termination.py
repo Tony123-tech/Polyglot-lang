@@ -8,6 +8,7 @@ from ast_nodes import (
     Assign,
     Binary,
     Call,
+    Closure,
     CompoundAssign,
     Continue,
     Expr,
@@ -97,6 +98,14 @@ def _unwrap(expr: Expr) -> Expr:
     while isinstance(expr, Paren):
         expr = expr.inner
     return expr
+
+
+def _call_site_span(
+    node: Node, fallback: tuple[int, int] | None
+) -> tuple[int, int] | None:
+    """Prefer the offending node's own span over the enclosing function's."""
+    span = getattr(node, "span", None)
+    return span if span is not None else fallback
 
 
 def _positive_integer(expr: Expr) -> int | None:
@@ -305,6 +314,14 @@ def _recursive_call_decreases(
     lower_bounds: dict[str, int],
     parameters: list[tuple[str | None, str | None]],
 ) -> bool:
+    """Check one self-call against the guards enclosing *that* call site.
+
+    ``lower_bounds`` is accumulated by ``check_function.visit`` from ancestor
+    control-flow nodes only: taking an ``if``/``while`` branch adds that
+    condition's bounds, leaving the branch drops them, and a sibling guard is
+    never visible.  Every argument that is not the parameter itself must
+    therefore be a strict decrease backed by one of those in-scope guards.
+    """
     decreasing = False
     for index, (parameter_name, parameter_type) in enumerate(parameters):
         if parameter_name is None or index >= len(call.args):
@@ -403,14 +420,19 @@ def check_function(fn: FnDecl) -> None:
                 getattr(fn, "span", None),
             )
 
-    def fail(reason: str, suggestion: str, node: Node) -> None:
+    def fail(
+        reason: str,
+        suggestion: str,
+        node: Node,
+        span: tuple[int, int] | None = None,
+    ) -> None:
         raise TerminationError(
             fn.name,
             reason,
             suggestion,
             node.line,
             node.col,
-            getattr(fn, "span", None),
+            span if span is not None else getattr(fn, "span", None),
         )
 
     def visit(value: object, lower_bounds: dict[str, int]) -> None:
@@ -419,6 +441,15 @@ def check_function(fn: FnDecl) -> None:
                 visit(child, lower_bounds)
             return
         if not isinstance(value, Node):
+            return
+
+        if isinstance(value, (FnDecl, Closure)):
+            # A nested function or closure body is a separate activation.  A
+            # lower-bound guard that lexically encloses its definition is not
+            # necessarily in scope when that body runs, so its self-calls must
+            # be proved from guards inside the body itself.
+            for child in _children(value):
+                visit(child, {})
             return
 
         if isinstance(value, Loop):
@@ -489,6 +520,7 @@ def check_function(fn: FnDecl) -> None:
                         "recurse with a smaller argument under a matching "
                         "lower-bound guard",
                         value,
+                        _call_site_span(value, getattr(fn, "span", None)),
                     )
             else:
                 fail(

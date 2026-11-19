@@ -171,3 +171,219 @@ def test_termination_error_message_is_backend_identical():
     assert "  help: " in str(native_error.value)
     assert "  note: this function is annotated #[terminates]" in str(native_error.value)
     assert "  at: line " in str(native_error.value)
+
+
+# ---------------------------------------------------------------------------
+# Multiple self-recursive calls (SPEC 2.8.3 / 10.22)
+# ---------------------------------------------------------------------------
+
+FIB_SOURCE = """
+#[terminates]
+fn m10_fib(n: i64) -> i64 {
+    if n > 1 {
+        m10_fib(n - 1) + m10_fib(n - 2)
+    } else {
+        n
+    }
+}
+"""
+
+DIFFERENT_PARAMETERS_SOURCE = """
+#[terminates]
+fn m10_pair_step(n: i64, m: i64) -> i64 {
+    if n > 0 && m > 0 {
+        m10_pair_step(n - 1, m) + m10_pair_step(n, m - 1)
+    } else {
+        n + m
+    }
+}
+"""
+
+ONE_CONSTANT_SOURCE = """
+#[terminates]
+fn m10_bad(n: i64) -> i64 {
+    if n > 0 {
+        m10_bad(n - 1) + m10_bad(n)
+    } else {
+        0
+    }
+}
+"""
+
+MULTI_RECURSION_REJECT_SOURCES = {
+    "call_outside_guard": """
+#[terminates]
+fn m10_bad(n: i64) -> i64 {
+    m10_bad(n - 1)
+}
+""",
+    "guard_only_one_branch": """
+#[terminates]
+fn m10_bad(n: i64, m: i64) -> i64 {
+    if n > 0 {
+        m10_bad(n - 1, m)
+    } else {
+        m10_bad(n, m - 1)
+    }
+}
+""",
+    "one_decreasing_one_constant": ONE_CONSTANT_SOURCE,
+    "mutual_recursion": """
+#[terminates]
+fn m10_bad(n: i64) -> i64 {
+    if n > 0 { m10_other(n - 1) } else { 0 }
+}
+
+#[terminates]
+fn m10_other(n: i64) -> i64 {
+    if n > 0 { m10_bad(n - 1) } else { 0 }
+}
+""",
+    "mutated_parameter_with_multiple_calls": """
+#[terminates]
+fn m10_bad(mut n: i64, m: i64) -> i64 {
+    if n > 0 && m > 0 {
+        n = n - 1;
+        m10_bad(n, m) + m10_bad(n - 1, m)
+    } else {
+        0
+    }
+}
+""",
+    "shadowed_parameter_with_multiple_calls": """
+#[terminates]
+fn m10_bad(n: i64, m: i64) -> i64 {
+    if n > 0 && m > 0 {
+        let n = n - 1;
+        m10_bad(n, m) + m10_bad(n - 1, m)
+    } else {
+        0
+    }
+}
+""",
+    "shadowed_function_name_with_multiple_calls": """
+#[terminates]
+fn m10_bad(n: i64, m: i64) -> i64 {
+    if n > 0 && m > 0 {
+        let m10_bad = n - 1;
+        m10_bad(n, m) + m10_bad(n - 1, m)
+    } else {
+        0
+    }
+}
+""",
+    "non_recursive_call_with_multiple_calls": """
+#[terminates]
+fn m10_bad(n: i64) -> i64 {
+    if n > 0 { m10_helper(n - 1) + m10_bad(n - 1) } else { 0 }
+}
+
+fn m10_helper(n: i64) -> i64 { n }
+""",
+    "guard_encloses_only_nested_function": """
+#[terminates]
+fn m10_bad(n: i64) -> i64 {
+    if n > 0 {
+        fn m10_inner() -> i64 { m10_bad(n - 1) }
+        0
+    } else {
+        0
+    }
+}
+""",
+}
+
+
+def test_python_multiple_self_calls_under_lower_bound_are_accepted():
+    check_function(parse(lex(FIB_SOURCE)).items[0])
+    assert _run_python(FIB_SOURCE)["m10_fib"](10) == 55
+
+
+def test_python_multiple_calls_on_different_decreasing_parameters_are_accepted():
+    check_function(parse(lex(DIFFERENT_PARAMETERS_SOURCE)).items[0])
+    assert _run_python(DIFFERENT_PARAMETERS_SOURCE)["m10_pair_step"](1, 1) == 2
+
+
+@pytest.mark.parametrize("name", sorted(MULTI_RECURSION_REJECT_SOURCES))
+def test_python_multi_call_rejections(name: str):
+    with pytest.raises(TerminationError):
+        _run_python(MULTI_RECURSION_REJECT_SOURCES[name])
+
+
+@pytest.mark.parametrize("name", sorted(MULTI_RECURSION_REJECT_SOURCES))
+def test_native_multi_call_rejections(name: str, tmp_path):
+    from backends.rust.compiler import NativeBackend
+
+    source = MULTI_RECURSION_REJECT_SOURCES[name]
+    with pytest.raises(TerminationError):
+        NativeBackend(cache_dir=tmp_path).compile(parse(lex(source)))
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "call_outside_guard",
+        "guard_only_one_branch",
+        "one_decreasing_one_constant",
+        "mutual_recursion",
+        "mutated_parameter_with_multiple_calls",
+    ],
+)
+def test_multi_call_error_message_is_backend_identical(name: str):
+    from backends.rust.compiler import NativeBackend
+
+    source = MULTI_RECURSION_REJECT_SOURCES[name]
+    with pytest.raises(TerminationError) as python_error:
+        _run_python(source)
+    with pytest.raises(TerminationError) as native_error:
+        NativeBackend().compile(parse(lex(source)))
+    assert native_error.value.format() == python_error.value.format()
+    assert str(native_error.value) == str(python_error.value)
+
+
+def test_mutated_parameter_with_multiple_calls_reports_shadowing_reason():
+    with pytest.raises(TerminationError) as error:
+        check_function(
+            parse(
+                lex(
+                    MULTI_RECURSION_REJECT_SOURCES[
+                        "mutated_parameter_with_multiple_calls"
+                    ]
+                )
+            ).items[0]
+        )
+    assert error.value.reason == "a recursive parameter is reassigned or shadowed"
+
+
+def test_mutual_recursion_reports_the_non_recursive_call():
+    with pytest.raises(TerminationError) as error:
+        check_function(
+            parse(lex(MULTI_RECURSION_REJECT_SOURCES["mutual_recursion"])).items[0]
+        )
+    assert error.value.reason == (
+        "a non-recursive function call is outside the supported proof subset"
+    )
+
+
+def test_e002_decrease_failure_points_at_the_offending_call_site():
+    function = parse(lex(ONE_CONSTANT_SOURCE)).items[0]
+    with pytest.raises(TerminationError) as error:
+        check_function(function)
+
+    termination_error = error.value
+    assert termination_error.code == "E002"
+    assert (
+        termination_error.reason
+        == "a recursive call has no provably decreasing argument"
+    )
+    # The second call, `m10_bad(n)`, is the one that does not decrease.
+    assert termination_error.span == (83, 92)
+    assert termination_error.line == 5
+    assert termination_error.col == 33
+    assert (
+        ONE_CONSTANT_SOURCE[termination_error.span[0] : termination_error.span[1]]
+        == "m10_bad(n"
+    )
+    assert termination_error.span != function.span
+    message = str(termination_error)
+    assert "at: line 5, column 33 (span 83..92)" in message
