@@ -27,11 +27,12 @@ userspace module can rewrite executable text or rewind a live PyO3 stack.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from functools import partial
+from functools import cache, partial
 from typing import Any
 
 from runtime.diagnostics import PillarError
@@ -90,42 +91,42 @@ _ROWS: tuple[tuple[str, str, str, str | None, CapabilityStatus, str, str, str], 
     (
         "hotpatch_live_dylib_trampoline",
         "hotpatch",
-        "backends.hotpatch",
-        None,
-        CapabilityStatus.REJECTED,
-        "E007",
-        "GOT/PLT and inline JMP sled rewriting",
-        "Loaded executable text is not patched; NativeSymbolTable swaps an atomic dispatch slot instead.",
+        "runtime.hotpatch.trampoline",
+        "hotpatch_live_dylib_trampoline",
+        CapabilityStatus.FOUNDATION,
+        "E008",
+        "GOT/PLT cell swaps and owned-page inline JMP sleds",
+        "Writable GOT/PLT cells and owned MAP_JIT sleds are patched atomically; foreign __TEXT is refused (E007) and ABI/relocation errors are E008.",
     ),
     (
         "hotpatch_cpython_frame_eval",
         "hotpatch",
-        "backends.hotpatch",
-        None,
-        CapabilityStatus.REJECTED,
-        "E007",
-        "Rewrite live _PyInterpreterFrame bytecode",
-        "CPython exposes no portable frame-safepoint; patches apply at quiescent points.",
+        "runtime.hotpatch.frames",
+        "hotpatch_cpython_frame_eval",
+        CapabilityStatus.FOUNDATION,
+        "E008",
+        "Swap function bytecode at a safe point and migrate fast locals",
+        "Future-entry code swaps with PEP 667 fast-local migration are real; mid-instruction f_code pointer replacement is refused (E007), layout/closure mismatches are E008.",
     ),
     (
         "hotpatch_mio_reactor_state",
         "hotpatch",
-        "backends.hotpatch",
-        "HotpatchManager.patch",
+        "runtime.hotpatch.reactor",
+        "hotpatch_mio_reactor_state",
         CapabilityStatus.FOUNDATION,
-        "E001",
-        "Preserve the mio/PyFuture reactor across a patch",
-        "The manager keeps namespace and object identity; no file descriptor is migrated.",
+        "E008",
+        "Preserve the selector/mio reactor across a patch",
+        "Registrations are re-armed on a fresh selector and mio bridge fds are adopted so sockets stay open; closed descriptors are E008.",
     ),
     (
         "hotpatch_rcu_ast_epoch",
         "hotpatch",
-        "backends.hotpatch",
+        "runtime.hotpatch.rcu",
         "hotpatch_rcu_ast_epoch",
         CapabilityStatus.MODELLED,
-        "E003",
+        "E008",
         "RCU epoch reclamation for live AST nodes",
-        "A cooperative epoch counter is modelled; no kernel RCU grace-period detection is claimed.",
+        "Cooperative user-space epoch counters, read guards and grace-period reclamation are implemented; no kernel RCU syscall is claimed, timeouts are E008.",
     ),
     (
         "hotpatch_shadow_heap_reconcile",
@@ -150,12 +151,12 @@ _ROWS: tuple[tuple[str, str, str, str | None, CapabilityStatus, str, str, str], 
     (
         "hotpatch_rollback_journal_commit",
         "hotpatch",
-        "backends.hotpatch",
-        "HotpatchManager.rollback",
+        "runtime.hotpatch.journal",
+        "hotpatch_rollback_journal_commit",
         CapabilityStatus.FOUNDATION,
         "E008",
-        "Commit/rollback a copy-on-write patch journal",
-        "An undo snapshot restores code, classes, object state and namespace keys.",
+        "Commit/rollback a before-image patch journal",
+        "Attribute/buffer before-images and an undo log restore state; nested containers need deep=True or attribute replacement, verification/undo failures are E008.",
     ),
     (
         "hotpatch_abi_shim_synthesize",
@@ -185,7 +186,7 @@ _ROWS: tuple[tuple[str, str, str, str | None, CapabilityStatus, str, str, str], 
         CapabilityStatus.REJECTED,
         "E007",
         "Lock-free quiescence across PEP 684 sub-interpreters",
-        "The patch manager uses a documented quiescent-point protocol, not lock-free sub-interpreter停顿.",
+        "The patch manager uses a documented quiescent-point protocol, not lock-free sub-interpreter pauses.",
     ),
     # II. Self-synthesizing neuromorphic meta-compiler
     (
@@ -499,7 +500,7 @@ _ROWS: tuple[tuple[str, str, str, str | None, CapabilityStatus, str, str, str], 
         CapabilityStatus.FOUNDATION,
         "E001",
         "Profile exact runtime type signatures",
-        "Signatures are exact type tuples, not a inferred lattice.",
+        "Signatures are exact type tuples, not an inferred lattice.",
     ),
     (
         "jit_background_cranelift_emit",
@@ -1136,18 +1137,59 @@ CAPABILITY_NAMES: tuple[str, ...] = tuple(cap.name for cap in CAPABILITIES)
 # ---------------------------------------------------------------------------
 
 
+_BACKENDS: frozenset[str] = frozenset({"python", "native"})
+
+
 def span_of(node: Any) -> tuple[int, int] | None:
-    """Return the character span carried by an AST node, if any."""
+    """Return the character span carried by an AST node, if any.
+
+    Malformed spans are ignored rather than raising from an error-formatting
+    path: a diagnostic must never be the source of a new exception.
+    """
     span = getattr(node, "span", None)
-    if isinstance(span, tuple) and len(span) == 2:
-        return (int(span[0]), int(span[1]))
+    if isinstance(span, (tuple, list)) and len(span) == 2:
+        try:
+            return (int(span[0]), int(span[1]))
+        except TypeError, ValueError:
+            return None
     return None
 
 
-def _location(span: tuple[int, int] | None) -> dict[str, Any]:
+def _location(span: tuple[int, int] | None = None, node: Any = None) -> dict[str, Any]:
+    """Build the location kwargs for a :class:`PillarError`.
+
+    A node's real ``line``/``col`` take precedence over the legacy
+    ``col = span[0]`` fallback so a source-aware node is never downgraded to a
+    raw character offset presented as a column.
+    """
+    span = span if span is not None else span_of(node)
     if span is None:
         return {}
-    return {"span": span, "line": 0, "col": span[0]}
+    location: dict[str, Any] = {"span": span, "line": 0, "col": span[0]}
+    if node is not None:
+        line = getattr(node, "line", None)
+        col = getattr(node, "col", None)
+        if isinstance(line, int) and line >= 0:
+            location["line"] = line
+        if isinstance(col, int) and col >= 0:
+            location["col"] = col
+    return location
+
+
+def _check_backend(
+    backend: str,
+    *,
+    span: tuple[int, int] | None = None,
+    node: Any = None,
+) -> None:
+    """Validate a backend name once, at every public dispatch entry point."""
+    if backend not in _BACKENDS:
+        raise PillarError(
+            "E003",
+            f"unknown backend `{backend}`",
+            reason="capabilities are exposed on 'python' and 'native' only",
+            **_location(span, node),
+        )
 
 
 def reject(
@@ -1158,7 +1200,13 @@ def reject(
     node: Any = None,
     reason: str | None = None,
 ) -> PillarError:
-    """Build the canonical structured rejection for a capability."""
+    """Build the canonical structured rejection for a capability.
+
+    The returned error is a value; dispatch entry points raise it.  This keeps
+    ``reject()`` usable as a diagnostic builder while namespace stubs and
+    :func:`invoke` share one raising contract.
+    """
+    _check_backend(backend, span=span, node=node)
     cap = BY_NAME.get(name)
     if cap is None:
         raise PillarError(
@@ -1166,12 +1214,13 @@ def reject(
             f"unknown capability `{name}`",
             reason="the directive defines exactly 100 capability names",
             help_text="choose a name from runtime.capabilities.CAPABILITY_NAMES",
-            **_location(span or span_of(node)),
+            **_location(span, node),
         )
     if cap.status is CapabilityStatus.REJECTED:
         code = cap.code
         message = f"capability `{name}` is not available"
     elif backend not in cap.backends:
+        # Defensive: a future capability could expose only one backend.
         code = "E007"
         message = f"capability `{name}` is not available on the `{backend}` backend"
     else:
@@ -1187,25 +1236,72 @@ def reject(
             else "remove the unsupported request and use the supported fallback"
         ),
         note=f"{cap.subsystem}:{cap.status.value}",
-        **_location(span or span_of(node)),
+        **_location(span, node),
     )
 
 
+@cache
 def resolve(cap: Capability) -> Callable[..., Any] | None:
-    """Import a capability implementation lazily; rejected entries return None."""
+    """Import a capability implementation lazily; rejected entries return None.
+
+    Invariants:
+
+    * ``None`` means *the optional module is absent* or *no adapter is
+      declared* -- never "the module imported badly".  A genuine import error
+      inside an installed module propagates so a broken adapter cannot masquer
+      as an unimplemented capability.
+    * Results are cached.  ``resolve.cache_clear()`` is available for hosts
+      that install modules at runtime.
+    """
     if cap.attr is None or not cap.supported:
         return None
     try:
-        module = importlib.import_module(cap.module)
-        target: Any = module
-        for part in cap.attr.split("."):
-            target = getattr(target, part)
-    except ImportError, AttributeError:
-        # An opt-in module that is not installed simply has no callable
-        # adapter.  The capability is still listed so both backends emit the
-        # same E006/E007 diagnostic instead of failing at import time.
+        spec = importlib.util.find_spec(cap.module)
+    except ImportError, AttributeError, ValueError:
+        # A missing/broken parent package is treated like an absent opt-in
+        # module; errors raised by the module itself are never swallowed.
         return None
+    if spec is None:
+        return None
+    module = importlib.import_module(cap.module)
+    target: Any = module
+    for part in cap.attr.split("."):
+        try:
+            target = getattr(target, part)
+        except AttributeError:
+            return None
     return target if callable(target) else None
+
+
+def _callable_location(
+    fn: Callable[..., Any], kwargs: dict[str, Any], args: tuple[Any, ...]
+) -> dict[str, Any]:
+    """Return the location kwargs that can be injected without a conflict.
+
+    ``span``/``node`` are injected as keywords.  A target whose matching
+    parameter is positional-only, or is already satisfied by a positional
+    argument, must not receive a duplicate value -- otherwise a diagnostic
+    helper would turn a perfectly good call into a ``TypeError``.
+    """
+    try:
+        signature = inspect.signature(fn)
+    except TypeError, ValueError:  # builtins without an introspectable signature
+        return {}
+    positional = [
+        parameter.name
+        for parameter in signature.parameters.values()
+        if parameter.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    injected: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        parameter = signature.parameters.get(key)
+        if parameter is None or parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
+            continue
+        if key in positional and positional.index(key) < len(args):
+            continue
+        injected[key] = value
+    return injected
 
 
 def invoke(
@@ -1220,19 +1316,12 @@ def invoke(
 
     ``span`` (or the span carried by ``node``) is propagated to implementations
     that accept it, so a security or consensus failure keeps its exact source
-    location on both backends.
+    location on both backends.  Injection is skipped when it would collide with
+    a positional argument; the original call then proceeds unchanged.
     """
-    if backend not in ("python", "native"):
-        raise PillarError(
-            "E003",
-            f"unknown backend `{backend}`",
-            reason="capabilities are exposed on 'python' and 'native' only",
-            **_location(span),
-        )
+    _check_backend(backend, span=span, node=node)
     cap = BY_NAME.get(name)
-    if cap is None:
-        raise reject(name, backend=backend, span=span, node=node)
-    if not cap.supported:
+    if cap is None or not cap.supported:
         raise reject(name, backend=backend, span=span, node=node)
     fn = resolve(cap)
     if fn is None:
@@ -1241,32 +1330,55 @@ def invoke(
             f"capability `{name}` has no callable adapter",
             reason=cap.boundary,
             help_text="use capability_namespace() to list callable capabilities",
-            **_location(span or span_of(node)),
+            **_location(span, node),
         )
     if span is None:
         span = span_of(node)
-    try:
-        parameters = inspect.signature(fn).parameters
-    except TypeError, ValueError:  # pragma: no cover - builtins without signatures
-        parameters = {}
-    if span is not None and "span" in parameters:
-        kwargs.setdefault("span", span)
-    if node is not None and "node" in parameters:
-        kwargs.setdefault("node", node)
+    injected: dict[str, Any] = {}
+    if span is not None:
+        injected["span"] = span
+    if node is not None:
+        injected["node"] = node
+    if injected:
+        kwargs.update(_callable_location(fn, injected, args))
     return fn(*args, **kwargs)
 
 
+def _rejection(name: str, *args: Any, backend: str, **kwargs: Any) -> Any:
+    """Namespace stub for an unavailable capability.
+
+    Unlike :func:`reject` (a diagnostic *builder*), a namespace entry must
+    raise, exactly like the :func:`invoke` entries beside it.  Positional
+    arguments are accepted and ignored so the 100-name surface has one calling
+    convention.
+    """
+    del args
+    raise reject(
+        name,
+        backend=backend,
+        span=kwargs.get("span"),
+        node=kwargs.get("node"),
+        reason=kwargs.get("reason"),
+    )
+
+
 def capability_namespace(backend: str = "python") -> dict[str, Callable[..., Any]]:
-    """Return the identical 100-name surface for either backend."""
-    if backend not in ("python", "native"):
-        raise PillarError("E003", f"unknown backend `{backend}`")
-    namespace: dict[str, Callable[..., Any]] = {}
-    for cap in CAPABILITIES:
-        if cap.supported and resolve(cap) is not None:
-            namespace[cap.name] = partial(invoke, cap.name, backend=backend)
-        else:
-            namespace[cap.name] = partial(reject, cap.name, backend=backend)
-    return namespace
+    """Return the identical 100-name surface for either backend.
+
+    A fresh mapping is returned on every call so callers may install it into a
+    host namespace without mutating a shared cache.  Adapter resolution is
+    cached by :func:`resolve`, so the 100-name scan is cheap after the first
+    call.
+    """
+    _check_backend(backend)
+    return {
+        cap.name: (
+            partial(invoke, cap.name, backend=backend)
+            if cap.supported and resolve(cap) is not None
+            else partial(_rejection, cap.name, backend=backend)
+        )
+        for cap in CAPABILITIES
+    }
 
 
 def install_capability_bridge(
@@ -1307,8 +1419,7 @@ def capability_signature(name: str, *, backend: str = "python") -> str:
     symmetry with :func:`capability_namespace`; both backends share the same
     host bridge and therefore the same signature.
     """
-    if backend not in ("python", "native"):
-        raise PillarError("E003", f"unknown backend `{backend}`")
+    _check_backend(backend)
     cap = BY_NAME.get(name)
     if cap is None:
         raise reject(name)

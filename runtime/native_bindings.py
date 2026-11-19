@@ -6,7 +6,7 @@ corresponding ``#[pyfunction]`` declaration with an honest diagnostic.  For
 capabilities that are implemented as host bridges, the generated binding
 reports ``E006`` and directs callers to :func:`install_capability_bridge`.
 For capabilities that cannot be implemented portably, it emits the same
-``E007`` rejection as the Python path, preserving dual-backend parity.
+rejection code as the Python path, preserving dual-backend parity.
 """
 
 from __future__ import annotations
@@ -37,9 +37,35 @@ fn pillar_error(code: &str, name: &str, reason: &str, span: Option<(usize, usize
 }
 """
 
+# Rust's string escapes are a subset of Python's, but not identical to JSON's:
+# e.g. `\\uXXXX` is not valid Rust (it must be `\\u{XXXX}`).  Escape explicitly.
+_RUST_CHAR_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\0": "\\0",
+}
+
 
 def _rust_string(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """Return ``value`` as a valid Rust string literal.
+
+    Backslashes, quotes and control characters are escaped; non-ASCII text is
+    emitted verbatim so rustc sees a valid UTF-8 string literal.
+    """
+    parts = ['"']
+    for char in value:
+        escaped = _RUST_CHAR_ESCAPES.get(char)
+        if escaped is not None:
+            parts.append(escaped)
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            parts.append(f"\\u{{{ord(char):x}}}")
+        else:
+            parts.append(char)
+    parts.append('"')
+    return "".join(parts)
 
 
 def _binding(cap: Capability) -> str:
@@ -52,6 +78,10 @@ def _binding(cap: Capability) -> str:
     return (
         "#[pyfunction]\n"
         f"#[pyo3(name = {_rust_string(cap.name)})]\n"
+        # Mirror the Python `reject()` contract: span is optional and defaults
+        # to None, so calling the binding with no arguments still produces a
+        # structured diagnostic rather than a TypeError.
+        "#[pyo3(signature = (span = None))]\n"
         f"pub fn {cap.name}(\n"
         "    _py: Python<'_>,\n"
         "    span: Option<(usize, usize)>,\n"
