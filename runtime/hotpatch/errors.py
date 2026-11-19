@@ -29,14 +29,22 @@ class ByteSpan:
 
 
 def byte_offsets(source: str | None, span: tuple[int, int] | None) -> ByteSpan | None:
-    """Translate a character span into byte offsets for ``source``."""
+    """Translate a character span into byte offsets for ``source``.
+
+    Out-of-range or inverted spans are clamped before encoding so a malformed
+    caller-supplied span can never produce a nonsensical byte range.  The
+    reported character ``span`` itself is left untouched.
+    """
     if span is None:
         return None
     start, end = span
     if source is None:
-        return ByteSpan(start, end, start, end)
-    prefix = source[:start].encode("utf-8")
-    body = source[start:end].encode("utf-8")
+        return ByteSpan(start, end, min(start, end), max(start, end))
+    length = len(source)
+    byte_start = max(min(start, length), 0)
+    byte_end = max(min(end, length), byte_start)
+    prefix = source[:byte_start].encode("utf-8")
+    body = source[byte_start:byte_end].encode("utf-8")
     return ByteSpan(start, end, len(prefix), len(prefix) + len(body))
 
 
@@ -52,8 +60,8 @@ def span_from_line_col(
         if newline == -1:
             return None
         offset = newline + 1
-    start = offset + max(col - 1, 0)
-    return (start, min(start + width, len(source)))
+    start = min(offset + max(col - 1, 0), len(source))
+    return (start, min(start + max(width, 0), len(source)))
 
 
 class HotpatchError(PillarError):

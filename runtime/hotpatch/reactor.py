@@ -62,11 +62,18 @@ def _poller_fd(selector: selectors.BaseSelector) -> int | None:
         return None
 
 
-def capture_selector(selector: selectors.BaseSelector) -> ReactorState:
+def capture_selector(
+    selector: selectors.BaseSelector,
+    *,
+    span: tuple[int, int] | None = None,
+    source: str | None = None,
+) -> ReactorState:
     """Snapshot the registered interests without touching the socket queue."""
     if not isinstance(selector, selectors.BaseSelector):
         raise HotpatchError(
             "reactor source must be a selectors.BaseSelector",
+            span=span,
+            source=source,
             reason=f"got {type(selector).__name__}",
             help_text="pass a selector, a ReactorState, or a mio bridge object",
         )
@@ -75,6 +82,8 @@ def capture_selector(selector: selectors.BaseSelector) -> ReactorState:
     except (ValueError, OSError) as error:
         raise HotpatchError(
             "reactor selector is already closed",
+            span=span,
+            source=source,
             reason=str(error),
             help_text="capture the selector before its owning module shuts down",
         ) from None
@@ -102,6 +111,8 @@ class ReactorMigration:
     elapsed_ns: int = 0
     committed: bool = False
     rolled_back: bool = False
+    span: tuple[int, int] | None = None
+    source: str | None = None
 
     @property
     def selector(self) -> selectors.BaseSelector:
@@ -150,6 +161,13 @@ class ReactorMigration:
         else:
             self.rollback()
 
+    def __del__(self) -> None:
+        # RAII: if the caller dropped the handle without an explicit
+        # commit()/rollback(), discard the new selector and its duplicated fds.
+        if not self.committed and not self.rolled_back:
+            with contextlib.suppress(Exception):
+                self.rollback()
+
 
 def migrate_selector(
     selector: selectors.BaseSelector,
@@ -160,7 +178,7 @@ def migrate_selector(
 ) -> ReactorMigration:
     """Move all registrations to a pristine selector of the same kind."""
     started = time.perf_counter_ns()
-    state = capture_selector(selector)
+    state = capture_selector(selector, span=span, source=source)
     new_selector = _new_selector(selector)
     duplicated: dict[int, int] = {}
     try:
@@ -203,6 +221,8 @@ def migrate_selector(
         old_poller_fd=state.poller_fd,
         new_poller_fd=_poller_fd(new_selector),
         elapsed_ns=time.perf_counter_ns() - started,
+        span=span,
+        source=source,
     )
 
 
@@ -234,34 +254,69 @@ class MioBridgeMigration:
     elapsed_ns: int
     committed: bool = False
     rolled_back: bool = False
+    span: tuple[int, int] | None = None
+    source: str | None = None
 
     @property
     def packet_loss(self) -> int:
         return 0
 
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+
     def commit(self) -> None:
         if self.rolled_back:
             raise HotpatchError(
                 "cannot commit a rolled-back reactor migration",
+                span=self.span,
+                source=self.source,
                 help_text="create a new migration from the active poller",
             )
         if not self.committed:
-            self.old_bridge.close_poller()
+            try:
+                self.old_bridge.close_poller()
+            except Exception as error:
+                raise HotpatchError(
+                    "cannot close the old reactor poller",
+                    span=self.span,
+                    source=self.source,
+                    reason=str(error),
+                ) from None
             self.committed = True
 
     def rollback(self) -> MioReactorBridge:
         if self.committed:
             raise HotpatchError(
                 "cannot roll back a committed reactor migration",
+                span=self.span,
+                source=self.source,
                 help_text="keep the migration object alive until verification passes",
             )
         if not self.rolled_back:
-            self.new_bridge.reregister(
-                (registration.fd, registration.events, registration.data)
-                for registration in self.registrations
-            )
+            # The replacement poller owns no live socket; close its descriptor
+            # so a dropped migration cannot leak the new epoll/kqueue fd.
+            try:
+                self.new_bridge.close_poller()
+            except Exception as error:
+                raise HotpatchError(
+                    "cannot close the replacement reactor poller",
+                    span=self.span,
+                    source=self.source,
+                    reason=str(error),
+                ) from None
             self.rolled_back = True
         return self.old_bridge
+
+    def __del__(self) -> None:
+        if not self.committed and not self.rolled_back:
+            with contextlib.suppress(Exception):
+                self.rollback()
 
 
 def _is_mio_bridge(value: Any) -> bool:
@@ -295,8 +350,24 @@ def migrate_mio_bridge(
             reason="the reloaded module did not expose a new bridge",
             help_text="construct the new module's Poll before reopening the descriptor",
         )
+    if not _is_mio_bridge(new_bridge):
+        raise HotpatchError(
+            "replacement does not implement the mio reactor bridge protocol",
+            span=span,
+            source=source,
+            reason="expected poll_fd(), snapshot_registrations(), reregister(), close_poller()",
+            help_text="construct the new module's Poll before adopting registrations",
+        )
     started = time.perf_counter_ns()
-    old_poller = int(old_bridge.poll_fd())
+    try:
+        old_poller = int(old_bridge.poll_fd())
+    except (OSError, TypeError, ValueError) as error:
+        raise HotpatchError(
+            "cannot read the old reactor poll descriptor",
+            span=span,
+            source=source,
+            reason=str(error),
+        ) from None
     registrations: list[Registration] = []
     for fd, events, data in old_bridge.snapshot_registrations():
         try:
@@ -309,11 +380,25 @@ def migrate_mio_bridge(
                 reason=str(error),
             ) from None
         registrations.append(Registration(int(fd), int(events), data))
-    new_bridge.reregister(
-        (registration.fd, registration.events, registration.data)
-        for registration in registrations
-    )
-    new_poller = int(new_bridge.poll_fd())
+    try:
+        new_bridge.reregister(
+            (registration.fd, registration.events, registration.data)
+            for registration in registrations
+        )
+        new_poller = int(new_bridge.poll_fd())
+    except Exception as error:
+        # The replacement poller was touched but never handed to the caller;
+        # close it so the failed migration leaks no descriptor.
+        with contextlib.suppress(Exception):
+            new_bridge.close_poller()
+        if isinstance(error, HotpatchError):
+            raise
+        raise HotpatchError(
+            "cannot adopt registrations on the replacement reactor",
+            span=span,
+            source=source,
+            reason=str(error),
+        ) from None
     if new_poller == old_poller:
         raise HotpatchError(
             "the replacement reactor reused the live poll descriptor",
@@ -329,6 +414,8 @@ def migrate_mio_bridge(
         old_poller_fd=old_poller,
         new_poller_fd=new_poller,
         elapsed_ns=time.perf_counter_ns() - started,
+        span=span,
+        source=source,
     )
 
 

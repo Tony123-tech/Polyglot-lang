@@ -3,12 +3,13 @@
 Two relocation paths are implemented:
 
 * **GOT/PLT slots** - the 8-byte pointer cell for an already-bound symbol is
-  located by scanning the Mach-O ``__got``/``__la_symbol_ptr``/``__auth_got``
-  sections (or ELF ``DT_JMPREL`` relocations) for the value returned by
-  ``dlsym``.  The page is made writable, the aligned pointer is stored with a
-  single 8-byte write, and the original protection is restored.  A thread that
-  is executing the old target continues safely; the next indirect call sees
-  the new pointer.
+  located by value-scanning the Mach-O ``__got``/``__la_symbol_ptr``/
+  ``__auth_got`` sections, or writable mappings on Linux, for the value
+  returned by ``dlsym``.  This is not a full ELF ``DT_JMPREL`` relocation walk
+  and does not cover chained fixups.  The page is made writable, the aligned
+  pointer is stored with a single 8-byte write, and the original protection is
+  restored.  A thread that is executing the old target continues safely; the
+  next indirect call sees the new pointer.
 * **Inline JMP sleds** - ``ldr x16, #8; br x16; .quad target`` on AArch64 and
   ``mov rax, imm64; jmp rax`` on x86_64.  Sleds are only written into
   :class:`ExecutableRegion` pages owned by this process (``MAP_JIT`` on Apple
@@ -291,12 +292,36 @@ def _make_writable(address: int, size: int) -> Callable[[], None]:
     )
 
 
+def _check_pointer_cell(address: int) -> None:
+    """Refuse to dereference an address that is not a mapped, aligned cell.
+
+    The trampoline API accepts raw addresses from embedders.  Passing a bogus
+    integer to ``ctypes.c_void_p.from_address`` would segfault the interpreter,
+    so validate against the process mappings first and report a structured
+    ``E007`` instead.  There is an inherent TOCTOU window, but it closes the
+    common case of a stale or mistyped address.
+    """
+    if address <= 0:
+        raise relocation_error("pointer cell address is NULL or negative")
+    if address % struct.calcsize("P") != 0:
+        raise relocation_error(f"pointer cell {address:#x} is not word-aligned")
+    if _page_protection(address) is None:
+        raise HotpatchError(
+            f"pointer cell {address:#x} is not in a mapped page",
+            code="E007",
+            reason="the address does not belong to a live mapping in this process",
+            help_text="pass an address from dlsym, an owned buffer, or an mmap",
+        )
+
+
 def atomic_load_ptr(address: int) -> int:
+    _check_pointer_cell(address)
     return ctypes.c_void_p.from_address(address).value or 0
 
 
 def atomic_store_ptr(address: int, value: int) -> None:
     """Store an aligned pointer with one machine-word write."""
+    _check_pointer_cell(address)
     ctypes.c_void_p.from_address(address).value = value
 
 
@@ -495,15 +520,24 @@ def _dyld_images() -> list[MachOImage]:
         ncmds = struct.unpack_from("<I", raw, 16)[0]
         offset = 32
         sections: list[tuple[str, str, int, int]] = []
-        for _ in range(ncmds):
+        # Cap the walk: a corrupt load-command chain must not walk off the
+        # mapped header image.  Real dylibs have tens of commands at most.
+        for _ in range(min(ncmds, 1024)):
+            if offset + 8 > 4096:
+                break
             command, command_size = struct.unpack_from(
                 "<II", ctypes.string_at(header + offset, 8), 0
             )
             if command == _LC_SEGMENT_64:
+                if command_size < 72 or offset + command_size > 4096:
+                    break
                 segment = ctypes.string_at(header + offset, 72)
                 nsects = struct.unpack_from("<I", segment, 64)[0]
                 section_offset = offset + 72
-                for _section in range(nsects):
+                # Each section header is 80 bytes within this load command.
+                for _section in range(min(nsects, 512)):
+                    if section_offset + 80 > offset + command_size:
+                        break
                     section = ctypes.string_at(header + section_offset, 80)
                     sectname = section[:16].rstrip(b"\x00").decode(errors="replace")
                     segname = section[16:32].rstrip(b"\x00").decode(errors="replace")
@@ -599,16 +633,16 @@ def _elf_got_slots(
     span: tuple[int, int] | None,
     seen: set[int],
 ) -> list[GotSlot]:
-    """Minimal ELF ``DT_JMPREL`` walker used on Linux.
+    """Locate Linux GOT-like cells by scanning writable mappings.
 
-    Kept intentionally small: it resolves PLT relocation symbol names and
-    returns the matching GOT cells.  The macOS path above is the one exercised
+    ``symbol`` is retained for diagnostics and API symmetry with the Mach-O
+    path; this fallback matches the bound pointer value from ``dlsym`` rather
+    than parsing ELF relocations.  The macOS path above is the one exercised
     by the default test suite.
     """
     slots: list[GotSlot] = []
-    # The safe fallback is the Mach-O-style value scan over writable maps that
-    # belong to the requested library; parsing every ELF program header from
-    # dl_iterate_phdr is not needed for the parity tests.
+    # A full DT_JMPREL walk (including chained fixups) is intentionally out of
+    # scope; only writable maps belonging to the requested library are scanned.
     for mapping in _read_proc_maps():
         start, end, path, writable = mapping
         if not writable:

@@ -102,11 +102,17 @@ class FrameSnapshot:
     code: types.CodeType
     values: dict[str, Any]
     label: str = ""
+    added: tuple[str, ...] = ()
 
     def restore(self) -> None:
         with contextlib.suppress(ValueError, RuntimeError):
             for name, value in self.values.items():
                 self.frame.f_locals[name] = value
+        # Locals introduced by the migration must be removed again so rollback
+        # restores the original fast-local layout, not just the original values.
+        for name in self.added:
+            with contextlib.suppress(ValueError, RuntimeError, KeyError):
+                del self.frame.f_locals[name]
 
 
 @dataclass
@@ -142,7 +148,34 @@ class FramePatch:
             self.rollback()
 
 
-def _resolve_target(target: Any) -> types.FunctionType:
+def _require_writable_locals(
+    *, span: tuple[int, int] | None = None, source: str | None = None
+) -> None:
+    """Refuse live-local migration when this interpreter cannot write them.
+
+    CPython < 3.13 returns a *snapshot* dict from ``frame.f_locals``; writes to
+    it silently disappear.  Failing loudly with ``E007`` is the only honest
+    behaviour — otherwise the call would claim a migration that never happened.
+    """
+    # Runtime capability gate, not a static compatibility shim: the module can
+    # be imported on older interpreters but must refuse live-local migration.
+    if sys.version_info < (3, 13):  # noqa: UP036
+        raise HotpatchError(
+            "this interpreter does not expose writable frame locals",
+            code="E007",
+            span=span,
+            source=source,
+            reason="CPython 3.13+ (PEP 667) is required for live local migration",
+            help_text="upgrade the interpreter, or patch only future function entries",
+        )
+
+
+def _resolve_target(
+    target: Any,
+    *,
+    span: tuple[int, int] | None = None,
+    source: str | None = None,
+) -> types.FunctionType:
     if isinstance(target, types.FunctionType):
         return target
     if isinstance(target, types.MethodType):
@@ -156,25 +189,44 @@ def _resolve_target(target: Any) -> types.FunctionType:
         if not module_name or not qualname:
             raise abi_error(
                 f"cannot resolve frame target {target!r}",
+                span=span,
+                source=source,
                 detail="expected 'module:qualname' or a function object",
             )
-        attribute: Any = importlib.import_module(module_name)
-        for part in qualname.split("."):
-            attribute = getattr(attribute, part)
-        return _resolve_target(attribute)
+        try:
+            attribute: Any = importlib.import_module(module_name)
+            for part in qualname.split("."):
+                attribute = getattr(attribute, part)
+        except (ImportError, AttributeError) as error:
+            raise abi_error(
+                f"cannot resolve frame target {target!r}",
+                span=span,
+                source=source,
+                detail=str(error),
+            ) from None
+        return _resolve_target(attribute, span=span, source=source)
     raise abi_error(
         f"frame target must be a function, got {type(target).__name__}",
+        span=span,
+        source=source,
         detail="pass a function object or 'module:qualname'",
     )
 
 
-def _code_of(replacement: Any) -> types.CodeType:
+def _code_of(
+    replacement: Any,
+    *,
+    span: tuple[int, int] | None = None,
+    source: str | None = None,
+) -> types.CodeType:
     if isinstance(replacement, types.CodeType):
         return replacement
     if isinstance(replacement, (types.FunctionType, types.MethodType)):
         return replacement.__code__
     raise abi_error(
         f"replacement must be a function or code object, got {type(replacement).__name__}",
+        span=span,
+        source=source,
         detail="the replacement supplies the new bytecode and local layout",
     )
 
@@ -218,8 +270,8 @@ class FrameEvalMigrator:
         span: tuple[int, int] | None = None,
         source: str | None = None,
     ) -> FramePatch:
-        function = _resolve_target(target)
-        new_code = _code_of(replacement)
+        function = _resolve_target(target, span=span, source=source)
+        new_code = _code_of(replacement, span=span, source=source)
         old_layout = FrameLayout.from_code(function.__code__)
         new_layout = FrameLayout.from_code(new_code)
         problems = old_layout.issues(new_layout, restart=restart)
@@ -238,79 +290,101 @@ class FrameEvalMigrator:
             name for name in old_layout.varnames if name not in new_layout.varnames
         ]
 
+        live_frames = [
+            frame for frame in _live_frames() if frame.f_code is old_layout.code
+        ]
+        generator_list = list(generators)
+        if live_frames or generator_list:
+            _require_writable_locals(span=span, source=source)
+
         snapshots: list[FrameSnapshot] = []
         pinned = 0
         migrated = 0
-        for frame in _live_frames():
-            if frame.f_code is not old_layout.code:
-                continue
-            current = dict(frame.f_locals)
-            for name in removed:
-                if current.get(name) is not None:
-                    raise abi_error(
-                        f"cannot drop live local {name!r} from {function.__qualname__}",
+        code_swapped = False
+        try:
+            for frame in live_frames:
+                current = dict(frame.f_locals)
+                for name in removed:
+                    if current.get(name) is not None:
+                        raise abi_error(
+                            f"cannot drop live local {name!r} from {function.__qualname__}",
+                            span=span,
+                            source=source,
+                            detail="removed locals without a default still hold a value",
+                        )
+                migrated_values = {
+                    name: value
+                    for name, value in current.items()
+                    if name in new_layout.varnames
+                }
+                for name in new_names:
+                    migrated_values[name] = values.get(name, _default_for(name))
+                added = tuple(name for name in migrated_values if name not in current)
+                snapshots.append(
+                    FrameSnapshot(
+                        frame, frame.f_code, current, function.__name__, added
+                    )
+                )
+                try:
+                    for name, value in migrated_values.items():
+                        frame.f_locals[name] = value
+                except (TypeError, AttributeError) as error:
+                    raise HotpatchError(
+                        "this interpreter does not expose writable frame locals",
+                        code="E007",
                         span=span,
                         source=source,
-                        detail="removed locals without a default still hold a value",
-                    )
-            migrated_values = {
-                name: value
-                for name, value in current.items()
-                if name in new_layout.varnames
-            }
-            for name in new_names:
-                migrated_values[name] = values.get(name, _default_for(name))
-            snapshots.append(
-                FrameSnapshot(frame, frame.f_code, current, function.__name__)
-            )
-            try:
-                for name, value in migrated_values.items():
-                    frame.f_locals[name] = value
-            except (TypeError, AttributeError) as error:
-                raise HotpatchError(
-                    "this interpreter does not expose writable frame locals",
-                    code="E007",
-                    span=span,
-                    source=source,
-                    reason=str(error),
-                    help_text="CPython 3.13+ (PEP 667) is required for live local migration",
-                ) from None
-            migrated += 1
-            pinned += 1
+                        reason=str(error),
+                        help_text="CPython 3.13+ (PEP 667) is required for live local migration",
+                    ) from None
+                migrated += 1
+                pinned += 1
 
-        generator_snapshots = 0
-        for generator in generators:
-            snapshots.append(
-                self._migrate_generator(
-                    generator,
-                    old_layout,
-                    new_layout,
-                    values,
+            generator_snapshots = 0
+            for generator in generator_list:
+                snapshots.append(
+                    self._migrate_generator(
+                        generator,
+                        old_layout,
+                        new_layout,
+                        values,
+                        span=span,
+                        source=source,
+                    )
+                )
+                generator_snapshots += 1
+
+            with self._lock:
+                function.__code__ = new_code
+                code_swapped = True
+                self._generation += 1
+                patch = FramePatch(
+                    function=function,
+                    old_code=old_layout.code,
+                    new_code=new_code,
+                    snapshots=snapshots,
+                    pinned_frames=pinned,
+                    migrated_locals=migrated + generator_snapshots,
+                    generators=generator_list,
+                    generation=self._generation,
                     span=span,
                     source=source,
                 )
-            )
-            generator_snapshots += 1
-
-        with self._lock:
-            function.__code__ = new_code
-            self._generation += 1
-            patch = FramePatch(
-                function=function,
-                old_code=old_layout.code,
-                new_code=new_code,
-                snapshots=snapshots,
-                pinned_frames=pinned,
-                migrated_locals=migrated + generator_snapshots,
-                generators=list(generators),
-                generation=self._generation,
-                span=span,
-                source=source,
-            )
-            self._patches.append(patch)
-            self.migrated_frames += migrated
-            self.pinned_frames += pinned
-            return patch
+                self._patches.append(patch)
+                self.migrated_frames += migrated
+                self.pinned_frames += pinned
+                return patch
+        except BaseException:
+            # A failure anywhere in the migration must not leave a half-patched
+            # process: restore the code object (if it was swapped) and replay
+            # every completed frame snapshot in reverse order.
+            if code_swapped:
+                with contextlib.suppress(Exception):
+                    function.__code__ = old_layout.code
+            for snapshot in reversed(snapshots):
+                with contextlib.suppress(Exception):
+                    snapshot.restore()
+            raise
 
     def _migrate_generator(
         self,
@@ -349,7 +423,8 @@ class FrameEvalMigrator:
             if name in old_layout.varnames or name in updated:
                 continue
             updated[name] = defaults.get(name, _default_for(name))
-        snapshot = FrameSnapshot(frame, frame.f_code, current, "generator")
+        added = tuple(name for name in updated if name not in current)
+        snapshot = FrameSnapshot(frame, frame.f_code, current, "generator", added)
         try:
             for name, value in updated.items():
                 frame.f_locals[name] = value
@@ -414,6 +489,7 @@ class SafepointDispatcher:
         self._tool_id: int | None = None
         self._previous: Any = None
         self.dispatches = 0
+        self.errors: list[BaseException] = []
 
     def __enter__(self) -> Self:
         self.install()
@@ -421,6 +497,13 @@ class SafepointDispatcher:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.uninstall()
+
+    def __del__(self) -> None:
+        # A dispatcher dropped without uninstall() would leak a global
+        # sys.monitoring tool id, blocking every future safepoint.
+        if getattr(self, "_tool_id", None) is not None:
+            with contextlib.suppress(Exception):
+                self.uninstall()
 
     def install(self) -> None:
         if self._tool_id is not None:
@@ -445,19 +528,37 @@ class SafepointDispatcher:
                 code="E007",
                 help_text="another profiler/debugger owns every monitoring slot",
             )
-        monitoring.register_callback(
-            self._tool_id, monitoring.events.LINE, self._on_line
-        )
-        monitoring.set_events(self._tool_id, monitoring.events.LINE)
+        try:
+            monitoring.register_callback(
+                self._tool_id, monitoring.events.LINE, self._on_line
+            )
+            monitoring.set_events(self._tool_id, monitoring.events.LINE)
+        except Exception as error:
+            # Never leave a half-installed tool id behind on a failed install.
+            with contextlib.suppress(Exception):
+                monitoring.free_tool_id(self._tool_id)
+            self._tool_id = None
+            raise HotpatchError(
+                "cannot install the bytecode safepoint callback",
+                code="E007",
+                reason=str(error),
+            ) from None
 
     def uninstall(self) -> None:
         if self._tool_id is None:
             return
         monitoring = sys.monitoring
-        monitoring.set_events(self._tool_id, 0)
-        monitoring.register_callback(self._tool_id, monitoring.events.LINE, None)
-        monitoring.free_tool_id(self._tool_id)
-        self._tool_id = None
+        tool_id = self._tool_id
+        try:
+            with contextlib.suppress(Exception):
+                monitoring.set_events(tool_id, 0)
+            with contextlib.suppress(Exception):
+                monitoring.register_callback(tool_id, monitoring.events.LINE, None)
+        finally:
+            # Even if deregistration failed, release the global tool id.
+            with contextlib.suppress(Exception):
+                monitoring.free_tool_id(tool_id)
+            self._tool_id = None
 
     def defer(self, code: types.CodeType, action: Callable[[], None]) -> None:
         with self._lock:
@@ -468,7 +569,13 @@ class SafepointDispatcher:
             action = self._actions.pop(code, None)
         if action is not None:
             self.dispatches += 1
-            action()
+            try:
+                action()
+            except BaseException as error:
+                # An exception escaping a monitoring callback makes CPython
+                # disable the callback for the whole tool; retain it instead so
+                # later safepoints still dispatch.
+                self.errors.append(error)
 
 
 def install_safepoint(
