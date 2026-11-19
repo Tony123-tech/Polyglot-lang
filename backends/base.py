@@ -108,6 +108,12 @@ def get_backend(
         from backends.jit.backend import JITBackend
 
         return JITBackend(trusted=trusted)
+    if name == "zig":
+        if target_width is not None:
+            raise ValueError("target_width is supported only by the Python backend")
+        from zig.backend import ZigBackend
+
+        return ZigBackend(trusted=trusted)
     raise ValueError(f"Unknown backend: {name!r}")
 
 

@@ -318,7 +318,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(str(dest))
         return 0
 
-    backend = get_backend("native", trusted=True)
+    backend = get_backend(backend_name, trusted=True)
     module_name = source_path.stem
     extension = backend.build(
         program,
@@ -434,7 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("file", help="Path to the .poly file")
     run_p.add_argument(
         "--backend",
-        choices=["python", "native", "wasm", "jit"],
+        choices=["python", "native", "wasm", "jit", "zig"],
         default="python",
         help=(
             "Backend to use (default: python). `jit` emits AArch64 machine "
@@ -472,7 +472,7 @@ def build_parser() -> argparse.ArgumentParser:
     build_p.add_argument("file", help="Path to the .poly file")
     build_p.add_argument(
         "--backend",
-        choices=["python", "native", "wasm"],
+        choices=["python", "native", "wasm", "zig"],
         default="native",
         help="Backend to use (default: native)",
     )
@@ -556,7 +556,7 @@ def build_parser() -> argparse.ArgumentParser:
     exec_src.add_argument("--stdin", action="store_true")
     exec_p.add_argument(
         "--backend",
-        choices=["python", "native", "wasm", "jit"],
+        choices=["python", "native", "wasm", "jit", "zig"],
         default="python",
         help="Backend to use (default: python)",
     )
@@ -624,7 +624,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Compile and print the exported names. Used by api.executor.",
     )
     compile_p.add_argument(
-        "--backend", choices=["python", "native", "wasm", "jit"], required=True
+        "--backend", choices=["python", "native", "wasm", "jit", "zig"], required=True
     )
     src = compile_p.add_mutually_exclusive_group(required=True)
     src.add_argument("--stdin", action="store_true")
