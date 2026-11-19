@@ -92,7 +92,7 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | M4        | Done   | Additional fixed-width integer types and the cross-backend cast matrix                                                           |
 | M5        | Done   | Send-aware `PyFuture`, async `&self`/`&mut self` impl methods, drop-based cancellation, a `mio` reactor with timers, and an `asyncio` bridge |
 
-**Current test status:** 1428 passed, 4 skipped, 22 deselected (`pytest -q`); 22 passed, 1432 deselected (`pytest -q -m slow`).
+**Current test status:** 1557 passed, 6 skipped, 22 deselected (`pytest -q`); 22 passed, 1563 deselected (`pytest -q -m slow`).
 
 ## Support matrix
 
@@ -296,8 +296,10 @@ The runtime also provides internal `polyglot_sleep_ms` and Unix-only
 helper. These are runtime and test helpers, not language-level APIs.
 `await_with_timeout` waits on a condition-variable waker with the GIL
 released and raises `PyTimeoutError` on expiry. Async `&mut self` methods are
-rejected by codegen, as are async methods that use bare `self` or capture
-non-`Clone` fields.
+supported natively: an atomic borrow guard rejects overlapping calls, mutable
+fields are copied before the future runs, and field writes are committed only
+when the future completes successfully. Bare `self` use and non-`Clone` fields
+remain unsupported.
 
 ## Sandbox
 
@@ -327,7 +329,7 @@ to `127.0.0.1` and executes submitted code as trusted local code.
 Native builds use `sccache` through `RUSTC_WRAPPER` when it is available.
 Cargo's `target` directory stays within each build directory. After clearing
 the cache, the first build takes about two minutes; a warm cached build takes
-seconds. Nineteen slow tests, including source-line mapping, are deselected by
+seconds. 22 slow tests, including source-line mapping, are deselected by
 default.
 
 See [NOTES.md](NOTES.md#build-performance) for detailed build-performance notes.
@@ -360,9 +362,9 @@ Diagnostics include a stable error code. The table below maps each code to its c
 
 The following table maps the ten proposed research areas to the code that
 exists today. These are prototypes and partial foundations, not guarantees of
-live-frame rewriting, arbitrary formal verification, transparent process
-migration, hardware isolation, or autonomous distributed repair. They are not
-part of the stable `polyglot run` / `polyglot build` contract.
+mid-instruction `f_code` rewriting, arbitrary formal verification, transparent
+process migration, hardware isolation, or autonomous distributed repair. They
+are not part of the stable `polyglot run` / `polyglot build` contract.
 
 | Area                      | Module                  | What it does                                                                                       |
 | ------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------- |
@@ -376,6 +378,9 @@ part of the stable `polyglot run` / `polyglot build` contract.
 | Hardware sandboxing       | `security/sandbox.py`   | Declarative `mprotect`/seccomp/MPK/CFI plans (`E007` at execution) plus real taint, fuel, bounds, and zeroization models; no OS-enforced isolation |
 | GPU/NPU offloading        | `compiler/heterogeneous.py` | Affine-loop detection, textual MLIR-like IR/kernel models, fusion, tiling, quantization, and CPU fallback; real device dispatch is rejected with `E007`, as are `#[gpu]` / `#[npu]` |
 | Agent swarm/self-healing  | `swarm/agent.py`        | In-memory gossip, heuristic panic detector, HMAC-signed quorum model, reputation, canary rollout, MST healing, and span-aware audits; no real network or threshold signatures |
+
+The opt-in `runtime/hotpatch/` subsystem is a second-generation hot-patch
+implementation documented in [docs/quantum_hotpatch.md](docs/quantum_hotpatch.md).
 
 These ten areas comprise a unified 10-pillar / 100-function capability registry
 at `runtime/capabilities.py`; both backends expose the same 100 names and emit
@@ -397,9 +402,10 @@ location is unavailable. The distributed runtime has its own guide at
   GPU/NPU offloading, and agent swarms are **modelled**, not the privileged or
   hardware mechanisms named in the directive; requests that need those
   mechanisms are uniformly rejected with `E007`. Existing prototypes do not
-  rewrite live CPython/PyO3 frames, patch loaded executable text, parse
-  unrestricted natural language, or guarantee nanosecond deoptimization. See
-  [docs/experimental_pillars.md](docs/experimental_pillars.md) and
+  patch foreign loaded executable text, rewrite a running frame's `f_code`
+  mid-instruction, parse unrestricted natural language, or guarantee nanosecond
+  deoptimization. See [docs/quantum_hotpatch.md](docs/quantum_hotpatch.md),
+  [docs/experimental_pillars.md](docs/experimental_pillars.md), and
   [docs/unified_pillars.md](docs/unified_pillars.md).
 - `#[gpu]` and `#[npu]` function annotations are reserved but unsupported.
   Both Python and native compilation reject them before backend lowering with
@@ -415,9 +421,10 @@ location is unavailable. The distributed runtime has its own guide at
 - `is_ok`, `is_err`, `map_err`, `ok_or`, `and_then`, and `or_else` are Python-only inside let-bindings.
 - `while let Some(x) = iter.next()` is out of scope because Python has no Rust-style Option-returning `next()`.
 - Box patterns, enum payload slices, and nested Vec slice patterns are Python-only.
-- Async `&mut self` methods are rejected by the native codegen. Async `&self`
-  methods may only read fields (`self.<field>`); bare `self` use and
-  non-`Clone` fields such as payload enums are rejected.
+- Async `&mut self` methods are supported natively through an atomic borrow
+  guard, copied mutable fields, and commit-on-success. Async `&self` methods
+  may only read fields (`self.<field>`); bare `self` use and non-`Clone` fields
+  such as payload enums are not supported.
 - Async is Experimental. The Python backend executes async functions
   synchronously. Native futures work with `asyncio`, but the language does not
   yet expose timer or I/O primitives: `polyglot_sleep_ms`,
@@ -428,11 +435,11 @@ location is unavailable. The distributed runtime has its own guide at
 - `HashMap` supports only the implemented entry subset (`or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`); other entry combinators are not yet lowered.
 - `vec![...]` macro syntax is parsed as a token stream and is not lowered; use `[...].to_vec()` instead.
 - `String::from(...)` is not lowered; use `"...".to_string()` instead.
-- The `#[terminates]` checker accepts a **single** recursive call that
-  strictly decreases one argument. Multiple recursive calls (e.g. classic
-  `fib(n-1) + fib(n-2)`) are deferred and therefore rejected even though
-  they terminate. Mutual recursion, loops with `break`, complex arithmetic,
-  non-recursive calls, and async suspension are also deferred. See SPEC 10.22.
+- The `#[terminates]` checker accepts multiple self-recursive calls when each
+  strictly decreases an argument under a lower-bound guard (e.g. classic
+  `fib(n-1) + fib(n-2)` with `n > 1`). Mutual recursion, loops with `break`,
+  complex arithmetic, non-recursive calls, and async suspension are deferred.
+  See SPEC 10.22.
 - `if let` is supported as a statement and as the final expression of a
   block (e.g. the tail of `main()`), but not as a sub-expression inside a
   `let` binding or a function argument. Use `match` when an `if let`

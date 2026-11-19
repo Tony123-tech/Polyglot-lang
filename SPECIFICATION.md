@@ -60,9 +60,10 @@ A requirement is marked Normative when it applies to both backends without platf
   - **2.8.1** A function annotated `#[terminates]` MUST be proven to terminate. Compilation MUST fail if the proof fails.
   - **2.8.2** Functions without `#[terminates]` are not checked.
   - **2.8.3** The checker MUST accept bounded `for` loops, `while` loops with
-  a strictly decreasing variant that has a lower bound, and a **single**
-  recursive call that strictly decreases at least one argument. Multiple
-  recursive calls are Deferred per 10.22.
+  a strictly decreasing variant that has a lower bound, and self-recursive
+  calls that each strictly decrease at least one argument under a lower-bound
+  guard. Multiple self-recursive calls are accepted; mutual recursion remains
+  Deferred per 10.22.
   - **2.8.4** The checker is sound but incomplete. It MUST NOT accept a non-terminating function annotated `#[terminates]`.
   - **2.8.5** Termination failure MUST use the five-item format of 2.4.7, adapted as in the termination error format.
 
@@ -139,7 +140,7 @@ A requirement is marked Normative when it applies to both backends without platf
   - **6.1.1** Full async support is a planned core feature. Until it is specified, async remains Experimental and does not satisfy the independence requirement of 1.4. Moving async into the core MUST be recorded as a SPEC version increase (see 11.1) and MUST precede any async parity test (see 11.3).
 - **6.2** The async execution model is Platform-defined. See Section 8.2.2.
 - **6.3** The native future type MUST be documented as Send-aware: a future whose captured values are Send MUST be usable across threads. See Section 8.2.3.
-- **6.4** Async free functions MUST be supported in both backends. The native backend MUST use the language's own future type. Async `impl` methods with an `&self` receiver MUST be supported; `&mut self` and by-value receivers are Deferred.
+- **6.4** Async free functions MUST be supported in both backends. The native backend MUST use the language's own future type. Async `impl` methods with `&self` or `&mut self` receivers MUST be supported; by-value receivers are Deferred. For `&mut self`, the native backend MUST use an atomic borrow guard, copy mutable fields before the future runs, and commit field writes only when the future completes successfully; overlapping calls MUST be rejected.
   - **6.4.1** Async free functions in the Python backend MUST execute synchronously until the async execution model is moved out of Experimental.
 - **6.5** `while let Some(x) = iter.next()` is Deferred until a Rust-style `Option`-returning iterator adapter is specified.
 
@@ -148,6 +149,7 @@ A requirement is marked Normative when it applies to both backends without platf
 - A native async free-function test exists.
 - An async embedding test exists.
 - A native async `&self` impl-method test exists.
+- A native async `&mut self` impl-method test verifies the borrow guard and commit-on-success lowering.
 - A Python async free-function test asserts synchronous execution. This test asserts backend-specific behaviour and is not a parity test; see 11.3.1.
 - Each Deferred item is recorded in Section 10.
 
@@ -247,7 +249,7 @@ Every row MUST have an entry in Section 8 and a cross-reference in Section 10.
 | `Option::ok_or`, `ok_or_else`             | 8.5.6              |
 | Box patterns                              | 8.3                |
 | Payload enum slices                       | 8.4                |
-| `usize` / `isize` boundary                | 2.4.5, 8.6         |
+| `usize` / `isize` boundary                | 2.4.1–2.4.4, 8.6  |
 | `HashMap::get_mut` Python-boundary result | 8.10.2             |
 | Numeric and index boundary errors         | 8.8                |
 | Non-exhaustive match diagnostic           | 8.9                |
@@ -454,7 +456,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.5** Native `Result::and_then` and `Result::or_else` use `PyErr` continuations. See 8.5.4.
 - **10.6 (Retired in v0.3.7).** `Option::map` and `Result::map` are supported through type-aware receiver dispatch. See 5.7.
 - **10.7** `while let Some(x) = iter.next()` is deferred. See 6.5.
-- **10.8** Native async `impl` methods with an `&self` receiver are supported. `&mut self` and by-value receivers are Deferred; bare `self` use and non-`Clone` payload-enum fields are rejected. See 6.4.
+- **10.8** Native async `impl` methods with `&self` and `&mut self` receivers are supported. `&mut self` uses an atomic borrow guard, copied mutable fields, and commit-on-success; overlapping calls are rejected. By-value receivers are Deferred; bare `self` use and non-`Clone` fields are not supported. See 6.4.
 - **10.9 (Retired in v0.2.5).** The transitional `usize`/`isize` behavior is retired; implementations use distinct pointer-sized types and explicit casts. See 2.4.5.
 - **10.10 (Retired in v0.3.3).** Additional fixed-width integer types are specified in 2.5 and implemented in scope of M4-remaining. See 2.5 and 8.1.
 - **10.11 (Retired in v0.3.3).** Python backend `as` conversion behavior for additional integer types is specified in 8.1 and 10.26. See 2.5 and 2.7.
@@ -468,7 +470,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.19** No platform difference may be removed from this section without a corresponding SPEC version increase. See 11.1.
 - **10.20** Native `HashMap::get_mut` returns a copied `Option<V>` at the Python boundary; the copy cannot mutate the input dictionary. See 8.10.2.
 - **10.21** M3-remaining extends the collection targets in 7.2.6–7.2.8. Native and Python support for `BTreeMap`, `HashSet`, extended entry methods, nested HashMap depth-1 values, and collection `get_mut` semantics is implemented for those types. Deeper nesting and unsupported type combinations remain Deferred. See 10.25 and 10.27.
-- **10.22** Termination proofs for mutual recursion, loops with `break`, complex arithmetic, non-recursive function calls, and async suspension are Deferred. Such constructs are conservatively rejected in an annotated function when the checker cannot prove termination.
+- **10.22** Multiple self-recursive calls are accepted when each strictly decreases an argument under a lower-bound guard. Termination proofs for mutual recursion, loops with `break`, complex arithmetic, non-recursive function calls, and async suspension are Deferred. Such constructs are conservatively rejected in an annotated function when the checker cannot prove termination.
 - **10.23** Cyclic includes are rejected. Full `mod` and `use` syntax remains Deferred. See 9.2.
 - **10.24** AST spans are best-effort; nodes with a single token have span equal to that token's span. See 2.4.7 and 9.3.
 - **10.25** Nested `HashMap` value depth is 1 (e.g. `HashMap<K, HashMap<K2, V2>>` where `K2`/`V2` are supported). Deeper nesting is Deferred. See 7.2.6.
@@ -482,7 +484,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.33** The `vec![...]` macro expression is parsed as a token stream but not lowered by either backend; use `[...].to_vec()` instead. See 7.2.1.
 - **10.34** The native reactor, its timers, and Unix fd readiness are runtime-internal. The language does not expose async timer or I/O primitives; `polyglot_sleep_ms` and `polyglot_readable` are helpers used by the runtime and tests. See 8.2.2.
 - **10.35** The bundled `std:` modules are pure `.poly` and inherit the language subset in this specification. They do not add a package manager, arbitrary crate dependencies, or float math beyond the provided helpers. Only `std:` includes are deduplicated; ordinary includes still splice textually. See 9.2.
-- **10.36** The experimental pillar modules (`backends/hotpatch.py`, `compiler/`, `proofs/`, `debug/`, and `runtime/transmute.py`) are opt-in research foundations and are not part of the stable conformance surface. They patch only at quiescent points, never rewrite loaded executable text, never rewind live CPython/PyO3 frames, prove only within their documented interval/polynomial grammar, and deoptimise through a guard plus fallback rather than a nanosecond guarantee. They reuse the `E001`–`E008` diagnostics. See `docs/experimental_pillars.md`.
+- **10.36** The experimental pillar modules (`backends/hotpatch.py`, `compiler/`, `proofs/`, `debug/`, `runtime/transmute.py`, and `runtime/hotpatch/`) are opt-in research foundations and are not part of the stable conformance surface. They confine patches to writable process GOT/PLT cells and owned executable pages or to quiescent/PEP 667 safe points, never patch foreign loaded executable text or a running frame's `f_code` mid-instruction, never rewind an opaque CPython/PyO3 stack, prove only within their documented interval/polynomial grammar, and deoptimise through a guard plus fallback rather than a nanosecond guarantee. The quantum subsystem adds real GOT/PLT, frame-local, reactor, RCU, and before-image journal primitives under those boundaries. They reuse the `E001`–`E008` diagnostics. See `docs/quantum_hotpatch.md` and `docs/experimental_pillars.md`.
 - **10.37** The unified 10-pillar / 100-function surface is a capability registry (`runtime/capabilities.py`), not a claim that every requested mechanism is implementable. `runtime/capabilities.CAPABILITIES` classifies each function as `foundation`, `modelled`, or `rejected`; both backends expose the same 100 names through `capability_namespace()` and emit identical span-aware `E001`–`E008` diagnostics. Requests that require unstable interpreter internals, executable-text patching, privileged OS primitives, real accelerator dispatch, or cryptographic threshold signatures are uniformly rejected. The generated `native_pillars/` PyO3 scaffold is opt-in and is not part of `polyglot build`. See `docs/unified_pillars.md`.
 
 ## 11. Versioning
@@ -519,8 +521,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 1428 passed, 4 skipped, 22 deselected.
-- `pytest -q -m slow`: 22 passed, 1432 deselected.
+- `pytest -q`: 1557 passed, 6 skipped, 22 deselected.
+- `pytest -q -m slow`: 22 passed, 1563 deselected.
 
 The suite reports 0 failed. The counts were re-measured after the experimental pillar suites, the generated edge-case audits, and the `assert!` lowering regression tests were added, replacing the earlier stale baseline.
 
@@ -530,7 +532,7 @@ The suite reports 0 failed. The counts were re-measured after the experimental p
 
 ### 12.2 Acceptance criteria status
 
-**12.2.0** Summary: 75 Pass, 3 Partial, 0 Fail, 0 Blocked.
+**12.2.0** Summary: 76 Pass, 3 Partial, 0 Fail, 0 Blocked.
 
 **12.2.1** **Partial** means at least one test exists and passes, but the criterion is not fully covered. The Note column MUST state what is missing. A criterion marked **Partial** with the note "Tests not yet recorded" means the test may exist but is not traceable to a named test in `NOTES.md` or `tests/`. Such a criterion MUST be reclassified as **Fail** if, on inspection, no such test exists.
 
@@ -565,8 +567,8 @@ The suite reports 0 failed. The counts were re-measured after the experimental p
 | 6       | Native async free-function test                                                       | 6.4                       | Pass    | —                                                                                                                                                                                                                                                                                   |
 | 6       | Async embedding test                                                                  | 6.4                       | Pass    | —                                                                                                                                                                                                                                                                                   |
 | 6       | Python async free-function test                                                       | 6.4.1                     | Partial | Synchronous execution asserted indirectly                                                                                                                                                                                                                                           |
-| 6       | Native async `&self` impl-method test                                                 | 6.4                       | Pass    | `tests/test_native_n5.py::test_native_async_impl_method`; `&mut self` rejection in `tests/test_known_limitations.py::test_async_mut_self_method_native_codegen_is_rejected`                                                                                                                                 |
-| 6       | Deferred items in Section 10                                                          | 6.4, 6.5                  | Pass    | 10.7, 10.8                                                                                                                                                                                                                                                                          |
+| 6       | Native async `&self` / `&mut self` impl-method tests                                   | 6.4                       | Pass    | `tests/test_native_n5.py::test_native_async_impl_method`; borrow-guard lowering in `tests/test_known_limitations.py::test_async_mut_self_method_native_codegen_uses_borrow_guard`                                                                                                                          |
+| 6       | Deferred items in Section 10                                                          | 6.4, 6.5                  | Pass    | 10.7, 10.8 (by-value receivers)                                                                                                                                                                                                                                                     |
 | 7       | Function table with status markers                                                    | 7.2                       | Pass    | 7.2.1–7.2.8                                                                                                                                                                                                                                                                         |
 | 7       | No Platform-defined function lacks Section 10 entry                                   | 7.3                       | Pass    | 10.13–10.18, 10.20                                                                                                                                                                                                                                                                  |
 | 7       | HashMap supported methods, type sets, and dictionary boundary                         | 7.2.6–7.2.7, 8.10.1       | Pass    | `tests/test_n8_hashmap.py`                                                                                                                                                                                                                                                          |
@@ -616,14 +618,14 @@ The suite reports 0 failed. The counts were re-measured after the experimental p
 | M4      | Additional integer types, `as` casts, and E001 boundaries                             | 2.5, 8.1, 10.26           | Pass | `tests/test_m4_integers.py` covers the full Python/native integer matrix, literal and variable casts, E001 boundaries, `i128`/`u128` above 2^64, float/char/bool casts                                                                                                               |
 | M3      | HashMap API completion, BTreeMap, HashSet, nested values, and `get_mut` semantics     | 7.2.6–7.2.8, 10.25, 10.27 | Pass    | `tests/test_m3_collections.py` covers Python and native `BTreeMap`, `HashSet`, entry methods, nested HashMap depth-1 values, sorted/unspecified iteration, and `get_mut` copy semantics                                                                                               |
 
-### 12.3 Outstanding items that block a v0.3.6 conformance claim
+### 12.3 Outstanding items that block a v0.3.8 conformance claim
 
-No item blocks a v0.3.6 conformance claim, provided that:
+No item blocks a v0.3.8 conformance claim, provided that:
 
 - Every Partial in 12.2 is explicitly accepted as a known gap in this version.
 - The 3 Partial criteria are listed in 12.3.1 with a justification for why each does not block conformance.
 
-### 12.3.1 Accepted Partial items for v0.3.6
+### 12.3.1 Accepted Partial items for v0.3.8
 
 | Partial item                                        | Justification                                                                                                                  |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |

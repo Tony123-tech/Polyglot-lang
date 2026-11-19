@@ -14,9 +14,10 @@ The shared diagnostics in `runtime/diagnostics.py` reuse the public
 | `E002` | proof, termination, or deterministic-replay obligation failed |
 | `E003` | AST, API, or call-sequence misuse |
 | `E004` | candidate pass or backend specializer failed |
-| `E006` | missing snapshot, history version, symbol, or export |
+| `E005` | dependency cycle in a lowering or patch graph |
+| `E006` | missing snapshot, history version, symbol, export, or replacement reactor |
 | `E007` | unsupported platform/native feature |
-| `E008` | digest, manifest, or serialized-state corruption |
+| `E008` | digest, manifest, serialized-state, relocation/ABI, or journal corruption |
 
 ## 1. Hot-patching (`backends/hotpatch.py`)
 
@@ -209,7 +210,7 @@ The first-generation boundaries still hold: foreign `__TEXT` is never patched,
 a running frame is never moved to a new `f_code` mid-instruction, and OS
 page-level copy-on-write is not claimed without `fork`. Relocation, ABI, and
 journal failures are `E008` with character and byte spans; unavailable
-primitives are `E007`.
+primitives are `E007`, and a missing replacement reactor is `E006`.
 
 ## Tests
 

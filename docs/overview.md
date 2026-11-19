@@ -24,6 +24,7 @@ Python 3.14.8 or later is required.
 | [architecture.md](architecture.md) | ASCII pipeline diagram and layer responsibilities |
 | [visualizer.md](visualizer.md) | Interactive AST, monomorphization, diagnostics, and dual-backend UI |
 | [experimental_pillars.md](experimental_pillars.md) | Opt-in hot-patching, meta-compiler, synthesis, time-travel, and transmutation foundations |
+| [quantum_hotpatch.md](quantum_hotpatch.md) | Opt-in `runtime/hotpatch/` primitives, native PyO3 crate, and honesty boundaries |
 | [distributed.md](distributed.md) | Opt-in distributed actors, live migration, anchored connections, leases, and failure recovery |
 | [unified_pillars.md](unified_pillars.md) | 10-pillar / 100-function capability registry, dual-backend parity rules, and the PyO3 binding scaffold |
 | [CHANGELOG](../CHANGELOG.md) | Version history from v0.3.0 through the current unreleased work |
@@ -58,7 +59,7 @@ Python 3.14.8 or later is required.
   E004 or E007 instead.
 - Async is experimental. Native futures use a real waker/reactor,
   integrate with `asyncio`, and support timer wakeups. Async `&mut self`
-  methods are rejected.
+  methods use an atomic borrow guard and commit copied fields on success.
 
 ## Verifying the repository
 

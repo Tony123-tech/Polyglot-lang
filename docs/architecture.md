@@ -71,12 +71,15 @@ WebAssembly text format (`.wat`) for an `i64`/`bool` compute-only subset.
   HTTP worker/server and the dependency-free visualizer
   (`visualizer.py`, `visualizer_server.py`, and `static/visualizer.html`).
 - **Experimental pillars (opt-in):** `backends/hotpatch.py`,
-  `compiler/evolution.py`, `proofs/synthesis.py`, `debug/timetravel.py`, and
-  `runtime/transmute.py` are research foundations that are not imported by the
-  normal CLI path. The same layer also contains `distributed/` (actors, leases,
-  migration, DSM), `security/sandbox.py`, `compiler/heterogeneous.py`, and
-  `swarm/agent.py`; `runtime/capabilities.py` registers their 100-function
-  surface. See [experimental_pillars.md](experimental_pillars.md) and
+  `compiler/evolution.py`, `proofs/synthesis.py`, `debug/timetravel.py`,
+  `runtime/transmute.py`, and `runtime/hotpatch/` (atomic GOT/PLT swaps, PEP 667
+  safe-point frame migration, and reactor/RCU/journal primitives; see
+  [quantum_hotpatch.md](quantum_hotpatch.md)) are research foundations that are
+  not imported by the normal CLI path. The same layer also contains
+  `distributed/` (actors, leases, migration, DSM), `security/sandbox.py`,
+  `compiler/heterogeneous.py`, and `swarm/agent.py`; `runtime/capabilities.py`
+  registers their 100-function surface. See
+  [experimental_pillars.md](experimental_pillars.md) and
   [unified_pillars.md](unified_pillars.md).
 - **Tooling:** `tools/` contains documentation/structure lints, a native
   compile helper, shell completions, and the native build benchmark.

@@ -15,7 +15,7 @@
 - F1: Deliverable CLI
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 
-**Latest baseline:** 1428 passed, 4 skipped, 22 deselected; slow 22 passed, 1432 deselected.
+**Latest baseline:** 1557 passed, 6 skipped, 22 deselected; slow 22 passed, 1563 deselected.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -24,16 +24,21 @@ Rust-like syntax is embedded in Python through the shared lexer, parser, and AST
 The five opt-in pillars (`backends/hotpatch.py`, `compiler/evolution.py`,
 `proofs/synthesis.py`, `debug/timetravel.py`, `runtime/transmute.py`) were
 built as architectural foundations, not as claims that the impossible
-guarantees are reachable. Three boundaries drove the design:
+guarantees are reachable. These boundaries drove the design:
 
-- **Live-frame rewriting.** CPython does not expose a portable safepoint for
-  replacing a running frame, and a suspended PyO3 stack cannot be rewritten
-  through a stable ABI. Hot-patching therefore applies at quiescent points and
+- **Mid-instruction frame/stack rewriting.** CPython does not expose a portable
+  way to replace `f_code` while a frame is executing between instructions, and
+  a suspended PyO3 stack cannot be rewritten through a stable ABI.
+  First-generation hot-patching therefore applies at quiescent points and
   preserves object identity; time travel is deterministic checkpoint/replay,
-  not live rewind.
-- **Executable-text patching.** Loaded `.so`/`.dylib` text is not patched.
-  Native hot-swapping goes through an atomic `NativeSymbolTable` indirection,
-  which is ABI-safe and testable; text patching is rejected with `E007`.
+  not live rewind. The second-generation subsystem adds future-entry `__code__`
+  swaps and PEP 667 fast-local migration at safe points, but still refuses
+  mid-instruction `f_code` replacement.
+- **Foreign executable-text patching.** Loaded `.so`/`.dylib` text is not
+  patched. First-generation native hot-swapping goes through an atomic
+  `NativeSymbolTable` indirection, which is ABI-safe and testable; foreign text
+  patching is rejected with `E007`. The second-generation subsystem permits
+  only owned GOT/PLT cells and process-owned jump sleds.
 - **Natural language to proofs.** A controlled invariant grammar is parsed
   into symbolic conditions and checked with an i64 interval domain plus a
   polynomial normalizer. Candidates are enumerated from a finite grammar and
@@ -70,9 +75,10 @@ generation only exposed at quiescent points:
   `fork`; `deep=True` is the explicit container-isolation mode.
 
 The Rust/PyO3 crate in `runtime/hotpatch/native` mirrors these mechanisms with
-`unsafe` Mach/Mach-O, `libc`, and `mio` code. Python and native surfaces share
-the `E008` character/byte-span format. Details and build/test commands are in
-`docs/quantum_hotpatch.md`.
+`unsafe` Mach/Mach-O, `libc`, and `mio` code. Native failures render matching
+`error[E007]` / `error[E008]` text with character and byte labels in
+`PyRuntimeError`; they do not raise the Python `HotpatchError` class. Details and
+build/test commands are in `docs/quantum_hotpatch.md`.
 
 ## Doc sync — `if let` expression-position limit
 
@@ -814,7 +820,7 @@ The native backend uses hand-written `PyFuture` and `PyFutureIterator` classes i
 
 A single-threaded reactor thread backed by `mio` drives the futures. Each task has a waker that enqueues it for polling; timer deadlines use a binary heap; Unix file-descriptor readiness is registered with the reactor. When Python awaits a pending future, `PyFutureIterator` returns an `asyncio` future created on the running loop and the reactor completes it thread-safely with `loop.call_soon_threadsafe`. The internal `await_with_timeout` helper waits on a condition-variable waker with the GIL released and raises `PyTimeoutError` on expiry; it no longer busy-polls. `polyglot_sleep_ms` and Unix-only `polyglot_readable` are runtime/test helpers, not language-level APIs.
 
-Async `&self` impl methods use the same lowering. Before `async move`, referenced fields are cloned into owned locals and `self.<field>` is aliased to those locals, because `&self` is not `Send`. Async `&mut self` and by-value receivers are rejected, as are bare `self` uses and non-`Clone` payload-enum fields. Cancellation is drop-based: dropping a `PyFuture` or its iterator drops the boxed future without another poll.
+Async `&self` impl methods use the same lowering. Before `async move`, referenced fields are cloned into owned locals and `self.<field>` is aliased to those locals, because `&self` is not `Send`. Async `&mut self` methods are also supported: `PolyglotBorrowGuard::acquire_mut` is an atomic guard that rejects overlapping calls, mutable fields are cloned before the future runs, and writes are committed only when the future completes successfully. By-value receivers, bare `self` uses, and non-`Clone` payload-enum fields are not supported. Cancellation is drop-based: dropping a `PyFuture` or its iterator drops the boxed future without another poll.
 
 Tests: `tests/test_native_n5.py::test_native_async_add`, `::test_native_async_identity`, `::test_native_async_send_add_across_threads`, `::test_native_async_impl_method`, `::test_native_async_timer_wakes_without_busy_waiting`, `::test_native_async_timers_run_concurrently`, `::test_native_await_with_timeout_value`, `::test_native_await_with_timeout_times_out`, `::test_native_dropping_future_iterator_cancels_before_poll`.
 
@@ -826,13 +832,13 @@ Tests: `tests/test_native_n5.py::test_sandbox_blocks_import`, `tests/test_native
 
 ## Build performance
 
-When available, `sccache` is configured through `RUSTC_WRAPPER` in `_build_env`. Cargo's `target` directory remains per-build under each build directory rather than being shared. After clearing the cache, a cold build takes about two minutes; a warm cached build takes seconds. `test_native_errors_map_back_to_polyglot_source` is marked `slow`; `pyproject.toml` sets `addopts = "-m 'not slow'"`, deselecting nineteen slow tests by default.
+When available, `sccache` is configured through `RUSTC_WRAPPER` in `_build_env`. Cargo's `target` directory remains per-build under each build directory rather than being shared. After clearing the cache, a cold build takes about two minutes; a warm cached build takes seconds. `test_native_errors_map_back_to_polyglot_source` is marked `slow`; `pyproject.toml` sets `addopts = "-m 'not slow'"`, deselecting 22 slow tests by default.
 
 ## N5 complete
 
 N5 delivers Option and Result construction and combinators, the `?` operator, `if let`, nested Option support, async functions through the custom PyFuture runtime, match exhaustiveness warnings, and Python built-ins sandboxing. The features that remain Python-only are Result `is_ok`, `is_err`, `map_err`, and `ok_or` in let-bindings (native `Err` emits `PyErr`, which does not match the declared error type), Box patterns, enum payload slices, and nested Vec slice patterns. Option `map` remains intentionally unsupported because it collides with Vec `map`; both backends reject it with a clear error.
 
-Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style Option-returning `next()`. The M5 async work is documented below: async `&mut self` methods are rejected.
+Out of scope: `while let Some(x) = iter.next()` because Python has no Rust-style Option-returning `next()`. The M5 async work is documented below; async `&mut self` methods are now supported natively with the borrow guard and commit-on-success lowering.
 
 > **Superseded by v0.3.6:** The original N5 note said the timeout helper was polling-based and that external wakeups/event-loop integration were unsupported. The v0.3.6 reactor replaced the no-op waker with real task wakers, a `mio` reactor, timer and Unix fd wakeups, and an `asyncio` bridge. See "M5: real async event loop".
 
@@ -1013,7 +1019,7 @@ Each README limitation is pinned by a test or has an explicit out-of-scope ratio
 | Result `is_ok`/`is_err`/`map_err`/`ok_or`/`and_then`/`or_else` are Python-only in let-bindings | `tests/test_native_n5.py` predicate/conversion tests; `tests/test_known_limitations.py::test_result_combinators_and_conversions_are_python_only`                    |
 | `while let Some(x) = iter.next()`                                                              | `tests/test_known_limitations.py::test_while_let_next_is_a_parse_error`                                                                                             |
 | Box patterns, enum payload slices, nested Vec slice patterns                                   | Python behavior in `tests/test_known_limitations.py`; native lowering remains out of scope because Rust slice patterns do not apply directly to `Vec`/enum payloads |
-| Async `&mut self` methods are rejected                                                                 | `tests/test_known_limitations.py::test_async_mut_self_method_native_codegen_is_rejected`; `tests/test_native_n5.py::test_native_async_impl_method` covers the supported `&self` path |
+| Async `&mut self` methods use an atomic borrow guard, copied fields, and commit-on-success | `tests/test_known_limitations.py::test_async_mut_self_method_native_codegen_uses_borrow_guard`; `tests/test_native_n5.py::test_native_async_impl_method` covers the supported `&self` path |
 | Async timer/I/O helpers are runtime-only; no language-level async timer or I/O primitives           | `tests/test_native_n5.py::test_native_async_timer_wakes_without_busy_waiting`, `::test_native_async_timers_run_concurrently`, `::test_native_await_with_timeout_value`, `::test_native_await_with_timeout_times_out` |
 | WASM backend is experimental and compute-only                                                 | `tests/test_wasm_backend.py` covers the `i64`/`bool` subset and unsupported-node rejection                                                                          |
 | Option `map` collides with Vec `map`                                                           | `tests/test_known_limitations.py` rejection tests for both backends plus `test_vec_map_still_lowers`                                                                |
@@ -1435,7 +1441,7 @@ appended to the location line.
 
 **Cause:** `generate_fn` applied the async lowering only when `not as_method`; the method path dropped the `async` keyword without an error.
 
-**Fix:** Async `&self` methods now return `PyResult<PyFuture>` and wrap the body in `py_future(async move { ... })`. Referenced fields are cloned into owned locals and `self.<field>` is aliased to them before the move. Async `&mut self`, by-value receivers, bare `self` uses, and non-`Clone` payload-enum fields are rejected with `TranslateError`. The known-limitations test now pins the `PyFuture` lowering and the `&mut self` rejection, and a native async-method test covers the supported path.
+**Fix:** Async `&self` methods now return `PyResult<PyFuture>` and wrap the body in `py_future(async move { ... })`. Referenced fields are cloned into owned locals and `self.<field>` is aliased to them before the move. Async `&mut self` methods are also supported: `PolyglotBorrowGuard::acquire_mut` rejects overlapping calls, all fields are cloned before `async move`, and writes are committed only when `__async_res.is_ok()`. By-value receivers, bare `self` uses, and non-`Clone` payload-enum fields remain unsupported. The known-limitations test now pins the borrow-guard lowering, and a native async-method test covers the supported paths.
 
 **Lesson:** A silent synchronous fallback hides the absence of async semantics. Unsupported receivers should fail at translation time with a clear message rather than producing code with different behavior.
 

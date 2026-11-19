@@ -80,7 +80,10 @@ Before making ANY commit, you MUST run the following two commands in the project
 1. `.venv/bin/ruff format .`
 2. `.venv/bin/ruff check --fix .`
 
-After running them, verify with: 3. `.venv/bin/ruff format --check .` 4. `.venv/bin/ruff check .`
+After running them, verify with:
+
+3. `.venv/bin/ruff format --check .`
+4. `.venv/bin/ruff check .`
 
 Do NOT commit if either `--check` command fails. If there are unfixable lint errors, stop and report them to the user.
 

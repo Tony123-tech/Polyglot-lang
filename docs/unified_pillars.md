@@ -9,11 +9,13 @@ depends on it.
 
 Dual-backend parity means both backends expose the same 100 names and emit
 byte-identical structured diagnostics for the same request. It does **not**
-mean that a userspace module can rewrite loaded executable text, patch a
-live CPython frame, invoke `mprotect`/eBPF/MPK, dispatch to an ANE, or
-guarantee nanosecond de-optimisation. Those requests are rejected uniformly
-with `E007` (or the domain-specific code below) and preserve the caller's
-exact character span.
+mean that a userspace module can patch foreign loaded executable text, replace
+a running frame's `f_code` mid-instruction, invoke raw `mprotect`/eBPF/MPK,
+dispatch to an ANE, or guarantee nanosecond de-optimisation. Supported safe-point
+PEP 667 migration and owned-page sleds are explicit foundation/modelled
+capabilities, not those privileged or unstable operations. Unsupported requests
+are rejected uniformly with `E007` (or the domain-specific code below) and
+preserve the caller's exact character span.
 
 Status values:
 
@@ -51,7 +53,7 @@ For a capability that cannot be provided, pass the source span so the
 diagnostic points at the offending syntax:
 
 ```python
-invoke("hotpatch_cpython_frame_eval", span=(12, 37))  # error[E007]
+invoke("hotpatch_tls_slot_relocate", span=(12, 37))  # error[E007]
 ```
 
 The accelerator feature gate (`runtime/feature_gates.py`) is wired into both
@@ -77,20 +79,23 @@ to Rust.
 
 ## Capability matrix
 
+The registry classifies the 100 functions as 43 foundation, 35 modelled,
+and 22 rejected. Regenerate this section after registry edits.
+
 ### I. Quantum & zero-downtime memory hot-patching
 
 | # | Function | Status | Boundary |
 | ---: | --- | --- | --- |
-| 1 | `hotpatch_live_dylib_trampoline` | rejected | Loaded executable text is not patched; NativeSymbolTable swaps an atomic dispatch slot instead. |
-| 2 | `hotpatch_cpython_frame_eval` | rejected | CPython exposes no portable frame-safepoint; patches apply at quiescent points. |
-| 3 | `hotpatch_mio_reactor_state` | foundation | The manager keeps namespace and object identity; no file descriptor is migrated. |
-| 4 | `hotpatch_rcu_ast_epoch` | modelled | A cooperative epoch counter is modelled; no kernel RCU grace-period detection is claimed. |
+| 1 | `hotpatch_live_dylib_trampoline` | foundation | Writable GOT/PLT cells and owned MAP_JIT sleds are patched atomically; foreign __TEXT is refused (E007) and ABI/relocation errors are E008. |
+| 2 | `hotpatch_cpython_frame_eval` | foundation | Future-entry code swaps with PEP 667 fast-local migration are real; mid-instruction f_code pointer replacement is refused (E007), layout/closure mismatches are E008. |
+| 3 | `hotpatch_mio_reactor_state` | foundation | Registrations are re-armed on a fresh selector and mio bridge fds are adopted so sockets stay open; closed descriptors are E008. |
+| 4 | `hotpatch_rcu_ast_epoch` | modelled | Cooperative user-space epoch counters, read guards and grace-period reclamation are implemented; no kernel RCU syscall is claimed, timeouts are E008. |
 | 5 | `hotpatch_shadow_heap_reconcile` | modelled | Layout diffs are computed from ASTs; page-fault driven reconciliation is rejected. |
 | 6 | `hotpatch_tls_slot_relocate` | rejected | TLS layout is fixed at load time; no stable ABI exists for offset relocation. |
-| 7 | `hotpatch_rollback_journal_commit` | foundation | An undo snapshot restores code, classes, object state and namespace keys. |
+| 7 | `hotpatch_rollback_journal_commit` | foundation | Attribute/buffer before-images and an undo log restore state; nested containers need deep=True or attribute replacement, verification/undo failures are E008. |
 | 8 | `hotpatch_abi_shim_synthesize` | rejected | ABI-changing signatures are rejected; only ABI-compatible dispatch is supported. |
 | 9 | `hotpatch_async_waker_rebind` | rejected | Rust Waker vtables are immutable after construction; futures keep their original code. |
-| 10 | `hotpatch_gil_free_quiesce` | rejected | The patch manager uses a documented quiescent-point protocol, not lock-free sub-interpreter停顿. |
+| 10 | `hotpatch_gil_free_quiesce` | rejected | The patch manager uses a documented quiescent-point protocol, not lock-free sub-interpreter pauses. |
 
 ### II. Self-synthesizing neuromorphic meta-compiler
 
@@ -141,7 +146,7 @@ to Rust.
 
 | # | Function | Status | Boundary |
 | ---: | --- | --- | --- |
-| 41 | `jit_type_lattice_speculate` | foundation | Signatures are exact type tuples, not a inferred lattice. |
+| 41 | `jit_type_lattice_speculate` | foundation | Signatures are exact type tuples, not an inferred lattice. |
 | 42 | `jit_background_cranelift_emit` | modelled | A pluggable specializer runs in the background; Cranelift is not bundled. |
 | 43 | `jit_osr_on_stack_replacement` | rejected | Live CPython frames are never rewritten; in-flight calls keep their resolved callable. |
 | 44 | `jit_nanosecond_deopt_bailout` | modelled | The guard is a tuple compare plus a Python call; no nanosecond latency is claimed. |
