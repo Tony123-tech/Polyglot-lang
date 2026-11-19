@@ -15,7 +15,14 @@ from urllib import request as urlrequest
 
 import pytest
 
-from api.visualizer import analyze, diagnostic, program_to_source
+from api.visualizer import (
+    analyze,
+    diagnostic,
+    fix_hint,
+    offset_to_lsp_position,
+    program_to_source,
+    span_to_lsp_range,
+)
 from api.visualizer_server import make_server, run_backend_source
 from backends.errors import (
     InvalidIntegerParseLiteralError,
@@ -205,6 +212,89 @@ def test_diagnostic_supports_e001_through_e008(error, expected_code):
     assert payload["line"] == 1
     assert payload["span"] == [0, 3]
     assert payload["detail"]
+    assert payload["fix"] is None or (
+        isinstance(payload["fix"], dict)
+        and "message" in payload["fix"]
+        and "edits" in payload["fix"]
+    )
+
+
+def test_diagnostic_e001_fix_suggests_explicit_cast() -> None:
+    error = TypeErrorForBoundary(
+        "usize", "i64", 1, 6, "let x: i64 = 1 as usize;", (16, 26)
+    )
+    payload = diagnostic(
+        error, "fn main() { let x: i64 = 1 as usize; x }\n", phase="test"
+    )
+
+    fix = payload["fix"]
+    assert "as i64" in fix["message"]
+    assert fix["edits"] == [
+        {
+            "range": {
+                "start": {"line": 0, "character": 26},
+                "end": {"line": 0, "character": 26},
+            },
+            "newText": " as i64",
+        }
+    ]
+
+
+def test_diagnostic_e002_fix_uses_checker_suggestion() -> None:
+    error = TerminationError("f", "no proof", "add a decreasing bound", 1, 1, (0, 3))
+    payload = diagnostic(error, "fn main() { 1 }\n", phase="test")
+
+    assert payload["fix"]["message"] == "add a decreasing bound"
+    assert payload["fix"]["edits"] == []
+
+
+def test_diagnostic_e003_unknown_macro_suggests_supported_alternatives() -> None:
+    error = TranslateError("unknown macro mystery!", 1, 1, (0, 3))
+    payload = diagnostic(error, "fn main() { mystery!(); }\n", phase="test")
+
+    assert payload["code"] == "E003"
+    assert "println!" in payload["fix"]["message"]
+    assert "vec!" in payload["fix"]["message"]
+    assert payload["fix"]["edits"] == []
+
+
+def test_diagnostic_e006_fix_uses_include_help_text() -> None:
+    error = IncludeNotFoundError(
+        "missing", "missing", "check the include path", "note", 1, 1, span=(0, 3)
+    )
+    payload = diagnostic(error, 'include!("missing.poly");\n', phase="test")
+
+    assert payload["code"] == "E006"
+    assert payload["fix"]["message"] == "check the include path"
+
+
+def test_fix_hint_falls_back_to_line_col_without_span() -> None:
+    class BoundaryError(Exception):
+        code = "E001"
+        line = 3
+        col = 7
+        expected_type = "u8"
+
+        def __init__(self) -> None:
+            super().__init__("error[E001]: type mismatch")
+
+    hint = fix_hint(BoundaryError(), "")
+    assert hint is not None
+    assert "as u8" in hint.message
+    assert hint.to_dict()["edits"][0]["range"]["start"] == {
+        "line": 2,
+        "character": 7,
+    }
+
+
+def test_span_helpers_use_exact_offsets() -> None:
+    source = "abc\ndef\nghi\n"
+    assert offset_to_lsp_position(source, 0) == {"line": 0, "character": 0}
+    assert offset_to_lsp_position(source, 9) == {"line": 2, "character": 1}
+    assert span_to_lsp_range(source, [2, 9]) == {
+        "start": {"line": 0, "character": 2},
+        "end": {"line": 2, "character": 1},
+    }
 
 
 # ---------------------------------------------------------------------------

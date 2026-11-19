@@ -1,9 +1,10 @@
 """Minimal Language Server for Polyglot.
 
 The server speaks JSON-RPC over stdio and implements the small surface needed
-for editor navigation: document sync, go-to-definition, and completion.
-It deliberately avoids a third-party LSP dependency so the parser and AST are
-the only source of truth.
+for editor navigation: document sync, go-to-definition, and completion.  It
+also publishes structured E001-E008 diagnostics on open/change/save, using the
+same front-end validation as ``polyglot check``.  It deliberately avoids a
+third-party LSP dependency so the parser and AST are the only source of truth.
 """
 
 from __future__ import annotations
@@ -12,7 +13,10 @@ import json
 import sys
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
+from api.visualizer import diagnostic, span_to_lsp_range
 from ast_nodes import (
     ConstDecl,
     EnumDecl,
@@ -22,8 +26,13 @@ from ast_nodes import (
     StructDecl,
     TypeAlias,
 )
-from lexer import lex
-from parser import parse_recovering
+from include_expander import (
+    IncludeCycleError,
+    IncludeNotFoundError,
+    expand_includes,
+)
+from lexer import LexError, lex
+from parser import ParseError, parse, parse_recovering
 
 COMPLETION_FUNCTION = 3
 COMPLETION_CLASS = 7
@@ -43,8 +52,98 @@ class LspError(Exception):
 @dataclass
 class ServerState:
     documents: dict[str, str] = field(default_factory=dict)
+    notifications: list[dict[str, Any]] = field(default_factory=list)
     shutting_down: bool = False
     exited: bool = False
+
+
+def drain_notifications(state: ServerState) -> list[dict[str, Any]]:
+    """Return and clear queued server-initiated notifications."""
+    pending = list(state.notifications)
+    state.notifications.clear()
+    return pending
+
+
+def _uri_to_path(uri: str) -> str:
+    """Best-effort conversion of a ``file:`` document URI to a local path."""
+    parsed = urlparse(uri)
+    if parsed.scheme == "file":
+        return url2pathname(unquote(parsed.path))
+    return uri
+
+
+def _validate_document(text: str, uri: str | None = None) -> list[dict[str, Any]]:
+    """Run the front-end checks used by ``polyglot check`` on document text.
+
+    Parsing is strict (as in ``load_program``), includes are resolved relative
+    to the document URI when possible, and the Python translator performs the
+    monomorphization/termination checks.  Only the public E001-E008 codes (plus
+    lexer/parser ``SYNTAX``) are surfaced; unrelated internal exceptions are
+    ignored rather than mislabelled as language diagnostics.
+    """
+    try:
+        program = parse(lex(text))
+    except (LexError, ParseError) as error:
+        return [diagnostic(error, text, phase="parse")]
+
+    if uri:
+        try:
+            program = expand_includes(program, _uri_to_path(uri))
+        except (IncludeCycleError, IncludeNotFoundError) as error:
+            return [diagnostic(error, text, phase="check")]
+
+    try:
+        from backends.python.translator import Translator
+
+        Translator().translate_program(program)
+    except Exception as error:
+        code = getattr(error, "code", None)
+        if code in {"E001", "E002", "E003", "E004", "E005", "E006", "E007", "E008"}:
+            return [diagnostic(error, text, phase="check")]
+    return []
+
+
+# All public codes are hard errors in `polyglot check`; the explicit mapping
+# keeps LSP severity deterministic and identical to the CLI's interpretation.
+_SEVERITY_BY_CODE: dict[str, int] = {
+    "SYNTAX": 1,
+    **{f"E{index:03d}": 1 for index in range(1, 9)},
+}
+
+
+def _severity(code: str | None) -> int:
+    """Map a public diagnostic code to an LSP DiagnosticSeverity (1 = Error)."""
+    return _SEVERITY_BY_CODE.get(code or "", 1)
+
+
+def _lsp_diagnostic(text: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Convert one structured diagnostic into an LSP ``Diagnostic``."""
+    code = item.get("code")
+    return {
+        "range": span_to_lsp_range(
+            text,
+            item.get("span"),
+            line=item.get("line"),
+            col=item.get("col"),
+        ),
+        "severity": _severity(code),
+        "source": "polyglot",
+        "message": str(item.get("message") or ""),
+        "code": code,
+        "data": {"code": code, "fix": item.get("fix")},
+    }
+
+
+def _publish_diagnostics(uri: str, text: str) -> dict[str, Any]:
+    """Build a ``textDocument/publishDiagnostics`` notification."""
+    diagnostics = [
+        _lsp_diagnostic(text, item) for item in _validate_document(text, uri)
+    ]
+    return {
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {"uri": uri, "diagnostics": diagnostics},
+    }
 
 
 def _parse_document(text: str) -> Program:
@@ -123,6 +222,10 @@ def handle_request(
     params = params or {}
 
     if method == "initialize":
+        # LSP 3.17 has no `publishDiagnosticsProvider` capability: publishing
+        # diagnostics is an unsolicited server -> client notification.  Keep
+        # the numeric (full-document) sync form and simply send notifications
+        # on didOpen/didChange/didSave.
         return {
             "capabilities": {
                 "textDocumentSync": 1,
@@ -142,7 +245,10 @@ def handle_request(
 
     if method == "textDocument/didOpen":
         document = params["textDocument"]
-        state.documents[str(document["uri"])] = str(document.get("text", ""))
+        uri = str(document["uri"])
+        text = str(document.get("text", ""))
+        state.documents[uri] = text
+        state.notifications.append(_publish_diagnostics(uri, text))
         return None
     if method == "textDocument/didChange":
         uri = _text_document_uri(params)
@@ -153,6 +259,17 @@ def handle_request(
             else:
                 text = _apply_incremental_change(text, change)
         state.documents[uri] = text
+        state.notifications.append(_publish_diagnostics(uri, text))
+        return None
+    if method == "textDocument/didSave":
+        uri = _text_document_uri(params)
+        text = params.get("text")
+        if text is None:
+            text = state.documents.get(uri, "")
+        else:
+            text = str(text)
+            state.documents[uri] = text
+        state.notifications.append(_publish_diagnostics(uri, text))
         return None
     if method == "textDocument/didClose":
         state.documents.pop(_text_document_uri(params), None)
@@ -251,6 +368,8 @@ def serve(stdin: BinaryIO, stdout: BinaryIO) -> None:
                     },
                 )
             continue
+        for notification in drain_notifications(state):
+            write_message(stdout, notification)
         if request_id is not None:
             write_message(
                 stdout,

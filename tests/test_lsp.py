@@ -4,12 +4,28 @@ from __future__ import annotations
 
 import io
 import json
+from typing import Any
 
-from api.lsp import ServerState, handle_request, read_message, serve, write_message
+from api.lsp import (
+    ServerState,
+    _lsp_diagnostic,
+    drain_notifications,
+    handle_request,
+    read_message,
+    serve,
+    write_message,
+)
 
 SOURCE = """\
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn main() -> i64 { add(1, 2) }
+"""
+
+E001_SOURCE = """\
+fn main() -> i64 {
+    let x: i64 = 1 as usize;
+    x
+}
 """
 
 
@@ -181,3 +197,188 @@ def test_write_message_sets_content_length() -> None:
     header, _, body = payload.partition(b"\r\n\r\n")
     assert header == f"Content-Length: {len(body)}".encode()
     assert json.loads(body)["result"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics publication
+# ---------------------------------------------------------------------------
+
+
+def _one_notification(state: ServerState) -> dict[str, Any]:
+    pending = drain_notifications(state)
+    assert len(pending) == 1
+    return pending[0]
+
+
+def test_initialize_does_not_advertise_publish_diagnostics_provider() -> None:
+    result = handle_request(ServerState(), "initialize", {})
+    capabilities = result["capabilities"]
+
+    # LSP 3.17 has no publishDiagnosticsProvider capability; diagnostics are
+    # unsolicited notifications sent on didOpen/didChange/didSave.
+    assert "publishDiagnosticsProvider" not in capabilities
+    assert capabilities["textDocumentSync"] == 1
+    assert capabilities["definitionProvider"] is True
+
+
+def test_did_open_publishes_exact_span_range_and_fix_data() -> None:
+    state = ServerState()
+    handle_request(
+        state,
+        "textDocument/didOpen",
+        {"textDocument": {"uri": "file:///main.poly", "text": E001_SOURCE}},
+    )
+    notification = _one_notification(state)
+
+    assert notification["jsonrpc"] == "2.0"
+    assert notification["method"] == "textDocument/publishDiagnostics"
+    assert notification["params"]["uri"] == "file:///main.poly"
+    items = notification["params"]["diagnostics"]
+    assert len(items) == 1
+    item = items[0]
+
+    token = "1 as usize"
+    offset = E001_SOURCE.index(token)
+    assert item["range"] == {
+        "start": {"line": 1, "character": offset - 19},
+        "end": {"line": 1, "character": offset - 19 + len(token)},
+    }
+    assert item["range"]["start"] == {"line": 1, "character": 17}
+    assert item["range"]["end"] == {"line": 1, "character": 27}
+    assert item["severity"] == 1
+    assert item["source"] == "polyglot"
+    assert item["code"] == "E001"
+    assert item["data"]["code"] == "E001"
+    fix = item["data"]["fix"]
+    assert "as i64" in fix["message"]
+    assert fix["edits"] == [
+        {
+            "range": {
+                "start": {"line": 1, "character": 27},
+                "end": {"line": 1, "character": 27},
+            },
+            "newText": " as i64",
+        }
+    ]
+
+
+def test_did_change_publishes_diagnostics_for_new_text() -> None:
+    state = _open()
+    assert _one_notification(state)["params"]["diagnostics"] == []
+
+    handle_request(
+        state,
+        "textDocument/didChange",
+        {
+            "textDocument": {"uri": "file:///main.poly"},
+            "contentChanges": [{"text": E001_SOURCE}],
+        },
+    )
+    notification = _one_notification(state)
+    assert [item["code"] for item in notification["params"]["diagnostics"]] == ["E001"]
+
+
+def test_did_save_publishes_diagnostics() -> None:
+    state = _open()
+    drain_notifications(state)
+
+    handle_request(
+        state,
+        "textDocument/didSave",
+        {"textDocument": {"uri": "file:///main.poly"}},
+    )
+    assert _one_notification(state)["params"]["diagnostics"] == []
+
+    handle_request(
+        state,
+        "textDocument/didChange",
+        {
+            "textDocument": {"uri": "file:///main.poly"},
+            "contentChanges": [{"text": E001_SOURCE}],
+        },
+    )
+    drain_notifications(state)
+
+    handle_request(
+        state,
+        "textDocument/didSave",
+        {"textDocument": {"uri": "file:///main.poly"}},
+    )
+    items = _one_notification(state)["params"]["diagnostics"]
+    assert [item["code"] for item in items] == ["E001"]
+
+
+def test_clean_document_publishes_empty_diagnostics() -> None:
+    state = ServerState()
+    handle_request(
+        state,
+        "textDocument/didOpen",
+        {"textDocument": {"uri": "file:///clean.poly", "text": SOURCE}},
+    )
+    assert _one_notification(state)["params"]["diagnostics"] == []
+
+
+def test_unknown_macro_publishes_supported_alternative_hint() -> None:
+    state = ServerState()
+    text = "fn main() { unknown_macro!(x); }\n"
+    handle_request(
+        state,
+        "textDocument/didOpen",
+        {"textDocument": {"uri": "file:///macro.poly", "text": text}},
+    )
+    item = _one_notification(state)["params"]["diagnostics"][0]
+    assert item["code"] == "E003"
+    fix = item["data"]["fix"]
+    assert "println!" in fix["message"]
+    assert fix["edits"] == []
+
+
+def test_lsp_diagnostic_converts_multiline_span_and_line_col_fallback() -> None:
+    text = "abc\ndef\nghi\n"
+    item = _lsp_diagnostic(
+        text,
+        {
+            "code": "E003",
+            "message": "boom",
+            "span": [2, 9],
+            "line": 1,
+            "col": 3,
+            "fix": None,
+        },
+    )
+    assert item["range"] == {
+        "start": {"line": 0, "character": 2},
+        "end": {"line": 2, "character": 1},
+    }
+
+    fallback = _lsp_diagnostic(
+        text,
+        {"code": "E001", "message": "boom", "span": None, "line": 2, "col": 4},
+    )
+    assert fallback["range"] == {
+        "start": {"line": 1, "character": 3},
+        "end": {"line": 1, "character": 4},
+    }
+
+
+def test_serve_flushes_publish_diagnostics_notification() -> None:
+    stdin = io.BytesIO()
+    write_message(
+        stdin,
+        {
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {"textDocument": {"uri": "file:///main.poly", "text": SOURCE}},
+        },
+    )
+    write_message(stdin, {"jsonrpc": "2.0", "method": "exit", "params": {}})
+    stdin.seek(0)
+    stdout = io.BytesIO()
+
+    serve(stdin, stdout)
+
+    stdout.seek(0)
+    first = read_message(stdout)
+    assert first is not None
+    assert first["method"] == "textDocument/publishDiagnostics"
+    assert first["params"]["diagnostics"] == []

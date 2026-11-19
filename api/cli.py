@@ -23,6 +23,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from api.visualizer import fix_hint
 from ast_nodes import Program
 from backends import UntrustedCompileError, get_backend
 from include_expander import (
@@ -35,15 +36,39 @@ from lexer import lex
 from parser import parse, parse_recovering
 from termination import TerminationError
 
+# The most recently read program text.  Errors raised deep inside a command
+# reach ``main``'s generic handler without a source argument; keeping the text
+# here lets --error-format=json produce the same exact fix edits as the LSP.
+_LAST_SOURCE: str = ""
+
 
 def _read_source(path: str) -> str:
-    return Path(path).read_text(encoding="utf-8")
+    global _LAST_SOURCE
+    _LAST_SOURCE = Path(path).read_text(encoding="utf-8")
+    return _LAST_SOURCE
+
+
+def _read_stdin_source() -> str:
+    global _LAST_SOURCE
+    _LAST_SOURCE = sys.stdin.read()
+    return _LAST_SOURCE
 
 
 def _parse_program(source: str, path: str | None = None) -> Program:
     program = parse(lex(source))
     if path is not None:
         program = expand_includes(program, path)
+    return program
+
+
+def _load_program(path: str) -> Program:
+    """Load a file while retaining its text for structured diagnostics.
+
+    ``load_program`` keeps the established E005/E006 behaviour for missing or
+    cyclic includes; the extra read only feeds the structured fix-hint payload.
+    """
+    program = load_program(path)
+    _read_source(path)
     return program
 
 
@@ -100,8 +125,10 @@ def _format_five_line(error: Exception) -> str:
     )
 
 
-def _error_payload(error: Exception) -> dict[str, Any]:
-    """Build a machine-readable diagnostic payload."""
+def _error_payload(error: Exception, source_text: str | None = None) -> dict[str, Any]:
+    """Build a machine-readable diagnostic payload, including any fix hint."""
+    if source_text is None:
+        source_text = _LAST_SOURCE
     text = str(error).strip()
     first_line = text.splitlines()[0] if text else error.__class__.__name__
     code = getattr(error, "code", None)
@@ -126,6 +153,7 @@ def _error_payload(error: Exception) -> dict[str, Any]:
     if source is None:
         source = getattr(error, "source_line_text", None)
 
+    hint = fix_hint(error, source_text)
     return {
         "code": code,
         "message": message,
@@ -133,6 +161,7 @@ def _error_payload(error: Exception) -> dict[str, Any]:
         "col": col,
         "span": list(span) if span is not None else None,
         "source": str(source) if source is not None else None,
+        "fix": hint.to_dict() if hint is not None else None,
     }
 
 
@@ -200,7 +229,7 @@ def _write_exec_payload(path: str | None, payload: dict[str, Any]) -> None:
 def cmd_exec(args: argparse.Namespace) -> int:
     """Compile + execute with structured timing, memory, and diagnostics."""
     started = time.perf_counter()
-    source = sys.stdin.read() if args.stdin else _read_source(args.file)
+    source = _read_stdin_source() if args.stdin else _read_source(args.file)
     payload: dict[str, Any] = {
         "ok": False,
         "backend": args.backend,
@@ -259,7 +288,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    program = load_program(args.file)
+    program = _load_program(args.file)
     backend = get_backend(args.backend, trusted=True, target_width=args.target_width)
     namespace = backend.compile(program)
     result = _run_main(namespace)
@@ -270,7 +299,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_build(args: argparse.Namespace) -> int:
     source_path = Path(args.file)
-    program = load_program(source_path)
+    program = _load_program(str(source_path))
     backend_name = args.backend
 
     if backend_name == "python":
@@ -337,6 +366,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             return 1
     else:
         program = load_program(args.file)
+        _read_source(args.file)
     # Translation/codegen runs termination checks for #[terminates] functions.
     from backends.python.translator import Translator
 
@@ -347,7 +377,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_compile(args: argparse.Namespace) -> int:
     """Compatibility command used by api.executor and existing tooling."""
     if args.stdin:
-        source = sys.stdin.read()
+        source = _read_stdin_source()
     else:
         source = _read_source(args.file)
     program = _parse_program(source)

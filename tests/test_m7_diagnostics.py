@@ -254,8 +254,9 @@ def _json_error(args: list[str]) -> dict:
     r = _run_cli(*args, "--error-format=json")
     assert r.returncode == 1
     payload = json.loads(r.stderr)
-    for key in ("code", "message", "line", "col", "span", "source"):
+    for key in ("code", "message", "line", "col", "span", "source", "fix"):
         assert key in payload
+        assert payload["code"] in {f"E{i:03d}" for i in range(1, 9)}
     return payload
 
 
@@ -287,3 +288,31 @@ def test_error_format_json_e005():
     assert payload["code"] == "E005"
     assert payload["span"] is not None
     assert payload["source"] is not None
+
+
+def test_error_format_json_e001_fix_suggests_cast():
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "t.poly"
+        p.write_text("fn f(a: i64) -> u8 { a }\nfn main() -> i64 { 0 }\n", "utf-8")
+        payload = _json_error(["check", str(p)])
+    fix = payload["fix"]
+    assert "as u8" in fix["message"]
+    assert fix["edits"][0]["newText"] == " as u8"
+
+
+def test_error_format_json_e002_fix_uses_checker_suggestion():
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "t.poly"
+        p.write_text("#[terminates]\nfn f(n: i64) -> i64 { f(n) }\n", "utf-8")
+        payload = _json_error(["check", str(p)])
+    assert payload["code"] == "E002"
+    assert payload["fix"]["message"] == (
+        "recurse with a smaller argument under a matching lower-bound guard"
+    )
+
+
+def test_public_codes_stop_at_e008():
+    from runtime.diagnostics import ERROR_CODES
+
+    assert set(ERROR_CODES) == {f"E{i:03d}" for i in range(1, 9)}
+    assert "E009" not in ERROR_CODES

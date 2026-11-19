@@ -138,6 +138,156 @@ def _error_span(
     return _token_span_at(source, offset)
 
 
+@dataclasses.dataclass
+class FixHint:
+    """A deterministic, dependency-free fix suggestion for a diagnostic.
+
+    ``edits`` uses the LSP ``TextEdit`` shape so the CLI JSON output and the
+    language server can share exactly the same payload.  No edit is produced
+    when a correct replacement cannot be determined locally; a bare message is
+    still actionable and never claims more than the compiler actually knows.
+    """
+
+    message: str
+    edits: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "message": self.message,
+            "edits": [dict(edit) for edit in self.edits],
+        }
+
+
+# Public codes are E001-E008 (``SYNTAX`` covers lexer/parser failures).  There
+# is deliberately no E009: see runtime.diagnostics.ERROR_CODES.
+_FIXABLE_CODES = frozenset({"SYNTAX"} | {f"E{index:03d}" for index in range(1, 9)})
+
+_SUPPORTED_MACROS = (
+    "println!",
+    "print!",
+    "eprintln!",
+    "eprint!",
+    "format!",
+    "vec!",
+    "panic!",
+    "assert!",
+    "assert_eq!",
+    "assert_ne!",
+)
+
+
+def offset_to_lsp_position(source: str, offset: int) -> dict[str, int]:
+    """Convert a 0-based character offset to a 0-based LSP ``Position``."""
+    offset = max(0, min(int(offset), len(source)))
+    line = source.count("\n", 0, offset) + 1
+    last_newline = source.rfind("\n", 0, offset)
+    return {"line": line - 1, "character": offset - (last_newline + 1)}
+
+
+def span_to_lsp_range(
+    source: str,
+    span: tuple[int, int] | list[int] | None,
+    *,
+    line: int | None = None,
+    col: int | None = None,
+) -> dict[str, Any]:
+    """Build a 0-based LSP ``Range`` from an exact character span.
+
+    When the span is missing (or does not fit the supplied source) the 1-based
+    ``line``/``col`` pair is used as a conservative single-token fallback.
+    """
+    if isinstance(span, (tuple, list)) and len(span) == 2:
+        try:
+            start, end = int(span[0]), int(span[1])
+        except TypeError, ValueError:
+            start, end = -1, -1
+        if 0 <= start <= end <= len(source):
+            return {
+                "start": offset_to_lsp_position(source, start),
+                "end": offset_to_lsp_position(source, end),
+            }
+    start_line = max(0, int(line or 1) - 1)
+    start_char = max(0, int(col or 1) - 1)
+    width = 1
+    if isinstance(span, (tuple, list)) and len(span) == 2:
+        try:
+            width = max(1, int(span[1]) - int(span[0]))
+        except TypeError, ValueError:
+            width = 1
+    return {
+        "start": {"line": start_line, "character": start_char},
+        "end": {"line": start_line, "character": start_char + width},
+    }
+
+
+def _detail_field(detail: str, name: str) -> str | None:
+    match = re.search(rf"(?m)^\s*{re.escape(name)}:\s*(\S+)", detail)
+    return match.group(1) if match else None
+
+
+def fix_hint(error: BaseException, source: str) -> FixHint | None:
+    """Return an actionable hint for a known compiler diagnostic, else None."""
+    code = _extract_code(error)
+    if code not in _FIXABLE_CODES:
+        return None
+
+    start, end = _error_span(error, source)
+    line = getattr(error, "line", None)
+    col = getattr(error, "col", None)
+    if line is None:
+        line = getattr(error, "source_line", None)
+    if col is None:
+        col = getattr(error, "source_col", None)
+    detail = str(error)
+    span = (start, end) if start is not None else None
+
+    if code == "E001":
+        expected = getattr(error, "expected_type", None) or _detail_field(
+            detail, "expected"
+        )
+        if expected:
+            insert = dict(span_to_lsp_range(source, span, line=line, col=col)["end"])
+            return FixHint(
+                message=f"Write `as {expected}` to make the integer cast explicit.",
+                edits=[
+                    {
+                        "range": {"start": dict(insert), "end": dict(insert)},
+                        "newText": f" as {expected}",
+                    }
+                ],
+            )
+    if code == "E002":
+        suggestion = getattr(error, "suggestion", None)
+        if not suggestion:
+            match = re.search(r"(?m)^\s*help:\s*(.+)$", detail)
+            suggestion = match.group(1).strip() if match else None
+        if suggestion:
+            return FixHint(message=suggestion)
+    if code == "E003":
+        lowered = detail.lower()
+        if "unknown macro" in lowered:
+            return FixHint(
+                message=(
+                    "Use a supported macro instead: "
+                    + ", ".join(_SUPPORTED_MACROS)
+                    + "."
+                )
+            )
+        if "unsupported" in lowered:
+            return FixHint(
+                message="Replace the unsupported syntax with a supported Polyglot construct."
+            )
+    if code == "E006":
+        help_text = getattr(error, "help_text", None)
+        if isinstance(help_text, str) and help_text.strip():
+            return FixHint(message=help_text.strip())
+
+    help_text = getattr(error, "help_text", None)
+    if isinstance(help_text, str) and help_text.strip():
+        return FixHint(message=help_text.strip())
+    return None
+
+
 def diagnostic(
     error: BaseException,
     source: str,
@@ -174,6 +324,8 @@ def diagnostic(
     help_text = getattr(error, "help_text", None)
     if isinstance(help_text, str) and help_text:
         diagnostic["help"] = help_text
+    hint = fix_hint(error, source)
+    diagnostic["fix"] = hint.to_dict() if hint is not None else None
     return diagnostic
 
 
@@ -1155,9 +1307,13 @@ def analyze(source: str) -> dict[str, Any]:
 __all__ = [
     "MAX_TREE_DEPTH",
     "MAX_TREE_NODES",
+    "FixHint",
     "SourcePrinter",
     "analyze",
     "diagnostic",
+    "fix_hint",
+    "offset_to_lsp_position",
     "program_to_source",
     "program_to_tree",
+    "span_to_lsp_range",
 ]

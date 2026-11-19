@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -59,6 +60,62 @@ def test_check_terminates_example_exits_zero():
     result = _run_cli("check", "examples/terminates.poly")
     assert result.returncode == 0
     assert result.stderr == ""
+
+
+def test_error_format_json_includes_fix_hint(tmp_path: Path):
+    source = "fn main() -> i64 {\n    let x: i64 = 1 as usize;\n    x\n}\n"
+    path = tmp_path / "bad.poly"
+    path.write_text(source, encoding="utf-8")
+
+    result = _run_cli("check", str(path), "--error-format=json")
+    assert result.returncode == 1
+    payload = json.loads(result.stderr)
+
+    assert payload["code"] == "E001"
+    fix = payload["fix"]
+    assert "as i64" in fix["message"]
+    assert fix["edits"] == [
+        {
+            "range": {
+                "start": {"line": 1, "character": 27},
+                "end": {"line": 1, "character": 27},
+            },
+            "newText": " as i64",
+        }
+    ]
+
+
+def test_cli_json_fix_matches_lsp_fix(tmp_path: Path):
+    from api.lsp import _validate_document
+
+    source = "fn main() -> i64 {\n    let x: i64 = 1 as usize;\n    x\n}\n"
+    path = tmp_path / "bad.poly"
+    path.write_text(source, encoding="utf-8")
+
+    result = _run_cli("check", str(path), "--error-format=json")
+    payload = json.loads(result.stderr)
+    lsp_diagnostic = _validate_document(source, "file:///bad.poly")[0]
+
+    assert payload["fix"] == lsp_diagnostic["fix"]
+
+
+def test_five_line_text_output_is_unchanged(tmp_path: Path):
+    source = "fn main() -> i64 {\n    let x: i64 = 1 as usize;\n    x\n}\n"
+    path = tmp_path / "bad.poly"
+    path.write_text(source, encoding="utf-8")
+
+    result = _run_cli("check", str(path))
+    assert result.returncode == 1
+    start = source.index("1 as usize")
+    expected = (
+        "error[E001]: type mismatch at line 2, column 5\n"
+        "  found:    usize\n"
+        "  expected: i64\n"
+        "  help: write `as i64` here\n"
+        "  note: `as` may wrap or truncate the value; check the range first\n"
+        f"  at: line 2, column 5 (span {start}..{start + len('1 as usize')})\n"
+    )
+    assert result.stderr == expected
 
 
 def test_check_non_terminating_reports_error(tmp_path: Path):
