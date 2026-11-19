@@ -202,11 +202,24 @@ class ExprNode:
                     left.hi * right.hi,
                 ]
                 return _checked(min(products), max(products))
-            if right.lo == right.hi and right.lo != 0:
-                divisor = right.lo
+            if right.lo != right.hi or right.lo == 0:
+                return None
+            divisor = right.lo
+            if self.op == "floordiv":
                 if divisor > 0:
                     return _checked(left.lo // divisor, left.hi // divisor)
                 return _checked(left.hi // divisor, left.lo // divisor)
+            # Python's `%` follows the sign of the divisor: the result is in
+            # [0, d-1] for d > 0 and in [d+1, 0] for d < 0.  Using the
+            # floor-division interval here would be unsound (e.g. x % 3 is
+            # never 3 even when x // 3 can be 3).
+            if self.op == "mod":
+                if left.lo == left.hi:
+                    value = left.lo % divisor
+                    return _checked(value, value)
+                if divisor > 0:
+                    return _checked(0, divisor - 1)
+                return _checked(divisor + 1, 0)
             return None
         return None
 
@@ -350,7 +363,12 @@ class Cond:
                 return "proved"
             return "failed" if results == {"failed"} else "unknown"
         assert isinstance(self.left, ExprNode) and isinstance(self.right, ExprNode)
-        if self.op in {"==", "!="}:
+        left = self.left.interval(env)
+        right = self.right.interval(env)
+        if self.op in {"==", "!="} and left is not None and right is not None:
+            # A polynomial identity is only meaningful for expressions that
+            # stay inside i64.  Without this guard `(a + b) - b == a` would be
+            # "proved" even when `a + b` wraps.
             left_poly = self.left.poly()
             right_poly = self.right.poly()
             if left_poly is not None and right_poly is not None:
@@ -359,8 +377,6 @@ class Cond:
                     return "proved"
                 if self.op == "!=" and identical:
                     return "failed"
-        left = self.left.interval(env)
-        right = self.right.interval(env)
         if left is None or right is None:
             return "unknown"
         if self.op == "==":
@@ -402,9 +418,30 @@ def _substitute_expr(node: ExprNode, name: str, replacement: ExprNode) -> ExprNo
     )
 
 
+_MAX_CONDITION_AST_DEPTH = 64
+
+
+def _check_ast_depth(tree: ast.AST) -> None:
+    """Reject pathologically nested input before recursive walkers see it."""
+    stack: list[tuple[ast.AST, int]] = [(tree, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > _MAX_CONDITION_AST_DEPTH:
+            raise PillarError(
+                "E003",
+                "formal condition exceeds the supported nesting depth",
+                reason=f"more than {_MAX_CONDITION_AST_DEPTH} nested nodes",
+                help_text="simplify the condition into smaller obligations",
+            )
+        stack.extend((child, depth + 1) for child in ast.iter_child_nodes(node))
+
+
 def parse_condition(text: str) -> Cond:
     normalised = text.strip()
     normalised = normalised.replace("&&", " and ").replace("||", " or ")
+    # Cond.render() emits the symbolic forms; accept `!` as well as `not` so a
+    # rendered condition can be parsed back.  `!=` must be left intact.
+    normalised = re.sub(r"!(?!=)", " not ", normalised).strip()
     try:
         tree = ast.parse(normalised, mode="eval").body
     except SyntaxError as error:
@@ -416,7 +453,21 @@ def parse_condition(text: str) -> Cond:
             line=error.lineno or 0,
             col=error.offset or 0,
         ) from error
-    return _cond_from_python(tree)
+    except RecursionError as error:
+        raise PillarError(
+            "E003",
+            "formal condition is nested too deeply to parse",
+            reason=str(error),
+        ) from error
+    _check_ast_depth(tree)
+    try:
+        return _cond_from_python(tree)
+    except RecursionError as error:
+        raise PillarError(
+            "E003",
+            "formal condition is nested too deeply to check",
+            reason=str(error),
+        ) from error
 
 
 def _cond_from_python(node: ast.AST) -> Cond:
@@ -679,17 +730,68 @@ class ProofCertificate:
     digest: str = ""
 
     def body(self) -> dict[str, Any]:
-        return {
-            "spec": dataclasses.asdict(self.spec),
-            "candidate": self.candidate,
-            "interval": list(self.interval),
-            "steps": [dataclasses.asdict(step) for step in self.steps],
-        }
+        return _certificate_body(self.spec, self.candidate, self.interval, self.steps)
 
     def to_json(self) -> str:
         payload = self.body()
         payload["digest"] = self.digest
         return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _certificate_body(
+    spec: SynthesisSpec,
+    candidate: str,
+    interval: tuple[int, int] | list[int],
+    steps: tuple[ProofStep, ...] | list[ProofStep],
+) -> dict[str, Any]:
+    return {
+        "spec": dataclasses.asdict(spec),
+        "candidate": candidate,
+        "interval": list(interval),
+        "steps": [dataclasses.asdict(step) for step in steps],
+    }
+
+
+def _proof_steps(
+    spec: SynthesisSpec,
+    env: dict[str, Interval],
+    candidate: ExprNode,
+    interval: Interval,
+    postcondition: Cond,
+    obligation: Cond,
+) -> tuple[ProofStep, ...]:
+    steps = [
+        ProofStep(
+            "parameter_range",
+            {
+                "name": param.name,
+                "lo": env[param.name].lo,
+                "hi": env[param.name].hi,
+            },
+        )
+        for param in spec.params
+    ]
+    steps.append(
+        ProofStep(
+            "candidate_interval",
+            {
+                "expression": candidate.render(),
+                "lo": interval.lo,
+                "hi": interval.hi,
+            },
+        )
+    )
+    steps.append(
+        ProofStep(
+            "obligation",
+            {
+                "postcondition": postcondition.render(),
+                "substituted": obligation.render(),
+                "status": "proved",
+            },
+        )
+    )
+    return tuple(steps)
 
 
 def _expr_from_text(text: str) -> ExprNode:
@@ -701,7 +803,21 @@ def _expr_from_text(text: str) -> ExprNode:
             "candidate expression is not parseable",
             reason=str(error),
         ) from error
-    return _from_python(tree)
+    except RecursionError as error:
+        raise PillarError(
+            "E003",
+            "candidate expression is nested too deeply to parse",
+            reason=str(error),
+        ) from error
+    _check_ast_depth(tree)
+    try:
+        return _from_python(tree)
+    except RecursionError as error:
+        raise PillarError(
+            "E003",
+            "candidate expression is nested too deeply to check",
+            reason=str(error),
+        ) from error
 
 
 def _candidate_space(
@@ -754,43 +870,10 @@ def synthesize(spec: SynthesisSpec) -> tuple[ExprNode, ProofCertificate]:
         obligation = postcondition.substitute("result", candidate)
         if obligation.check(env) != "proved":
             continue
-        steps = [
-            ProofStep(
-                "parameter_range",
-                {
-                    "name": param.name,
-                    "lo": env[param.name].lo,
-                    "hi": env[param.name].hi,
-                },
-            )
-            for param in spec.params
-        ]
-        steps.append(
-            ProofStep(
-                "candidate_interval",
-                {
-                    "expression": candidate.render(),
-                    "lo": interval.lo,
-                    "hi": interval.hi,
-                },
-            )
+        steps = _proof_steps(spec, env, candidate, interval, postcondition, obligation)
+        body = _certificate_body(
+            spec, candidate.render(), (interval.lo, interval.hi), steps
         )
-        steps.append(
-            ProofStep(
-                "obligation",
-                {
-                    "postcondition": postcondition.render(),
-                    "substituted": obligation.render(),
-                    "status": "proved",
-                },
-            )
-        )
-        body = {
-            "spec": dataclasses.asdict(spec),
-            "candidate": candidate.render(),
-            "interval": [interval.lo, interval.hi],
-            "steps": [dataclasses.asdict(step) for step in steps],
-        }
         digest = hashlib.sha256(
             json.dumps(body, sort_keys=True).encode("utf-8")
         ).hexdigest()
@@ -811,12 +894,12 @@ def synthesize(spec: SynthesisSpec) -> tuple[ExprNode, ProofCertificate]:
 
 def check_certificate(certificate: ProofCertificate, *, strict: bool = True) -> bool:
     """Independently re-check a certificate.  Never trusts the stored status."""
-    body = {
-        "spec": dataclasses.asdict(certificate.spec),
-        "candidate": certificate.candidate,
-        "interval": list(certificate.interval),
-        "steps": [dataclasses.asdict(step) for step in certificate.steps],
-    }
+    body = _certificate_body(
+        certificate.spec,
+        certificate.candidate,
+        certificate.interval,
+        certificate.steps,
+    )
     digest = hashlib.sha256(
         json.dumps(body, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -838,7 +921,18 @@ def check_certificate(certificate: ProofCertificate, *, strict: bool = True) -> 
                 "certificate interval does not match the candidate",
             )
         return False
-    obligation = certificate.spec.condition().substitute("result", candidate)
+    postcondition = certificate.spec.condition()
+    obligation = postcondition.substitute("result", candidate)
+    expected_steps = _proof_steps(
+        certificate.spec, env, candidate, interval, postcondition, obligation
+    )
+    if certificate.steps != expected_steps:
+        if strict:
+            raise PillarError(
+                "E008",
+                "proof certificate steps do not match a fresh derivation",
+            )
+        return False
     proved = obligation.check(env) == "proved"
     if not proved and strict:
         raise PillarError(
@@ -854,7 +948,35 @@ def check_certificate(certificate: ProofCertificate, *, strict: bool = True) -> 
 # ---------------------------------------------------------------------------
 
 
+_SAFE_EMIT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_SAFE_EMIT_TYPE = re.compile(r"^[A-Za-z_&][A-Za-z0-9_&<>\[\], \t]*$")
+
+
+def _validate_spec_for_emission(spec: SynthesisSpec) -> None:
+    """Reject names that would produce malformed or injected source."""
+    if not _SAFE_EMIT_NAME.fullmatch(spec.name):
+        raise PillarError(
+            "E003",
+            f"specification name {spec.name!r} cannot be emitted",
+            help_text="use an alphanumeric identifier",
+        )
+    for param in spec.params:
+        if not _SAFE_EMIT_NAME.fullmatch(param.name):
+            raise PillarError(
+                "E003",
+                f"parameter name {param.name!r} cannot be emitted",
+                help_text="use an alphanumeric identifier",
+            )
+        if not _SAFE_EMIT_TYPE.fullmatch(param.ty):
+            raise PillarError(
+                "E003",
+                f"parameter type {param.ty!r} cannot be emitted",
+                help_text="use a simple named or generic type",
+            )
+
+
 def emit_source(spec: SynthesisSpec, candidate: ExprNode) -> str:
+    _validate_spec_for_emission(spec)
     params = ", ".join(f"{param.name}: {param.ty}" for param in spec.params)
     postcondition = spec.condition().render()
     return (
@@ -904,6 +1026,7 @@ def emit_function_ast(
 ) -> FnDecl:
     """Construct the synthesized ``FnDecl`` directly (no source round-trip)."""
     _require_matching_certificate(spec, candidate, certificate)
+    _validate_spec_for_emission(spec)
     line = col = 1
     params = [
         FnParam(
@@ -1054,30 +1177,39 @@ class LockOrder:
             adjacency.setdefault(before, set()).add(after)
             adjacency.setdefault(after, set())
 
+        # Iterative DFS: a long declared order must not hit Python's recursion
+        # limit, and the sorted traversal keeps the witness deterministic.
         path: list[str] = []
         positions: dict[str, int] = {}
         visited: set[str] = set()
-
-        def visit(node: str) -> tuple[str, ...] | None:
-            if node in positions:
-                return tuple(path[positions[node] :] + [node])
-            if node in visited:
-                return None
-            positions[node] = len(path)
-            path.append(node)
-            for neighbour in sorted(adjacency.get(node, ())):
-                cycle = visit(neighbour)
-                if cycle is not None:
-                    return cycle
-            path.pop()
-            del positions[node]
-            visited.add(node)
-            return None
-
-        for node in sorted(nodes):
-            cycle = visit(node)
-            if cycle is not None:
-                return cycle
+        for root in sorted(nodes):
+            if root in visited:
+                continue
+            positions[root] = len(path)
+            path.append(root)
+            stack: list[tuple[str, Any]] = [
+                (root, iter(sorted(adjacency.get(root, ()))))
+            ]
+            while stack:
+                _node, neighbours = stack[-1]
+                descended = False
+                for neighbour in neighbours:
+                    if neighbour in positions:
+                        return tuple(path[positions[neighbour] :] + [neighbour])
+                    if neighbour in visited:
+                        continue
+                    positions[neighbour] = len(path)
+                    path.append(neighbour)
+                    stack.append(
+                        (neighbour, iter(sorted(adjacency.get(neighbour, ()))))
+                    )
+                    descended = True
+                    break
+                if not descended:
+                    stack.pop()
+                    finished = path.pop()
+                    del positions[finished]
+                    visited.add(finished)
         return None
 
 
@@ -1121,17 +1253,38 @@ def extract_counterexample_trace(
     rather than a concrete SMT model.  A proved condition has no counterexample
     and is rejected with E002.
     """
-    status = condition.check(env or {})
+    scope = env or {}
+    status = condition.check(scope)
     if status == "proved":
         raise PillarError(
             "E002",
             "the condition is proved and has no counterexample",
             help_text="pass an unproved condition to extract a trace",
         )
+    evidence: list[str] = []
+    if (
+        condition.op in {"==", "!=", "<", "<=", ">", ">="}
+        and isinstance(condition.left, ExprNode)
+        and isinstance(condition.right, ExprNode)
+    ):
+        for expression in (condition.left, condition.right):
+            interval = expression.interval(scope)
+            if interval is not None:
+                evidence.append(f"{expression.render()} in {interval.render()}")
+    if not evidence:
+        evidence = [
+            f"{name} in {interval.render()}" for name, interval in sorted(scope.items())
+        ]
+    if status == "failed":
+        detail = "interval/polynomial evidence refutes the obligation"
+    else:
+        detail = "evidence is inconclusive; this is not a concrete model"
+    if evidence:
+        detail += "; " + ", ".join(evidence)
     return Counterexample(
         condition=condition.render(),
         status=status,
-        detail="interval or polynomial evidence was insufficient to prove the obligation",
+        detail=detail,
     )
 
 

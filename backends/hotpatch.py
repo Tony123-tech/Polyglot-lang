@@ -15,6 +15,12 @@ The last point is the only sound way to provide native hot-swapping without
 depending on a specific linker, macOS ``MAP_JIT`` policy, or PyO3 ABI.  Code
 generation can opt into the indirection later by calling
 ``NativeSymbolTable.resolve`` before each invocation.
+
+This is the first-generation, quiescent-point manager.  The newer
+``runtime.hotpatch`` package implements the owned-page trampoline, future-entry
+frame migration, reactor, RCU, and journal capabilities routed by
+``runtime.capabilities``; prefer it for new work.  Both implementations keep
+their distinct, documented boundaries and are not interchangeable.
 """
 
 from __future__ import annotations
@@ -184,7 +190,30 @@ def _index_items(
                     impl_counts[pair] = count + 1
                     key = ("method", owner, nested.name, count)
                     index[key] = ("method", nested, owner)
+                else:
+                    # A trait const/type nested in an impl is still a real
+                    # definition; indexing it as unsupported prevents a patch
+                    # from silently ignoring the change.
+                    key = (
+                        "other",
+                        type(nested).__name__,
+                        getattr(nested, "name", None) or "",
+                        impl_counts.get((owner, type(nested).__name__), 0),
+                    )
+                    impl_counts[(owner, type(nested).__name__)] = key[-1] + 1
+                    index[key] = ("other", nested, owner)
+        else:
+            # ModDecl / IncludeDecl / future item kinds: track them so adding
+            # or removing one is reported rather than dropped from the plan.
+            name = getattr(item, "name", None) or getattr(item, "path", "") or ""
+            key = ("other", type(item).__name__, str(name))
+            index[key] = ("other", item, None)
     return index
+
+
+_SWAPPABLE_KINDS = frozenset(
+    {"fn", "method", "const", "struct", "enum", "trait", "type", "use"}
+)
 
 
 def diff_programs(old: Program, new: Program) -> PatchPlan:
@@ -196,12 +225,16 @@ def diff_programs(old: Program, new: Program) -> PatchPlan:
     for key, (kind, new_item, owner) in new_index.items():
         old_entry = old_index.get(key)
         if old_entry is None:
+            supported = kind in _SWAPPABLE_KINDS
             plan.changes.append(
                 ItemChange(
                     key=key,
                     name=getattr(new_item, "name", key[-1] if key else "?"),
-                    kind=ChangeKind.ADDED,
+                    kind=ChangeKind.ADDED if supported else ChangeKind.INCOMPATIBLE,
                     target=owner,
+                    detail=(
+                        "" if supported else f"{kind} definitions are not hot-swappable"
+                    ),
                     span=getattr(new_item, "span", None),
                 )
             )
@@ -287,6 +320,11 @@ def diff_programs(old: Program, new: Program) -> PatchPlan:
                     name=getattr(old_item, "name", key[-1] if key else "?"),
                     kind=ChangeKind.REMOVED,
                     target=owner,
+                    detail=(
+                        ""
+                        if _kind in _SWAPPABLE_KINDS
+                        else f"{_kind} definitions are not hot-swappable"
+                    ),
                     span=getattr(old_item, "span", None),
                 )
             )
@@ -308,9 +346,8 @@ def _coerce_default(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
-def _zero_for_type(ty: Any) -> Any:
-    name = _type_name(ty)
-    if name in {
+_INTEGER_TYPES = frozenset(
+    {
         "i8",
         "i16",
         "i32",
@@ -323,19 +360,66 @@ def _zero_for_type(ty: Any) -> Any:
         "u128",
         "isize",
         "usize",
-    }:
+        "int",
+    }
+)
+_FLOAT_TYPES = frozenset({"f32", "f64", "float"})
+_STRING_TYPES = frozenset({"String", "str", "&str", "char"})
+_LIST_TYPES = frozenset({"Vec", "list", "HashSet", "set"})
+_DICT_TYPES = frozenset({"HashMap", "dict"})
+
+
+def _zero_for_type_name(name: str) -> Any:
+    """Resolve the zero value of a textual type name."""
+    if name in _INTEGER_TYPES:
         return 0
     if name == "bool":
         return False
-    if name in {"f32", "f64"}:
+    if name in _FLOAT_TYPES:
         return 0.0
-    if name in {"String", "str", "&str"}:
+    if name in _STRING_TYPES:
         return ""
-    if name.startswith(("Vec<", "[")):
+    if name in _LIST_TYPES or name.startswith(("Vec<", "list[", "[")):
         return []
-    if name.startswith("Option<"):
+    if name in _DICT_TYPES or name.startswith(("HashMap<", "dict[")):
+        return {}
+    if name.startswith(("HashSet<", "set[")):
+        return set()
+    if name.startswith(("Option<", "Optional[")):
         return None
     return _MISSING
+
+
+def _zero_for_type(ty: Any) -> Any:
+    # The Python backend injects ``from __future__ import annotations`` into
+    # generated modules, so dataclass field types are usually strings such as
+    # ``'int'`` or ``'list[int]'``.  Accept runtime types, generic aliases,
+    # and the original Polyglot TypeName nodes as well.
+    if isinstance(ty, str):
+        return _zero_for_type_name(ty.strip().strip("'\""))
+    if ty is bool:
+        return False
+    if ty is int:
+        return 0
+    if ty is float:
+        return 0.0
+    if ty is str:
+        return ""
+    if ty is list:
+        return []
+    if ty is dict:
+        return {}
+    if ty is set:
+        return set()
+    origin = getattr(ty, "__origin__", None)
+    if origin is not None and origin is not ty:
+        return _zero_for_type(origin) if isinstance(origin, type) else _MISSING
+    name = _type_name(ty)
+    if not isinstance(name, str):
+        # Complex/nested AST types normalise to tuples; they have no obvious
+        # single zero value without an explicit migration default.
+        return _MISSING
+    return _zero_for_type_name(name)
 
 
 _MISSING = object()
@@ -441,6 +525,8 @@ class HotpatchManager:
                 help_text="register instances of generated structs (dataclasses) only",
             )
         with self._lock:
+            if any(ref() is obj for ref in self._live):
+                return obj
             self._live.append(weakref.ref(obj))
         return obj
 
@@ -469,6 +555,12 @@ class HotpatchManager:
 
     def call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         with self.execution():
+            if name not in self.namespace:
+                raise PillarError(
+                    "E006",
+                    f"namespace has no callable `{name}`",
+                    help_text="compile a program that defines the function first",
+                )
             return self.namespace[name](*args, **kwargs)
 
     # -- patching ----------------------------------------------------------
@@ -484,33 +576,37 @@ class HotpatchManager:
         allow_field_drop: bool | None = None,
         field_defaults: dict[str, Any] | None = None,
     ) -> PatchResult:
-        plan = diff_programs(self._program, new_program)
-        incompatible = plan.incompatible
-        if incompatible:
-            first = incompatible[0]
-            raise PillarError(
-                "E001",
-                f"patch is not ABI-compatible: {first.name} ({first.kind.value})",
-                reason=first.detail or "a signature or top-level definition changed",
-                help_text="deploy a new process for signature/layout breaking changes",
-                line=0,
-                col=0,
-                span=first.span,
-            )
-        if require_safe_point and self._active_calls:
-            raise PillarError(
-                "E003",
-                "hot patch requires a quiescent execution point",
-                reason=f"{self._active_calls} call(s) are still active",
-                help_text="finish or suspend the reactor before applying the patch",
-            )
-
         from backends.python.translator import PythonBackend
 
-        new_namespace = PythonBackend(trusted=True).compile(new_program)
-
         with self._lock:
-            undo = self._capture_undo(plan)
+            # The plan and the quiescence check must be made with the same
+            # lock held for the swap itself.  Otherwise a concurrent
+            # execution() or patch() can slip in between the check and the
+            # mutation and have its live frames rewritten.
+            plan = diff_programs(self._program, new_program)
+            incompatible = plan.incompatible
+            if incompatible:
+                first = incompatible[0]
+                raise PillarError(
+                    "E001",
+                    f"patch is not ABI-compatible: {first.name} ({first.kind.value})",
+                    reason=first.detail
+                    or "a signature or top-level definition changed",
+                    help_text="deploy a new process for signature/layout breaking changes",
+                    line=0,
+                    col=0,
+                    span=first.span,
+                )
+            if require_safe_point and self._active_calls:
+                raise PillarError(
+                    "E003",
+                    "hot patch requires a quiescent execution point",
+                    reason=f"{self._active_calls} call(s) are still active",
+                    help_text="finish or suspend the reactor before applying the patch",
+                )
+
+            new_namespace = PythonBackend(trusted=True).compile(new_program)
+            undo = self._capture_undo(plan, capture_objects=plan.requires_migration)
             swaps = 0
             migrated = 0
             try:
@@ -703,7 +799,9 @@ class HotpatchManager:
                 continue
             setattr(old_cls, name, value)
 
-    def _capture_undo(self, plan: PatchPlan) -> _UndoState:
+    def _capture_undo(
+        self, plan: PatchPlan, *, capture_objects: bool = True
+    ) -> _UndoState:
         functions: list[_FunctionState] = []
         classes: list[_ClassState] = []
         namespace_values: dict[str, Any] = {}
@@ -744,8 +842,13 @@ class HotpatchManager:
                         )
 
         objects: list[_ObjectState] = []
-        for obj in self.live_objects():
-            objects.append(_ObjectState(obj=obj, values=copy.deepcopy(vars(obj))))
+        if capture_objects:
+            # Only layout patches mutate live instances.  Deep-copying every
+            # registered object for a body-only patch would make even simple
+            # patches fail when a struct happens to hold a non-copyable value
+            # such as a lock or a native handle.
+            for obj in self.live_objects():
+                objects.append(_ObjectState(obj=obj, values=copy.deepcopy(vars(obj))))
         return _UndoState(
             program=self._program,
             generation=self.generation,
@@ -817,7 +920,6 @@ class NativeSymbolTable:
         self.swap_count = 0
 
     def register(self, name: str, signature: Any, implementation: Any) -> Any:
-        callback = signature(implementation)
         with self._lock:
             if name in self._slots:
                 raise PillarError(
@@ -825,6 +927,10 @@ class NativeSymbolTable:
                     f"native symbol `{name}` is already registered",
                     help_text="use swap() to replace an existing symbol",
                 )
+            # Build the callback while the lock is held so concurrent
+            # registrations of the same name cannot both run signature()
+            # (which may allocate executable trampolines) for a losing slot.
+            callback = signature(implementation)
             self.generation += 1
             self._slots[name] = _Slot(signature, callback, self.generation)
             return callback

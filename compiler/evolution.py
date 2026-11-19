@@ -19,13 +19,18 @@ providing the feedback loop and sandboxed evolution mechanics.
 
 from __future__ import annotations
 
+import ast
+import contextlib
 import dataclasses
 import hashlib
 import json
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -120,6 +125,86 @@ _TEMPLATE_FOR_OBSERVATION = {
 _IDENTITY = "def transform(node):\n    return None\n"
 
 
+# A pass is a small, auditable AST transform.  This is *screening*, not a
+# security boundary: the real isolation is the fresh process used by
+# evaluate().  It rejects the obvious accidental/naive escape hatches while
+# keeping the documented template library working.
+_ALLOWED_IMPORT_ROOTS = frozenset({"ast_nodes", "math"})
+_FORBIDDEN_CALL_NAMES = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "open",
+        "__import__",
+        "getattr",
+        "setattr",
+        "delattr",
+        "globals",
+        "locals",
+        "vars",
+        "breakpoint",
+        "input",
+        "exit",
+        "quit",
+    }
+)
+
+
+def _validate_candidate_source(source: str) -> None:
+    """Screen a caller-supplied pass before it is executed in the sandbox."""
+    try:
+        tree = ast.parse(source, filename="<evolution-candidate>")
+    except SyntaxError:
+        # _self_compile owns the structured syntax diagnostic.
+        return
+
+    def reject(node: ast.AST, message: str) -> None:
+        raise PillarError(
+            "E003",
+            f"candidate pass is not an auditable transform: {message}",
+            help_text="only imports of ast_nodes/math and a pure transform() are allowed",
+            line=getattr(node, "lineno", 0),
+            col=getattr(node, "col_offset", -1) + 1,
+        )
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+            )
+            for name in names:
+                if name.split(".")[0] not in _ALLOWED_IMPORT_ROOTS:
+                    reject(node, f"import of {name!r} is not allowed")
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            reject(node, "dunder attribute access is not allowed")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in _FORBIDDEN_CALL_NAMES:
+                reject(node, f"call to {node.func.id}() is not allowed")
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            reject(node, "global/nonlocal state is not allowed")
+
+    for stmt in tree.body:
+        if isinstance(
+            stmt,
+            (
+                ast.Import,
+                ast.ImportFrom,
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.Assign,
+                ast.AnnAssign,
+            ),
+        ):
+            continue
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+            continue  # module docstring
+        reject(stmt, f"top-level {type(stmt).__name__} is not allowed")
+
+
 # ---------------------------------------------------------------------------
 # Observations and candidates
 # ---------------------------------------------------------------------------
@@ -199,8 +284,10 @@ def run_case(source, transform):
 
 def main():
     candidate_path, corpus_path = sys.argv[2], sys.argv[3]
-    source = open(candidate_path, encoding="utf-8").read()
-    corpus = json.load(open(corpus_path, encoding="utf-8"))
+    with open(candidate_path, encoding="utf-8") as handle:
+        source = handle.read()
+    with open(corpus_path, encoding="utf-8") as handle:
+        corpus = json.load(handle)
     namespace = {}
     exec(compile(source, candidate_path, "exec"), namespace)
     transform = namespace["transform"]
@@ -234,6 +321,42 @@ main()
 # ---------------------------------------------------------------------------
 
 
+def _require_version(version: Any) -> int:
+    """Validate a history version before it reaches the filesystem."""
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise PillarError(
+            "E003",
+            f"invalid history version {version!r}",
+            help_text="versions are positive integers",
+        )
+    return version
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write a history file atomically so readers never see a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    """Kill the sandbox process and any children it spawned."""
+    if os.name == "posix":
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        process.kill()
+
+
 class EvolutionEngine:
     """Observe, synthesize, sandbox-validate, and version compiler passes."""
 
@@ -250,6 +373,7 @@ class EvolutionEngine:
         self.history_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.timeout = timeout
         self.use_git = use_git
+        self._lock = threading.RLock()
         self._observations: list[Observation] = []
         self._runner = _RUNNER
 
@@ -257,58 +381,69 @@ class EvolutionEngine:
 
     @property
     def observations(self) -> tuple[Observation, ...]:
-        return tuple(self._observations)
+        with self._lock:
+            return tuple(self._observations)
 
     def observe_compile_failure(self, stderr: str, code: str = "E004") -> None:
         detail = (stderr or "unknown compiler failure").strip()
-        self._observations.append(
-            Observation("compile_failure", f"{code}: {detail[:4000]}")
-        )
+        with self._lock:
+            self._observations.append(
+                Observation("compile_failure", f"{code}: {detail[:4000]}")
+            )
 
     def observe_profile(self, name: str, milliseconds: float, budget_ms: float) -> None:
         if milliseconds <= budget_ms:
             return
-        self._observations.append(
-            Observation(
-                "slow_function",
-                f"{name} took {milliseconds:.3f}ms (budget {budget_ms:.3f}ms)",
-                value=milliseconds,
+        with self._lock:
+            self._observations.append(
+                Observation(
+                    "slow_function",
+                    f"{name} took {milliseconds:.3f}ms (budget {budget_ms:.3f}ms)",
+                    value=milliseconds,
+                )
             )
-        )
 
     # -- synthesis ---------------------------------------------------------
 
     def propose(self, template: str | None = None) -> PassCandidate:
-        if not self._observations:
-            raise PillarError(
-                "E003",
-                "no compiler observation is available to drive evolution",
-                help_text="call observe_compile_failure() or observe_profile() first",
+        with self._lock:
+            if not self._observations:
+                raise PillarError(
+                    "E003",
+                    "no compiler observation is available to drive evolution",
+                    help_text="call observe_compile_failure() or observe_profile() first",
+                )
+            if template is None:
+                last = self._observations[-1]
+                choices = _TEMPLATE_FOR_OBSERVATION.get(last.kind, tuple(TEMPLATES))
+                used = {
+                    manifest["template"]
+                    for manifest in self.history()
+                    if isinstance(manifest.get("template"), str)
+                }
+                template = next(
+                    (name for name in choices if name not in used), choices[0]
+                )
+            if template not in TEMPLATES:
+                raise PillarError(
+                    "E003",
+                    f"unknown pass template {template!r}",
+                    help_text=f"choose one of {sorted(TEMPLATES)}",
+                )
+            source = TEMPLATES[template]
+            self._self_compile(source)
+            current = self.current()
+            version = 1 if current is None else current.version + 1
+            return PassCandidate(
+                name=template,
+                version=version,
+                template=template,
+                source=source,
+                parent=None if current is None else current.version,
             )
-        if template is None:
-            last = self._observations[-1]
-            choices = _TEMPLATE_FOR_OBSERVATION.get(last.kind, tuple(TEMPLATES))
-            used = {manifest["template"] for manifest in self.history()}
-            template = next((name for name in choices if name not in used), choices[0])
-        if template not in TEMPLATES:
-            raise PillarError(
-                "E003",
-                f"unknown pass template {template!r}",
-                help_text=f"choose one of {sorted(TEMPLATES)}",
-            )
-        source = TEMPLATES[template]
-        self._self_compile(source)
-        current = self.current()
-        version = 1 if current is None else current.version + 1
-        return PassCandidate(
-            name=template,
-            version=version,
-            template=template,
-            source=source,
-            parent=None if current is None else current.version,
-        )
 
     def _self_compile(self, source: str) -> None:
+        _validate_candidate_source(source)
         try:
             compile(source, "<evolution-candidate>", "exec")
         except SyntaxError as error:
@@ -344,7 +479,7 @@ class EvolutionEngine:
             corpus_path.write_text(json.dumps(corpus), encoding="utf-8")
             runner_path.write_text(self._runner, encoding="utf-8")
             try:
-                completed = subprocess.run(
+                process = subprocess.Popen(
                     [
                         sys.executable,
                         str(runner_path),
@@ -353,27 +488,37 @@ class EvolutionEngine:
                         str(corpus_path),
                     ],
                     cwd=str(ROOT),
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    timeout=self.timeout,
-                    check=False,
+                    start_new_session=True,
                 )
+            except OSError as error:
+                return Evaluation(ok=False, error=f"cannot start sandbox: {error}")
+
+            try:
+                stdout, stderr = process.communicate(timeout=self.timeout)
             except subprocess.TimeoutExpired:
+                _terminate_process_tree(process)
+                # Reap the child and drain the pipes.  A grandchild that
+                # inherited stdout/stderr would otherwise keep communicate()
+                # blocked indefinitely after the direct child was killed.
+                stdout, stderr = process.communicate()
                 return Evaluation(
                     ok=False,
                     error=f"candidate timed out after {self.timeout:g}s",
                 )
-            if completed.returncode != 0:
+            if process.returncode != 0:
                 return Evaluation(
                     ok=False,
-                    error=completed.stderr.strip() or completed.stdout.strip(),
+                    error=stderr.strip() or stdout.strip(),
                 )
             try:
-                payload = json.loads(completed.stdout.strip())
+                payload = json.loads(stdout.strip())
             except json.JSONDecodeError:
                 return Evaluation(
                     ok=False,
-                    error=f"invalid sandbox output: {completed.stdout.strip()[:2000]}",
+                    error=f"invalid sandbox output: {stdout.strip()[:2000]}",
                 )
             return Evaluation(
                 ok=bool(payload.get("ok")),
@@ -399,70 +544,139 @@ class EvolutionEngine:
                 "sandbox reported an error for the candidate",
                 reason=evaluation.error,
             )
-        self.history_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        source_path = self.history_dir / candidate.filename
-        manifest_path = self.history_dir / f"v{candidate.version:04d}.json"
-        source_path.write_text(candidate.source, encoding="utf-8")
-        manifest = {
-            "name": candidate.name,
-            "version": candidate.version,
-            "template": candidate.template,
-            "parent": candidate.parent,
-            "digest": candidate.digest,
-            "created_at": candidate.created_at,
-            "candidate_ms": evaluation.candidate_ms,
-            "baseline_ms": evaluation.baseline_ms,
-            "corpus_results": evaluation.results,
-        }
-        manifest_path.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        (self.history_dir / "current.json").write_text(
-            json.dumps({"version": candidate.version}), encoding="utf-8"
-        )
-        if self.use_git:
-            self._git_commit(candidate)
-        return candidate.version
+        version = _require_version(candidate.version)
+        with self._lock:
+            self.history_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            source_path = self.history_dir / candidate.filename
+            manifest_path = self.history_dir / f"v{version:04d}.json"
+            if source_path.exists() or manifest_path.exists():
+                if not (source_path.is_file() and manifest_path.is_file()):
+                    raise PillarError(
+                        "E008",
+                        f"history version {version} is incomplete",
+                        help_text="remove the partial version directory entry and re-promote",
+                    )
+                try:
+                    existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as error:
+                    raise PillarError(
+                        "E008",
+                        f"history version {version} has a corrupt manifest",
+                        reason=str(error),
+                    ) from error
+                if existing.get("digest") != candidate.digest:
+                    raise PillarError(
+                        "E008",
+                        f"history version {version} already contains different content",
+                        help_text="promote a new version instead of overwriting history",
+                    )
+            manifest = {
+                "name": candidate.name,
+                "version": version,
+                "template": candidate.template,
+                "parent": candidate.parent,
+                "digest": candidate.digest,
+                "created_at": candidate.created_at,
+                "candidate_ms": evaluation.candidate_ms,
+                "baseline_ms": evaluation.baseline_ms,
+                "corpus_results": evaluation.results,
+            }
+            try:
+                _atomic_write_text(source_path, candidate.source)
+                _atomic_write_text(
+                    manifest_path, json.dumps(manifest, indent=2, sort_keys=True)
+                )
+                _atomic_write_text(
+                    self.history_dir / "current.json",
+                    json.dumps({"version": version}),
+                )
+            except OSError as error:
+                raise PillarError(
+                    "E004",
+                    "cannot write the evolution history",
+                    reason=str(error),
+                ) from error
+            if self.use_git:
+                self._git_commit(candidate)
+            return version
 
     def current(self) -> PassCandidate | None:
-        pointer = self.history_dir / "current.json"
-        if not pointer.is_file():
-            return None
-        try:
-            version = int(json.loads(pointer.read_text(encoding="utf-8"))["version"])
-        except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
-            raise PillarError(
-                "E008",
-                "evolution history pointer is malformed",
-                reason=str(error),
-                help_text="delete current.json and re-promote a candidate",
-            ) from error
-        return self._load(version)
-
-    def history(self) -> list[dict[str, Any]]:
-        if not self.history_dir.is_dir():
-            return []
-        manifests: list[dict[str, Any]] = []
-        for path in sorted(self.history_dir.glob("v*.json")):
+        with self._lock:
+            pointer = self.history_dir / "current.json"
+            if not pointer.is_file():
+                return None
             try:
-                manifests.append(json.loads(path.read_text(encoding="utf-8")))
-            except (OSError, json.JSONDecodeError) as error:
+                version = int(
+                    json.loads(pointer.read_text(encoding="utf-8"))["version"]
+                )
+            except (
+                OSError,
+                TypeError,
+                ValueError,
+                KeyError,
+                json.JSONDecodeError,
+            ) as error:
                 raise PillarError(
                     "E008",
-                    f"corrupt evolution manifest: {path.name}",
+                    "evolution history pointer is malformed",
                     reason=str(error),
-                    help_text="remove the corrupt manifest and re-promote",
+                    help_text="delete current.json and re-promote a candidate",
                 ) from error
-        return manifests
+            return self._load(version)
+
+    def history(self) -> list[dict[str, Any]]:
+        with self._lock:
+            if not self.history_dir.is_dir():
+                return []
+            manifests: list[dict[str, Any]] = []
+            for path in sorted(self.history_dir.glob("v*.json")):
+                try:
+                    manifest = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as error:
+                    raise PillarError(
+                        "E008",
+                        f"corrupt evolution manifest: {path.name}",
+                        reason=str(error),
+                        help_text="remove the corrupt manifest and re-promote",
+                    ) from error
+                if (
+                    not isinstance(manifest, dict)
+                    or not {
+                        "name",
+                        "version",
+                        "template",
+                        "digest",
+                    }
+                    <= manifest.keys()
+                ):
+                    raise PillarError(
+                        "E008",
+                        f"corrupt evolution manifest: {path.name}",
+                        reason="required manifest fields are missing",
+                        help_text="remove the corrupt manifest and re-promote",
+                    )
+                manifests.append(manifest)
+            return manifests
 
     def rollback(self, version: int) -> PassCandidate:
-        candidate = self._load(version)
-        (self.history_dir / "current.json").write_text(
-            json.dumps({"version": version}), encoding="utf-8"
-        )
-        return candidate
+        version = _require_version(version)
+        with self._lock:
+            candidate = self._load(version)
+            try:
+                _atomic_write_text(
+                    self.history_dir / "current.json",
+                    json.dumps({"version": version}),
+                )
+            except OSError as error:
+                raise PillarError(
+                    "E004",
+                    "cannot update the evolution history pointer",
+                    reason=str(error),
+                ) from error
+            return candidate
 
     def _load(self, version: int) -> PassCandidate:
+        version = _require_version(version)
         manifest_path = self.history_dir / f"v{version:04d}.json"
         source_path = self.history_dir / f"v{version:04d}.py"
         if not manifest_path.is_file() or not source_path.is_file():
@@ -471,41 +685,86 @@ class EvolutionEngine:
                 f"compiler pass version {version} is not in the history",
                 help_text="inspect history() for available versions",
             )
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        source = source_path.read_text(encoding="utf-8")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            source = source_path.read_text(encoding="utf-8")
+        except (OSError, json.JSONDecodeError) as error:
+            raise PillarError(
+                "E008",
+                f"evolution history version {version} is unreadable",
+                reason=str(error),
+            ) from error
         if hashlib.sha256(source.encode("utf-8")).hexdigest() != manifest.get("digest"):
             raise PillarError(
                 "E008",
                 f"compiler pass version {version} failed its digest check",
                 help_text="the history file was modified outside the engine",
             )
-        return PassCandidate(
-            name=manifest["name"],
-            version=manifest["version"],
-            template=manifest["template"],
-            source=source,
-            parent=manifest.get("parent"),
-            created_at=float(manifest.get("created_at") or 0.0),
-        )
+        try:
+            return PassCandidate(
+                name=manifest["name"],
+                version=manifest["version"],
+                template=manifest["template"],
+                source=source,
+                parent=manifest.get("parent"),
+                created_at=float(manifest.get("created_at") or 0.0),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise PillarError(
+                "E008",
+                f"evolution history version {version} has a malformed manifest",
+                reason=str(error),
+            ) from error
 
     def _git_commit(self, candidate: PassCandidate) -> None:
         git = shutil.which("git")
         if git is None:
-            return
-        if not (self.history_dir / ".git").is_dir():
-            subprocess.run(
-                [git, "init", "-q", str(self.history_dir)],
-                capture_output=True,
-                text=True,
-                check=False,
+            raise PillarError(
+                "E004",
+                "git is required when use_git=True",
+                help_text="install git or construct EvolutionEngine(use_git=False)",
             )
-        subprocess.run(
-            [git, "-C", str(self.history_dir), "add", "."],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        subprocess.run(
+
+        def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+            try:
+                return subprocess.run(
+                    args,
+                    cwd=str(self.history_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise PillarError(
+                    "E004",
+                    f"git {args[0]} failed",
+                    reason=str(error),
+                ) from error
+
+        if not (self.history_dir / ".git").is_dir():
+            init = run([git, "init", "-q"])
+            if init.returncode != 0:
+                raise PillarError(
+                    "E004",
+                    "cannot initialise the evolution git history",
+                    reason=init.stderr.strip() or init.stdout.strip(),
+                )
+        # Stage only the files this promotion wrote.  `git add .` would sweep
+        # unrelated user files in history_dir into an automatic commit.
+        tracked = [
+            candidate.filename,
+            f"v{candidate.version:04d}.json",
+            "current.json",
+        ]
+        added = run([git, "-C", str(self.history_dir), "add", "--", *tracked])
+        if added.returncode != 0:
+            raise PillarError(
+                "E004",
+                "cannot stage the evolution history",
+                reason=added.stderr.strip() or added.stdout.strip(),
+            )
+        committed = run(
             [
                 git,
                 "-C",
@@ -514,11 +773,15 @@ class EvolutionEngine:
                 "-q",
                 "-m",
                 f"evolution: promote {candidate.name} v{candidate.version:04d}",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+            ]
         )
+        output = (committed.stderr + committed.stdout).lower()
+        if committed.returncode != 0 and "nothing to commit" not in output:
+            raise PillarError(
+                "E004",
+                "cannot commit the evolution history",
+                reason=committed.stderr.strip() or committed.stdout.strip(),
+            )
 
 
 def meta_cache_line_struct_pack(

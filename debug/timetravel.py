@@ -89,7 +89,14 @@ class Event:
 
 
 def _stable_digest(state: Mapping[str, Any]) -> str:
-    rendered = repr(sorted((str(key), value) for key, value in state.items()))
+    # Sort by key only.  Sorting the ``(key, value)`` tuples would compare
+    # values whenever two keys stringify identically, which is neither stable
+    # nor safe for opaque native values.
+    items = sorted(
+        ((str(key), key, value) for key, value in state.items()),
+        key=lambda item: (item[0], repr(item[1])),
+    )
+    rendered = repr([(name, value) for name, _key, value in items])
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
 
@@ -178,6 +185,141 @@ class TimeTravelDebugger:
     def __len__(self) -> int:
         return len(self._snapshots)
 
+    # -- structured failure helpers ----------------------------------------
+
+    def _serialize_value(self, label: str, value: Any) -> Any:
+        try:
+            return self.serializer(value)
+        except PillarError:
+            raise
+        except Exception as error:
+            raise PillarError(
+                "E008",
+                f"cannot serialize {label}",
+                reason=f"{type(error).__name__}: {error}",
+                help_text="make the serializer total over captured values",
+            ) from error
+
+    def _copy_state(self, state: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            return {key: self.serializer(value) for key, value in state.items()}
+        except PillarError:
+            raise
+        except Exception as error:
+            raise PillarError(
+                "E008",
+                "cannot copy checkpoint state",
+                reason=f"{type(error).__name__}: {error}",
+                help_text="make the serializer total over checkpoint values",
+            ) from error
+
+    def _copy_native_state(
+        self, state: Mapping[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if state is None:
+            return None
+        try:
+            return dict(copy.deepcopy(state))
+        except PillarError:
+            raise
+        except Exception as error:
+            raise PillarError(
+                "E004",
+                "cannot copy native checkpoint state",
+                reason=f"{type(error).__name__}: {error}",
+                help_text="native state must be structured and copyable",
+            ) from error
+
+    def _capture_native(self) -> dict[str, Any] | None:
+        if self.native is None:
+            return None
+        try:
+            captured = self.native.capture()
+        except PillarError:
+            raise
+        except Exception as error:
+            raise PillarError(
+                "E004",
+                "native state capture failed",
+                reason=f"{type(error).__name__}: {error}",
+                help_text="make the native provider's capture() total",
+            ) from error
+        if not isinstance(captured, Mapping):
+            raise PillarError(
+                "E004",
+                "native state capture did not return a mapping",
+                reason=f"got {type(captured).__name__}",
+                help_text="return a mapping of native key/value pairs from capture()",
+            )
+        return dict(captured)
+
+    def _restore_native(self, snapshot: Snapshot) -> None:
+        if self.native is None or snapshot.native is None:
+            return
+        try:
+            payload = copy.deepcopy(snapshot.native)
+        except Exception as error:
+            raise PillarError(
+                "E004",
+                f"cannot copy native state for checkpoint {snapshot.index}",
+                reason=f"{type(error).__name__}: {error}",
+                help_text="native state must be structured and copyable",
+            ) from error
+        try:
+            self.native.restore(payload)
+        except PillarError:
+            raise
+        except Exception as error:
+            raise PillarError(
+                "E004",
+                f"native restore failed at checkpoint {snapshot.index}",
+                reason=f"{type(error).__name__}: {error}",
+                help_text="make the native provider's restore() total",
+            ) from error
+
+    def _apply_state(self, snapshot: Snapshot) -> None:
+        if self.apply is None:
+            return
+        payload = self._copy_state(snapshot.state)
+        try:
+            self.apply(payload)
+        except PillarError:
+            raise
+        except Exception as error:
+            raise PillarError(
+                "E003",
+                f"apply callback failed at checkpoint {snapshot.index}",
+                reason=f"{type(error).__name__}: {error}",
+                help_text="make the apply callback total over restored states",
+            ) from error
+
+    @staticmethod
+    def _refresh_digest(snapshot: Snapshot) -> None:
+        snapshot.digest = ""
+        snapshot.__post_init__()
+
+    def _commit_edits(
+        self,
+        states: Mapping[int, dict[str, Any]],
+        natives: Mapping[int, dict[str, Any] | None],
+        stales: Mapping[int, bool],
+        events: Sequence[Event],
+        *,
+        cursor: int | None,
+    ) -> None:
+        """Commit a fully planned edit, preserving Snapshot object identity."""
+        for index, state in states.items():
+            target = self._snapshots[index]
+            target.state = state
+            self._refresh_digest(target)
+            if index in natives:
+                target.native = natives[index]
+            if index in stales:
+                target.stale_native = stales[index]
+        self._events.extend(events)
+        if cursor is not None:
+            self._cursor = cursor
+
     # -- recording ---------------------------------------------------------
 
     def checkpoint(
@@ -196,15 +338,21 @@ class TimeTravelDebugger:
         :meth:`modify` can replay the gap.
         """
         index = len(self._snapshots)
+        captured_state: dict[str, Any] = {}
+        for key, value in state.items():
+            name = str(key)
+            if name in captured_state:
+                raise PillarError(
+                    "E003",
+                    f"state keys collide after string coercion: {name!r}",
+                    help_text="use distinct string keys when recording a checkpoint",
+                )
+            captured_state[name] = self._serialize_value(f"state key {name!r}", value)
         snapshot = Snapshot(
             index=index,
             label=label or f"checkpoint-{index}",
-            state={str(key): self.serializer(value) for key, value in state.items()},
-            native=(
-                dict(self.native.capture())
-                if capture_native and self.native is not None
-                else None
-            ),
+            state=captured_state,
+            native=self._capture_native() if capture_native else None,
             frame=frame,
         )
         if transition is not None:
@@ -232,9 +380,16 @@ class TimeTravelDebugger:
                 "label count does not match the number of checkpoints",
                 help_text="supply one label per checkpoint, including the initial one",
             )
-        state = {
-            str(key): self.serializer(value) for key, value in initial_state.items()
-        }
+        state: dict[str, Any] = {}
+        for key, value in initial_state.items():
+            name = str(key)
+            if name in state:
+                raise PillarError(
+                    "E003",
+                    f"state keys collide after string coercion: {name!r}",
+                    help_text="use distinct string keys when recording a trace",
+                )
+            state[name] = self._serialize_value(f"initial state key {name!r}", value)
         label_for = (
             (lambda index: labels[index]) if labels is not None else (lambda index: "")
         )
@@ -246,7 +401,18 @@ class TimeTravelDebugger:
             )
         ]
         for index, transition in enumerate(transitions):
-            state = dict(transition(copy.deepcopy(state)))
+            replay_input = self._copy_state(state)
+            try:
+                state = dict(transition(replay_input))
+            except PillarError:
+                raise
+            except Exception as error:
+                raise PillarError(
+                    "E002",
+                    f"transition failed while recording checkpoint {index + 1}",
+                    reason=f"{type(error).__name__}: {error}",
+                    help_text="make transitions deterministic and total",
+                ) from error
             self._transitions[index] = transition
             created.append(
                 self.checkpoint(
@@ -286,12 +452,11 @@ class TimeTravelDebugger:
                 reason="a retroactive edit replayed Python state but not native code",
                 help_text="provide native_replay=... or re-run the native provider",
             )
-        if restore_native and self.native is not None and snapshot.native is not None:
-            self.native.restore(copy.deepcopy(snapshot.native))
+        if restore_native:
+            self._restore_native(snapshot)
         self._cursor = snapshot.index
         self._events.append(Event("travel", snapshot.index, snapshot.label))
-        if self.apply is not None:
-            self.apply(copy.deepcopy(snapshot.state))
+        self._apply_state(snapshot)
         return snapshot
 
     def step_back(self) -> Snapshot:
@@ -328,29 +493,54 @@ class TimeTravelDebugger:
         *,
         recompute: bool = True,
     ) -> list[Snapshot]:
-        """Change a past variable and recompute every dependent checkpoint."""
+        """Change a past variable and recompute every dependent checkpoint.
+
+        The edit is planned in full before anything is committed, so a failed
+        replay leaves the timeline, digests, cursor, and event log untouched.
+        """
         snapshot = self._require_index(index)
+        target_index = snapshot.index
         if name not in snapshot.state:
             raise PillarError(
                 "E006",
-                f"checkpoint {snapshot.index} has no variable {name!r}",
+                f"checkpoint {target_index} has no variable {name!r}",
                 help_text="choose a variable captured at that checkpoint",
             )
-        if not recompute:
-            snapshot.state[name] = self.serializer(value)
-            snapshot.digest = ""
-            snapshot.__post_init__()
-            self._events.append(Event("modify", snapshot.index, f"{name}={value!r}"))
-            return list(self._snapshots)
+        serialized = self._serialize_value(f"modified value {name!r}", value)
+        base_state = self._copy_state(snapshot.state)
+        base_state[name] = serialized
 
-        snapshot.state[name] = self.serializer(value)
-        snapshot.digest = ""
-        snapshot.__post_init__()
-        self._events.append(Event("modify", snapshot.index, f"{name}={value!r}"))
-        self._recompute_from(snapshot.index)
+        states: dict[int, dict[str, Any]] = {target_index: base_state}
+        natives: dict[int, dict[str, Any] | None] = {}
+        stales: dict[int, bool] = {}
+        events = [Event("modify", target_index, f"{name}={value!r}")]
+        if recompute:
+            (
+                replayed_states,
+                replayed_natives,
+                replayed_stales,
+                replayed_events,
+            ) = self._plan_recompute(target_index, base_state)
+            states.update(replayed_states)
+            natives.update(replayed_natives)
+            stales.update(replayed_stales)
+            events.extend(replayed_events)
+        self._commit_edits(states, natives, stales, events, cursor=target_index)
         return list(self._snapshots)
 
-    def _recompute_from(self, index: int) -> None:
+    def _plan_recompute(
+        self, index: int, base_state: Mapping[str, Any]
+    ) -> tuple[
+        dict[int, dict[str, Any]],
+        dict[int, dict[str, Any] | None],
+        dict[int, bool],
+        list[Event],
+    ]:
+        """Plan dependent checkpoints without mutating the recorded timeline."""
+        states: dict[int, dict[str, Any]] = {}
+        natives: dict[int, dict[str, Any] | None] = {}
+        stales: dict[int, bool] = {}
+        events: list[Event] = []
         for next_index in range(index + 1, len(self._snapshots)):
             transition = self._transitions.get(next_index - 1)
             if transition is None:
@@ -361,8 +551,13 @@ class TimeTravelDebugger:
                     help_text="record transitions with checkpoint(transition=...) or trace()",
                 )
             previous = self._snapshots[next_index - 1]
+            if next_index - 1 == index:
+                previous_state = base_state
+            else:
+                previous_state = states.get(next_index - 1, previous.state)
+            replay_input = self._copy_state(previous_state)
             try:
-                new_state = dict(transition(copy.deepcopy(previous.state)))
+                new_state = dict(transition(replay_input))
             except PillarError:
                 raise
             except Exception as error:
@@ -372,12 +567,16 @@ class TimeTravelDebugger:
                     reason=f"{type(error).__name__}: {error}",
                     help_text="make transitions deterministic and total over the edited state",
                 ) from error
+            states[next_index] = new_state
+
             native_state: dict[str, Any] | None = None
             stale = False
             if self.native is not None:
                 if self.native_replay is not None:
                     try:
                         native_state = dict(self.native_replay(new_state))
+                    except PillarError:
+                        raise
                     except Exception as error:
                         raise PillarError(
                             "E004",
@@ -387,25 +586,24 @@ class TimeTravelDebugger:
                         ) from error
                 else:
                     stale = True
-                    native_state = copy.deepcopy(previous.native)
-            old = self._snapshots[next_index]
-            rebuilt = Snapshot(
-                index=next_index,
-                label=old.label,
-                state=new_state,
-                native=native_state,
-                stale_native=stale,
-                frame=old.frame,
-            )
-            self._snapshots[next_index] = rebuilt
-            self._events.append(
+                    native_state = self._copy_native_state(previous.native)
+            natives[next_index] = native_state
+            stales[next_index] = stale
+            events.append(
                 Event(
                     "recompute",
                     next_index,
                     "stale native state" if stale else "recomputed",
                 )
             )
-        self._cursor = index
+        return states, natives, stales, events
+
+    def _recompute_from(self, index: int) -> None:
+        snapshot = self._require_index(index)
+        states, natives, stales, events = self._plan_recompute(
+            snapshot.index, self._copy_state(snapshot.state)
+        )
+        self._commit_edits(states, natives, stales, events, cursor=snapshot.index)
 
     # -- native differentials ---------------------------------------------
 
@@ -443,10 +641,15 @@ def capture_python_frame(frame: types.FrameType | None = None) -> dict[str, Any]
     graph will mutate.  Nothing is written back into the frame.
     """
     if frame is None:
-        frame = inspect.currentframe()
-        if frame is None or frame.f_back is None:
-            raise PillarError("E007", "the running interpreter exposes no Python frame")
-        frame = frame.f_back
+        current = inspect.currentframe()
+        try:
+            if current is None or current.f_back is None:
+                raise PillarError(
+                    "E007", "the running interpreter exposes no Python frame"
+                )
+            frame = current.f_back
+        finally:
+            del current
     return {
         "__frame__": frame.f_code.co_name,
         **{name: value for name, value in frame.f_locals.items()},
@@ -501,9 +704,10 @@ def snapshot_object_graph(
                 visit(key)
                 visit(item)
             return
-        if isinstance(value, set):
+        if isinstance(value, (set, frozenset)):
+            kind = "set" if isinstance(value, set) else "frozenset"
             items = set(value)
-            entries.append(GraphEntry("set", value, items))
+            entries.append(GraphEntry(kind, value, items))
             for item in items:
                 visit(item)
             return
@@ -529,26 +733,74 @@ def snapshot_object_graph(
     )
 
 
+def _invalid_graph_entry(entry: GraphEntry, reason: str) -> PillarError:
+    return PillarError(
+        "E008",
+        f"invalid object graph entry {getattr(entry, 'kind', '<unknown>')!r}",
+        reason=reason,
+        help_text="rebuild the snapshot with snapshot_object_graph()",
+    )
+
+
 def restore_object_graph(snapshot: ObjectGraphSnapshot) -> int:
     """Restore a previously captured graph in place and return object count."""
+    if not isinstance(snapshot, ObjectGraphSnapshot):
+        raise PillarError(
+            "E008",
+            "expected an ObjectGraphSnapshot",
+            reason=f"got {type(snapshot).__name__}",
+            help_text="pass the value returned by snapshot_object_graph()",
+        )
     restored = 0
     for entry in snapshot.entries:
+        if not isinstance(entry, GraphEntry):
+            raise _invalid_graph_entry(entry, "entries must be GraphEntry values")
         target = entry.target
+        payload = entry.payload
         if entry.kind == "list":
-            target[:] = entry.payload
-        elif entry.kind == "dict" or entry.kind == "set":
+            if not isinstance(target, list) or not isinstance(payload, (list, tuple)):
+                raise _invalid_graph_entry(
+                    entry, "list entries need a list target and list/tuple payload"
+                )
+            target[:] = payload
+        elif entry.kind == "dict":
+            if not isinstance(target, dict):
+                raise _invalid_graph_entry(entry, "dict entries need a dict target")
+            if isinstance(payload, Mapping):
+                items = list(payload.items())
+            elif isinstance(payload, (list, tuple)) and all(
+                isinstance(item, (list, tuple)) and len(item) == 2 for item in payload
+            ):
+                items = list(payload)
+            else:
+                raise _invalid_graph_entry(
+                    entry, "dict payload must be a mapping or key/value pairs"
+                )
             target.clear()
-            target.update(entry.payload)
+            target.update(items)
+        elif entry.kind == "set":
+            if not isinstance(target, set) or not isinstance(
+                payload, (set, frozenset, list, tuple)
+            ):
+                raise _invalid_graph_entry(
+                    entry, "set entries need a set target and iterable payload"
+                )
+            target.clear()
+            target.update(payload)
         elif entry.kind == "object":
             attributes = getattr(target, "__dict__", None)
-            if attributes is None:
-                continue
+            if not isinstance(attributes, dict) or not isinstance(payload, Mapping):
+                raise _invalid_graph_entry(
+                    entry, "object entries need a __dict__ target and mapping payload"
+                )
             attributes.clear()
-            attributes.update(entry.payload)
-        else:
-            # Tuples cannot be restored in place; their mutable members are
-            # restored by their own entries.
+            attributes.update(payload)
+        elif entry.kind in {"tuple", "frozenset"}:
+            # Immutable containers cannot be restored in place; their mutable
+            # members are restored by their own entries.
             continue
+        else:
+            raise _invalid_graph_entry(entry, f"unknown entry kind {entry.kind!r}")
         restored += 1
     return restored
 
