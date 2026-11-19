@@ -397,6 +397,14 @@ def test_emit_dispatch_error_inherits_descriptor_span():
     assert excinfo.value.span == (47, 102)
 
 
+def test_emit_rejects_non_string_target_with_pillar_error():
+    desc = accel_detect_tensor_polyhedral(add_nest())
+    with pytest.raises(PillarError) as excinfo:
+        accel_emit_metal_cuda_spirv(desc, target=object(), span=(2, 5))
+    assert excinfo.value.code == "E003"
+    assert excinfo.value.span == (2, 5)
+
+
 def test_emit_rejects_unavailable_target():
     desc = accel_detect_tensor_polyhedral(add_nest())
     with pytest.raises(PillarError) as excinfo:
@@ -555,6 +563,19 @@ def test_fusion_topologically_sorts_out_of_order_inputs():
     assert [stage.index for stage in plan.stages] == [1, 0]
 
 
+def test_fusion_rejects_mixed_rank_descriptors():
+    with pytest.raises(PillarError) as excinfo:
+        accel_kernel_fusion_epilogue(
+            [
+                descriptor("add", ("a",), ("t",), shape=(8, 8)),
+                descriptor("copy", ("t",), ("out",), shape=(8,)),
+            ],
+            span=(6, 12),
+        )
+    assert excinfo.value.code == "E003"
+    assert excinfo.value.span == (6, 12)
+
+
 def test_fusion_rejects_cycles_conflicts_and_bad_types():
     with pytest.raises(PillarError) as excinfo:
         accel_kernel_fusion_epilogue(
@@ -646,6 +667,15 @@ def test_auto_tune_is_deterministic_and_chooses_minimum_cost():
     )
     assert first.best.estimated_us > 0
     assert "no measurement" in first.model
+
+
+def test_auto_tune_estimated_us_matches_the_cycle_model():
+    desc = descriptor("mul", ("a", "b", "out"), ("out",), shape=(128, 128))
+    result = accel_auto_tune_tile_sizes(desc)
+    assert all(
+        trial.estimated_us == round(trial.cost_cycles / 2400.0, 6)
+        for trial in result.trials
+    )
 
 
 def test_auto_tune_explicit_candidates_and_shape_from_constants():
@@ -758,6 +788,16 @@ def test_cpu_fallback_is_honest_about_timing():
     assert "no timing guarantee" in plan.text
     assert "guaranteed_ns = none" in plan.text
     assert "estimated" in plan.text and "not measured" in plan.text
+
+
+def test_cpu_fallback_does_not_double_count_vector_tail():
+    desc = descriptor("add", ("a",), ("out",), shape=(10, 10))
+    plan = accel_nanosecond_cpu_fallback(desc, lanes=8)
+    iterations = 100
+    work = 1 + len(desc.accesses)
+    expected = 32 + 4 * 8 + (iterations // 8) * work * 2 + (iterations % 8) * work
+    assert plan.iterations == iterations
+    assert plan.estimated_cycles == expected
 
 
 def test_cpu_fallback_scalar_mode_and_fusion_plan():

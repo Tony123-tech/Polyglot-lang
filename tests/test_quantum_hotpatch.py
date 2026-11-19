@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import gc
 import mmap
 import os
 import platform
@@ -12,6 +13,7 @@ import struct
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -38,6 +40,12 @@ from runtime.hotpatch import (
     migrate_selector,
     platform_support,
     resolve_symbol,
+    span_from_line_col,
+)
+from runtime.hotpatch.trampoline import (
+    _page_protection,
+    atomic_load_ptr,
+    atomic_store_ptr,
 )
 
 NATIVE = Path(__file__).resolve().parents[1] / "runtime" / "hotpatch" / "native"
@@ -222,6 +230,23 @@ def test_byte_offsets_use_utf8_encoding():
     assert (span.byte_start, span.byte_end) == (2, 6)
 
 
+def test_span_helpers_clamp_invalid_ranges():
+    source = "éabcdefghij"
+    span = byte_offsets(source, (99, -5))
+    assert span is not None
+    assert span.as_tuple() == (99, -5)
+    encoded_length = len(source.encode("utf-8"))
+    assert (span.byte_start, span.byte_end) == (encoded_length, encoded_length)
+
+    without_source = byte_offsets(None, (7, 3))
+    assert without_source is not None
+    assert without_source.as_tuple() == (7, 3)
+    assert (without_source.byte_start, without_source.byte_end) == (3, 7)
+    assert span_from_line_col("abc\ndé", 1, -2) == (0, 1)
+    assert span_from_line_col("abc\ndé", 2, 99, width=8) == (6, 6)
+    assert span_from_line_col("abc", 5, 1) is None
+
+
 # ---------------------------------------------------------------------------
 # CPython frame migration
 # ---------------------------------------------------------------------------
@@ -347,6 +372,125 @@ def test_frame_patch_rejects_a_removed_live_local():
         thread.join(timeout=5.0)
 
 
+def test_frame_patch_rolls_back_all_frames_when_a_later_generator_fails():
+    gate = threading.Event()
+    captured: dict[str, object] = {}
+
+    def old(x: int) -> int:
+        y = x + 1
+        captured["frame"] = sys._getframe()
+        gate.wait(timeout=5.0)
+        return y
+
+    def new(x: int) -> int:
+        _ = captured, gate
+        y = x + 2
+        extra = 7
+        return y + extra
+
+    def unrelated():
+        yield sys._getframe()
+
+    bad_generator = unrelated()
+    bad_frame = next(bad_generator)
+    original_code = old.__code__
+    thread = threading.Thread(target=old, args=(1,))
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while "frame" not in captured and time.monotonic() < deadline:
+            time.sleep(0.001)
+        frame = captured["frame"]
+        before = dict(frame.f_locals)
+        assert before["y"] == 2
+        assert "extra" not in before
+
+        with pytest.raises(HotpatchError) as info:
+            hotpatch_cpython_frame_eval(
+                old, new, generators=[bad_generator], defaults={"extra": 5}
+            )
+        assert info.value.code == "E008"
+        assert "generator frame does not match" in str(info.value)
+        assert old.__code__ is original_code
+        assert bad_frame.f_code is not original_code
+        assert dict(frame.f_locals) == before
+        assert "extra" not in dict(frame.f_locals)
+    finally:
+        gate.set()
+        thread.join(timeout=5.0)
+        bad_generator.close()
+
+
+def test_frame_patch_reports_e007_on_interpreters_without_writable_locals(monkeypatch):
+    import runtime.hotpatch.frames as frames_module
+
+    class _SysProxy:
+        _current_frames = staticmethod(sys._current_frames)
+        version_info = (3, 12, 0)
+
+    monkeypatch.setattr(frames_module, "sys", _SysProxy())
+
+    def source():
+        y = 1
+        yield sys._getframe()
+        yield y
+
+    def replacement():
+        y = 1
+        extra = 0
+        yield extra
+        yield y
+
+    generator = source()
+    frame = next(generator)
+    original_code = source.__code__
+    try:
+        with pytest.raises(HotpatchError) as info:
+            FrameEvalMigrator().patch(
+                source,
+                replacement,
+                generators=[generator],
+                defaults={"extra": 9},
+                span=(2, 3),
+            )
+        assert info.value.code == "E007"
+        assert info.value.span == (2, 3)
+        assert "writable frame locals" in str(info.value)
+        assert source.__code__ is original_code
+        assert "extra" not in dict(frame.f_locals)
+    finally:
+        generator.close()
+
+
+def test_frame_patch_context_manager_rolls_back_on_exception():
+    def source():
+        x = 1
+        yield sys._getframe()
+        yield x
+
+    def replacement():
+        x = 1
+        extra = 2
+        yield extra + x
+        yield x
+
+    generator = source()
+    frame = next(generator)
+    original_code = source.__code__
+    try:
+        patch = FrameEvalMigrator().patch(
+            source, replacement, generators=[generator], defaults={"extra": 9}
+        )
+        assert dict(frame.f_locals)["extra"] == 9
+        with pytest.raises(RuntimeError, match="abort"), patch:
+            raise RuntimeError("abort")
+        assert patch.rolled_back
+        assert source.__code__ is original_code
+        assert "extra" not in dict(frame.f_locals)
+    finally:
+        generator.close()
+
+
 def test_frame_patch_pins_the_running_frame_to_its_captured_code():
     gate = threading.Event()
     captured: dict[str, object] = {}
@@ -378,6 +522,96 @@ def test_frame_patch_pins_the_running_frame_to_its_captured_code():
     finally:
         gate.set()
         thread.join(timeout=5.0)
+
+
+# ---------------------------------------------------------------------------
+# Safepoint dispatcher lifecycle
+# ---------------------------------------------------------------------------
+
+
+class _FakeMonitoring:
+    def __init__(self, *, fail_register: bool = False) -> None:
+        self.events = types.SimpleNamespace(LINE=1)
+        self.fail_register = fail_register
+        self.used: list[int] = []
+        self.freed: list[int] = []
+        self.registered: list[tuple[int, int]] = []
+        self.events_set: list[tuple[int, int]] = []
+
+    def use_tool_id(self, tool_id: int, name: str) -> None:
+        self.used.append(tool_id)
+
+    def register_callback(self, tool_id: int, event: int, _callback) -> None:
+        if self.fail_register:
+            raise RuntimeError("callback registration refused")
+        self.registered.append((tool_id, event))
+
+    def set_events(self, tool_id: int, events: int) -> None:
+        self.events_set.append((tool_id, events))
+
+    def free_tool_id(self, tool_id: int) -> None:
+        self.freed.append(tool_id)
+
+
+def _patch_fake_monitoring(monkeypatch, monitoring: _FakeMonitoring) -> None:
+    import runtime.hotpatch.frames as frames_module
+
+    monkeypatch.setattr(
+        frames_module, "sys", types.SimpleNamespace(monitoring=monitoring)
+    )
+
+
+def test_safepoint_install_failure_releases_tool_id(monkeypatch):
+    from runtime.hotpatch.frames import SafepointDispatcher
+
+    monitoring = _FakeMonitoring(fail_register=True)
+    _patch_fake_monitoring(monkeypatch, monitoring)
+    dispatcher = SafepointDispatcher()
+
+    with pytest.raises(HotpatchError) as info:
+        dispatcher.install()
+    assert info.value.code == "E007"
+    assert "cannot install" in str(info.value)
+    assert monitoring.used == [3]
+    assert monitoring.freed == monitoring.used
+    assert dispatcher._tool_id is None
+
+
+def test_safepoint_dispatcher_releases_tool_id_on_drop(monkeypatch):
+    from runtime.hotpatch.frames import SafepointDispatcher
+
+    monitoring = _FakeMonitoring()
+    _patch_fake_monitoring(monkeypatch, monitoring)
+    dispatcher = SafepointDispatcher()
+    dispatcher.install()
+    assert monitoring.used == [3]
+    assert dispatcher._tool_id == 3
+
+    del dispatcher
+    gc.collect()
+    assert monitoring.freed == [3]
+
+
+def test_safepoint_dispatcher_retains_callback_exceptions(monkeypatch):
+    from runtime.hotpatch.frames import SafepointDispatcher
+
+    monitoring = _FakeMonitoring()
+    _patch_fake_monitoring(monkeypatch, monitoring)
+    dispatcher = SafepointDispatcher()
+    dispatcher.install()
+    called: list[int] = []
+
+    def failing_action() -> None:
+        called.append(1)
+        raise RuntimeError("safepoint action failed")
+
+    dispatcher.defer(sys._getframe().f_code, failing_action)
+    dispatcher._on_line(sys._getframe().f_code, 1)
+    assert called == [1]
+    assert dispatcher.dispatches == 1
+    assert len(dispatcher.errors) == 1
+    assert isinstance(dispatcher.errors[0], RuntimeError)
+    dispatcher.uninstall()
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +750,91 @@ def test_mio_bridge_rejects_a_reused_poll_descriptor():
         os.close(poll_fd_other)
 
 
+def test_mio_bridge_rejects_an_invalid_replacement():
+    left, right = os.pipe()
+    old_fd, old_fd_other = os.pipe()
+    try:
+        old = _FakeBridge(old_fd, [(left, 1, "read")])
+        with pytest.raises(HotpatchError) as info:
+            migrate_mio_bridge(old, object())
+        assert info.value.code == "E008"
+        assert "replacement" in str(info.value)
+        assert old.closed is False
+    finally:
+        os.close(left)
+        os.close(right)
+        os.close(old_fd)
+        os.close(old_fd_other)
+
+
+def test_mio_bridge_rollback_closes_only_the_replacement_poller():
+    left, right = os.pipe()
+    old_fd, old_fd_other = os.pipe()
+    new_fd, new_fd_other = os.pipe()
+    try:
+        old = _FakeBridge(old_fd, [(left, 1, "read")])
+        new = _FakeBridge(new_fd, [])
+        migration = migrate_mio_bridge(old, new)
+        assert new.reregistered == [(left, 1, "read")]
+        assert not old.closed and not new.closed
+
+        assert migration.rollback() is old
+        assert new.closed
+        assert not old.closed
+        assert migration.rolled_back
+        with pytest.raises(HotpatchError):
+            migration.commit()
+    finally:
+        os.close(left)
+        os.close(right)
+        os.close(old_fd)
+        os.close(old_fd_other)
+        os.close(new_fd)
+        os.close(new_fd_other)
+
+
+def test_mio_bridge_migration_raii_closes_replacement_on_drop():
+    left, right = os.pipe()
+    old_fd, old_fd_other = os.pipe()
+    new_fd, new_fd_other = os.pipe()
+    try:
+        old = _FakeBridge(old_fd, [(left, 1, "read")])
+        new = _FakeBridge(new_fd, [])
+        migration = migrate_mio_bridge(old, new)
+        del migration
+        gc.collect()
+        assert new.closed
+        assert not old.closed
+    finally:
+        os.close(left)
+        os.close(right)
+        os.close(old_fd)
+        os.close(old_fd_other)
+        os.close(new_fd)
+        os.close(new_fd_other)
+
+
+def test_selector_migration_raii_closes_new_poller_and_duplicates():
+    read_fd, write_fd = os.pipe()
+    selector = selectors.DefaultSelector()
+    try:
+        selector.register(read_fd, selectors.EVENT_READ, "read")
+        migration = migrate_selector(selector, duplicate_fds=True)
+        new_selector = migration.selector
+        duplicated_fd = next(iter(migration.duplicated.values()))
+
+        del migration
+        gc.collect()
+        with pytest.raises((ValueError, OSError)):
+            new_selector.select(0)
+        with pytest.raises(OSError):
+            os.fstat(duplicated_fd)
+    finally:
+        _close_quietly(selector)
+        os.close(read_fd)
+        os.close(write_fd)
+
+
 # ---------------------------------------------------------------------------
 # Trampolines
 # ---------------------------------------------------------------------------
@@ -548,6 +867,34 @@ def test_trampoline_refuses_foreign_executable_text():
         hotpatch_live_dylib_trampoline(region=object(), replacement=1)
     assert info.value.code == "E007"
     assert "owned" in str(info.value).lower() or "ExecutableRegion" in str(info.value)
+
+
+def test_atomic_pointer_helpers_validate_addresses_before_dereference():
+    page, slot = _slot_page()
+    try:
+        atomic_store_ptr(slot, 0x1234)
+        assert atomic_load_ptr(slot) == 0x1234
+
+        with pytest.raises(HotpatchError) as info:
+            atomic_load_ptr(0)
+        assert info.value.code == "E008"
+        assert "NULL" in str(info.value)
+
+        with pytest.raises(HotpatchError) as info:
+            atomic_store_ptr(slot + 1, 0x99)
+        assert info.value.code == "E008"
+        assert "aligned" in str(info.value)
+        assert atomic_load_ptr(slot) == 0x1234
+
+        unmapped = 0x7FFF_FFFF_F000
+        if _page_protection(unmapped) is not None:  # pragma: no cover - unusual host
+            pytest.skip("chosen probe address is mapped on this host")
+        with pytest.raises(HotpatchError) as info:
+            atomic_load_ptr(unmapped)
+        assert info.value.code == "E007"
+        assert "mapped" in str(info.value)
+    finally:
+        page.close()
 
 
 def test_trampoline_slot_patch_is_atomic_and_reversible():
@@ -685,9 +1032,14 @@ def test_native_crate_contains_real_unsafe_primitives():
         "synchronize",
         "E008",
         "FrameLocalsProxy",
+        "validate_pointer_cell",
+        "validate_mapped_range",
+        "restore_snapshots",
+        "is_some_and",
     ):
         assert token in sources or token in manifest, token
     assert "pyo3" in manifest and "mio" in manifest
+    assert 'panic = "abort"' not in manifest
     assert (NATIVE / "build.rs").exists()
 
 
@@ -741,6 +1093,8 @@ def test_native_extension_builds_when_requested(tmp_path):
         assert journal.verify() is False
         assert journal.rollback() == 1
         assert bytes(buffer) == b"abc"
+        with pytest.raises(RuntimeError, match="invalid native journal range"):
+            journal.capture(0x7FFF_FFFF_F000, 4, "bogus")
     finally:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("polyglot_hotpatch", None)

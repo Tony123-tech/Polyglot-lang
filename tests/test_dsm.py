@@ -384,6 +384,19 @@ def test_vector_clock_happens_before_and_concurrent() -> None:
     assert [event.event_id for event in report.events] == ["e1", "e2", "e3", "e4"]
 
 
+def test_vector_clock_requires_full_dependency_dominance() -> None:
+    events = [
+        CausalEvent("e1", "a", {"a": 1}),
+        CausalEvent("e2", "b", {"a": 2, "b": 1}, dependencies=("e1",)),
+        CausalEvent("e3", "c", {"b": 1, "c": 1}, dependencies=("e2",)),
+    ]
+    with pytest.raises(PillarError) as caught:
+        dsm_vector_clock_causality(events, span=SPAN, line=7, col=9)
+    assert_diagnostic(
+        caught.value, "E008", note="CausalityViolation", text="omits dependency"
+    )
+
+
 def test_hlc_observe_then_tick_advances_monotonically() -> None:
     clock = HybridLogicalClock(100)
     first = clock.tick()
@@ -604,6 +617,21 @@ def test_false_sharing_splits_ping_ponged_page_into_hot_regions() -> None:
     assert len(plan.hot_regions) == 2
 
 
+def test_false_sharing_counts_multi_subpage_writes() -> None:
+    accesses = [
+        PageAccess("page", "a", 0, 32),
+        PageAccess("page", "b", 0, 32),
+        PageAccess("page", "a", 32, 32),
+        PageAccess("page", "b", 32, 32),
+    ]
+    report = dsm_false_sharing_page_split(
+        accesses, page_size=64, partitions=4, invalidation_threshold=2
+    )
+    assert len(report.plans) == 1
+    assert [sub.index for sub in report.plans[0].sub_pages if sub.hot] == [0, 1, 2, 3]
+    assert all(sub.writers for sub in report.plans[0].sub_pages)
+
+
 def test_false_sharing_ignores_single_writer_pages() -> None:
     accesses = [PageAccess("p", "a", 0), PageAccess("p", "a", 8)]
     report = dsm_false_sharing_page_split(accesses, page_size=64)
@@ -662,6 +690,17 @@ def test_gc_lease_expiry_and_epoch_reclamation() -> None:
     assert final.reclaimed == ("x",)
     assert final.live == {}
     assert final.epoch == 1
+
+
+def test_gc_lease_expiry_is_counted_once_per_grant() -> None:
+    report = dsm_distributed_gc_lease(
+        [Acquire("x", "a", 2), Tick(2), Tick(1), Tick(5)],
+        span=SPAN,
+        line=7,
+        col=9,
+    )
+    assert report.expirations == 1
+    assert report.log.count("expire:x:a") == 1
 
 
 def test_gc_lease_rejects_stale_release_and_epoch_regression() -> None:

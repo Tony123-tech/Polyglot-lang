@@ -46,6 +46,17 @@ impl Counter {
 fn main() -> i64 { 0 }
 """
 
+# `Option<i64>` lowers to `object`, which has no type-derived zero value.
+NO_ZERO_FIELD = """
+struct Counter { value: i64, extra: Option<i64> }
+
+impl Counter {
+    fn bump(&self) -> i64 { self.value + 1 }
+}
+
+fn main() -> i64 { 0 }
+"""
+
 WITH_ITEMS = """
 const MODE: i64 = 1;
 
@@ -129,7 +140,7 @@ def test_hotpatch_rejects_new_required_field():
     manager = HotpatchManager(_program(BASE))
     manager.register(manager.namespace["Counter"](10))
     with pytest.raises(PillarError) as excinfo:
-        manager.patch(_program(ADD_FIELD))
+        manager.patch(_program(NO_ZERO_FIELD))
     assert excinfo.value.code == "E001"
 
 
@@ -229,3 +240,106 @@ def test_compile_helper_matches_backend_namespace():
     program = _program(BASE)
     namespace = PythonBackend(trusted=True).compile(program)
     assert namespace["Counter"](3).bump() == 4
+
+
+def test_new_primitive_field_gets_an_automatic_zero():
+    # The Python backend lowers `i64` to the runtime type `int`, so a migration
+    # must recognise runtime types, not just Polyglot TypeName nodes.
+    manager = HotpatchManager(_program(BASE))
+    counter = manager.register(manager.namespace["Counter"](10))
+    result = manager.patch(_program(ADD_FIELD))
+    assert result.migrated_objects == 1
+    assert counter.label == 0
+    assert counter.bump() == 12
+
+
+def test_new_fields_get_type_derived_zeros_for_all_primitives():
+    base = "struct S { v: i64 }\nfn main() -> i64 { 0 }"
+    added = "struct S { v: i64, a: f64, b: bool, c: String, d: Vec<i64> }\nfn main() -> i64 { 0 }"
+    manager = HotpatchManager(_program(base))
+    obj = manager.register(manager.namespace["S"](1))
+    manager.patch(_program(added))
+    assert (obj.a, obj.b, obj.c, obj.d) == (0.0, False, "", [])
+
+
+def test_registering_the_same_object_twice_does_not_double_migrate():
+    manager = HotpatchManager(_program(BASE))
+    counter = manager.namespace["Counter"](10)
+    manager.register(counter)
+    manager.register(counter)
+    result = manager.patch(_program(ADD_FIELD), field_defaults={"label": 3})
+    assert result.migrated_objects == 1
+    manager.rollback()
+    assert not hasattr(counter, "label")
+
+
+def test_body_patch_tolerates_a_non_deepcopyable_live_object():
+    manager = HotpatchManager(_program(BASE))
+    counter = manager.register(manager.namespace["Counter"](10))
+    counter.value = threading.Lock()
+    result = manager.patch(_program(BUMP_2))
+    assert result.swapped == 1
+    assert manager.generation == 2
+
+
+def test_call_missing_function_is_e006():
+    manager = HotpatchManager(_program(BASE))
+    with pytest.raises(PillarError) as excinfo:
+        manager.call("does_not_exist")
+    assert excinfo.value.code == "E006"
+
+
+def test_unsupported_item_addition_is_reported_as_incompatible():
+    with_module = "mod helper { fn f() -> i64 { 1 } }\n" + BASE
+    plan = diff_programs(_program(BASE), _program(with_module))
+    assert plan.incompatible
+    assert plan.incompatible[0].name == "helper"
+
+
+def test_native_register_is_atomic_under_concurrency():
+    signature = ctypes.CFUNCTYPE(ctypes.c_int64)
+    table = NativeSymbolTable()
+    barrier = threading.Barrier(8)
+    results: list[str] = []
+
+    def attempt():
+        barrier.wait()
+        try:
+            table.register("once", signature, lambda: 1)
+            results.append("ok")
+        except PillarError as error:
+            results.append(error.code)
+
+    workers = [threading.Thread(target=attempt) for _ in range(8)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert results.count("ok") == 1
+    assert results.count("E001") == 7
+    assert table.generation == 1
+    assert table.swap_count == 0
+
+
+def test_concurrent_body_patches_keep_generation_consistent():
+    manager = HotpatchManager(_program(BASE))
+    barrier = threading.Barrier(4)
+    errors: list[BaseException] = []
+
+    def hammer():
+        barrier.wait()
+        try:
+            for _ in range(5):
+                manager.patch(_program(BUMP_2))
+                manager.patch(_program(BASE))
+        except BaseException as error:  # pragma: no cover - failure path
+            errors.append(error)
+
+    workers = [threading.Thread(target=hammer) for _ in range(4)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert not errors
+    assert manager.generation == 41
+    assert manager.patch_count == 40

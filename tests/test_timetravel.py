@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 
 from debug.timetravel import (
+    GraphEntry,
+    ObjectGraphSnapshot,
     TimeTravelDebugger,
+    _stable_digest,
     capture_python_frame,
     restore_object_graph,
     snapshot_object_graph,
@@ -293,3 +296,172 @@ def test_object_graph_metadata():
     snapshot = snapshot_object_graph([node])
     assert snapshot.objects >= 1
     assert snapshot.roots[0] is node
+
+
+def test_serializer_failure_during_checkpoint_is_e008():
+    def broken(value):
+        raise RuntimeError("cannot encode")
+
+    debugger = TimeTravelDebugger(serializer=broken)
+    with pytest.raises(PillarError) as excinfo:
+        debugger.checkpoint({"x": 1})
+    assert excinfo.value.code == "E008"
+    assert len(debugger) == 0
+
+
+def test_serializer_failure_during_replay_is_transactional():
+    fail = {"on": False}
+
+    def flaky(value):
+        if fail["on"]:
+            raise RuntimeError("later")
+        return value
+
+    debugger = TimeTravelDebugger(serializer=flaky)
+    debugger.trace({"x": 1}, [_increment_x, _increment_x])
+    before_states = [dict(snapshot.state) for snapshot in debugger.snapshots]
+    before_events = list(debugger.events)
+    before_cursor = debugger.cursor
+    fail["on"] = True
+
+    with pytest.raises(PillarError) as excinfo:
+        debugger.modify(0, "x", 10)
+    assert excinfo.value.code == "E008"
+    assert [dict(snapshot.state) for snapshot in debugger.snapshots] == before_states
+    assert list(debugger.events) == before_events
+    assert debugger.cursor == before_cursor
+
+
+def test_native_capture_and_restore_failures_are_e004():
+    class BrokenCapture:
+        def capture(self):
+            raise RuntimeError("cannot capture")
+
+        def restore(self, state):
+            raise AssertionError("restore must not be called")
+
+    debugger = TimeTravelDebugger(native=BrokenCapture())
+    with pytest.raises(PillarError) as excinfo:
+        debugger.checkpoint({"x": 1})
+    assert excinfo.value.code == "E004"
+    assert len(debugger) == 0
+
+    class BrokenRestore(_Provider):
+        def restore(self, state):
+            raise RuntimeError("cannot restore")
+
+    debugger = TimeTravelDebugger(native=BrokenRestore())
+    debugger.checkpoint({"x": 1})
+    with pytest.raises(PillarError) as excinfo:
+        debugger.travel_to(0)
+    assert excinfo.value.code == "E004"
+    assert debugger.cursor == 0
+
+
+def test_apply_callback_failure_is_e003():
+    def broken_apply(state):
+        raise RuntimeError("cannot apply")
+
+    debugger = TimeTravelDebugger(apply=broken_apply)
+    debugger.checkpoint({"x": 1})
+    with pytest.raises(PillarError) as excinfo:
+        debugger.travel_to(0)
+    assert excinfo.value.code == "E003"
+
+
+def test_failed_replay_does_not_mutate_the_timeline():
+    def fail_when_large(state):
+        if state["x"] > 5:
+            raise RuntimeError("replay boom")
+        state["x"] += 1
+        return state
+
+    debugger = TimeTravelDebugger()
+    debugger.trace({"x": 1}, [_increment_x, fail_when_large])
+    debugger.travel_to(1)
+    originals = list(debugger.snapshots)
+    before_states = [dict(snapshot.state) for snapshot in originals]
+    before_digests = [snapshot.digest for snapshot in originals]
+    before_events = list(debugger.events)
+    before_cursor = debugger.cursor
+
+    with pytest.raises(PillarError) as excinfo:
+        debugger.modify(0, "x", 10)
+    assert excinfo.value.code == "E002"
+    assert all(
+        snapshot is original
+        for snapshot, original in zip(debugger.snapshots, originals)
+    )
+    assert [dict(snapshot.state) for snapshot in debugger.snapshots] == before_states
+    assert [snapshot.digest for snapshot in debugger.snapshots] == before_digests
+    assert list(debugger.events) == before_events
+    assert debugger.cursor == before_cursor
+    assert all(snapshot.verify() for snapshot in debugger.snapshots)
+
+
+def test_failed_native_replay_does_not_mutate_the_timeline():
+    provider = _Provider()
+    fail = {"on": False}
+
+    def replay(state):
+        if fail["on"]:
+            raise RuntimeError("native replay boom")
+        return {"pc": state["x"], "sp": 64}
+
+    debugger = TimeTravelDebugger(native=provider, native_replay=replay)
+    debugger.trace({"x": 1}, [_increment_x, _increment_x])
+    before_states = [dict(snapshot.state) for snapshot in debugger.snapshots]
+    before_natives = [dict(snapshot.native) for snapshot in debugger.snapshots]
+    before_events = list(debugger.events)
+    fail["on"] = True
+
+    with pytest.raises(PillarError) as excinfo:
+        debugger.modify(0, "x", 10)
+    assert excinfo.value.code == "E004"
+    assert [dict(snapshot.state) for snapshot in debugger.snapshots] == before_states
+    assert [dict(snapshot.native) for snapshot in debugger.snapshots] == before_natives
+    assert list(debugger.events) == before_events
+
+
+def test_stable_digest_sorts_by_key_only():
+    class Opaque:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __repr__(self) -> str:
+            return f"Opaque({self.name})"
+
+    first = {1: Opaque("a"), "1": Opaque("b")}
+    second = {"1": Opaque("b"), 1: Opaque("a")}
+    assert _stable_digest(first) == _stable_digest(second)
+
+
+def test_invalid_graph_entries_are_e008():
+    malformed = [
+        ObjectGraphSnapshot((), (GraphEntry("bogus", [], []),)),
+        ObjectGraphSnapshot((), (GraphEntry("list", {}, []),)),
+        ObjectGraphSnapshot((), (GraphEntry("object", object(), {}),)),
+    ]
+    for snapshot in malformed:
+        with pytest.raises(PillarError) as excinfo:
+            restore_object_graph(snapshot)
+        assert excinfo.value.code == "E008"
+
+
+def test_frozenset_graph_members_are_restored():
+    class Token:
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+        def __hash__(self) -> int:
+            return 1
+
+    token = Token(1)
+    frozen = frozenset({token})
+    snapshot = snapshot_object_graph([frozen])
+    assert any(entry.kind == "frozenset" for entry in snapshot.entries)
+
+    token.value = 99
+    restored = restore_object_graph(snapshot)
+    assert token.value == 1
+    assert restored >= 1

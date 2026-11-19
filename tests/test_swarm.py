@@ -127,6 +127,17 @@ def test_panic_detector_accepts_nominal_telemetry():
     assert 0.0 <= report.scores["n1"] < 1.0
 
 
+def test_panic_detector_handles_zero_panic_error_rate():
+    report = swarm_neural_panic_detector(
+        {"n1": [(10.0, 0.0), (10.0, 0.0)]},
+        warning_error_rate=0.0,
+        panic_error_rate=0.0,
+    )
+    assessment = report.assessments[0]
+    assert assessment.status == "panic"
+    assert 0.0 <= assessment.score <= 1.0
+
+
 def test_panic_detector_flags_latency_and_error_spike():
     report = swarm_neural_panic_detector(
         {"n1": [(10.0, 0.01), (10.0, 0.01), (40.0, 0.2)]},
@@ -681,6 +692,21 @@ def test_kill_switch_broadcasts_and_verifies_all_recipients():
     assert len(result.kill_switch.digest) == 64
     assert result.kill_switch.signature is not None
     assert result.kill_switch.signature.verify(swarm.REFERENCE_SECRET)
+
+
+def test_kill_switch_counts_the_issuer_when_it_is_a_recipient():
+    recipients = ["leader", "n1", "n2"]
+    result = swarm_epidemic_rollback_kill(_kill_switch(), recipients, quorum=3)
+    assert result.verified == tuple(sorted(recipients))
+    assert result.deliveries["leader"] == 0
+    assert result.quorum_met
+
+
+def test_kill_switch_rejects_unattainable_quorum():
+    with pytest.raises(PillarError) as excinfo:
+        swarm_epidemic_rollback_kill(_kill_switch(), ["n1", "n2", "n3"], quorum=4)
+    assert excinfo.value.code == "E003"
+    assert "quorum" in str(excinfo.value)
 
 
 def test_kill_switch_accepts_a_mapping_payload():

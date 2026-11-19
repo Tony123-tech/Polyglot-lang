@@ -13,6 +13,7 @@ from runtime.transmute import (
     Specialization,
     SpeculativeTransmuter,
     TypeSignature,
+    jit_inline_cache_polymorphic,
     polyglot_type,
     signature_of,
     transmute,
@@ -240,6 +241,134 @@ def test_context_manager_closes_the_executor():
 def test_deopt_cost_model_is_documented_honestly():
     assert "tuple" in DEOPT_COST_MODEL
     assert "nanosecond" not in DEOPT_COST_MODEL
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"threshold": 0},
+        {"max_deopts": -1},
+        {"max_signatures": 0},
+    ],
+)
+def test_invalid_construction_parameters_are_rejected(kwargs):
+    with pytest.raises(PillarError) as excinfo:
+        transmute(_add, _DoublingSpecializer(), **kwargs)
+    assert excinfo.value.code == "E003"
+
+
+def test_calls_after_close_stay_on_the_fallback():
+    fn = transmute(_add, _DoublingSpecializer(), threshold=1)
+    assert fn(1, 2) == 3
+    fn.wait()
+    fn.close()
+    assert fn(1, 2) == 3
+    assert fn(1.0, 2.0) == 3.0
+    assert fn(left=1, right=2) == 3
+    assert fn.force_specialize(signature_of((1, 2))) is None
+    stats = fn.stats()
+    assert stats.calls == 4
+    assert stats.fallbacks == 4
+    assert stats.specialized_calls == 0
+    assert stats.active_signature is None
+    fn.close()  # idempotent
+
+
+def test_wait_prunes_finished_futures():
+    fn = transmute(_add, _DoublingSpecializer(), threshold=1)
+    try:
+        _warm(fn, 1, 2)
+        assert fn._futures == []
+        fn("a", "b")
+        fn.wait()
+        assert fn._futures == []
+    finally:
+        fn.close()
+
+
+def test_deopt_budget_zero_disables_on_the_first_deopt():
+    fn = transmute(_add, _DoublingSpecializer(), threshold=1, max_deopts=0)
+    try:
+        _warm(fn, 1, 2)
+        assert fn(1, 2) == ("native", 3)
+        # The first type mismatch exhausts the zero budget and disables.
+        assert fn("a", "b") == "ab"
+        stats = fn.stats()
+        assert stats.deopts == 1
+        assert stats.disabled
+        assert fn.force_specialize() is None
+        assert fn("a", "b") == "ab"
+    finally:
+        fn.close()
+
+
+def test_a_later_success_does_not_hide_an_earlier_failure():
+    class _FailsForInts:
+        def compile(self, name, signature, fallback):
+            del name, fallback
+            if signature.types[0] is int:
+                raise PillarError("E004", "int specialization failed")
+            return Specialization(lambda *args: ("native", args), "test")
+
+    fn = transmute(_add, _FailsForInts(), threshold=1, raise_on_compile_error=True)
+    try:
+        assert fn(1, 2) == 3
+        with pytest.raises(PillarError, match="int specialization failed"):
+            fn.wait()
+        assert fn("a", "b") == "ab"
+        with pytest.raises(PillarError, match="int specialization failed"):
+            fn.wait()
+        assert fn.stats().failures == 1
+        assert fn.stats().compilations == 1
+    finally:
+        fn.close()
+
+
+def test_polyglot_specializer_wraps_source_generation_failures():
+    def broken_source(_name, _signature):
+        raise ValueError("generator bug")
+
+    specializer = PolyglotSpecializer(broken_source)
+    with pytest.raises(PillarError) as excinfo:
+        specializer.compile("test", signature_of((1,)), _add)
+    assert excinfo.value.code == "E004"
+    assert "generator bug" in excinfo.value.reason
+
+
+def test_inline_cache_prefers_the_hottest_signatures():
+    cold = signature_of(("x",))
+    warm = signature_of((1,))
+    hottest = signature_of((1.0,))
+    assert jit_inline_cache_polymorphic(
+        [(cold, 1), (hottest, 50), (warm, 10)], ways=2
+    ) == ((hottest, 50), (warm, 10))
+    with pytest.raises(PillarError) as excinfo:
+        jit_inline_cache_polymorphic([], ways=0)
+    assert excinfo.value.code == "E003"
+
+
+def test_concurrent_calls_keep_stats_consistent():
+    fn = transmute(_add, _DoublingSpecializer(), threshold=10_000)
+    start = threading.Barrier(8)
+
+    def worker() -> None:
+        start.wait(timeout=5)
+        for index in range(50):
+            assert fn(index, 1) == index + 1
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+            assert not thread.is_alive()
+        stats = fn.stats()
+        assert stats.calls == 400
+        assert stats.fallbacks == 400
+        assert stats.calls == stats.fallbacks + stats.specialized_calls
+    finally:
+        fn.close()
 
 
 def test_polyglot_type_maps_the_scalar_subset():

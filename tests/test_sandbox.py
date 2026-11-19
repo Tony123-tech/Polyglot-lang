@@ -100,6 +100,44 @@ def test_mprotect_validates_policy(regions: object, code: str) -> None:
     _assert_error(excinfo, code)
 
 
+def test_prebuilt_spec_dataclasses_are_validated() -> None:
+    with pytest.raises(PillarError) as excinfo:
+        sandbox_mprotect_heap_isolate(
+            [HeapRegionSpec("bad name", 10)],
+            span=(3, 8),
+            line=2,
+            col=1,
+        )
+    _assert_error(excinfo, "E003", (3, 8), 2, 1)
+
+    with pytest.raises(PillarError) as excinfo:
+        sandbox_ebpf_syscall_synthesize(
+            [SyscallRule("bad name", action="deny")],
+            span=(4, 9),
+            line=3,
+            col=2,
+        )
+    _assert_error(excinfo, "E003", (4, 9), 3, 2)
+
+    with pytest.raises(PillarError) as excinfo:
+        sandbox_pku_mpk_domain_switch(
+            [PkuDomainSpec("public", 42, "rw")],
+            span=(5, 10),
+            line=4,
+            col=3,
+        )
+    _assert_error(excinfo, "E001", (5, 10), 4, 3)
+
+    with pytest.raises(PillarError) as excinfo:
+        sandbox_cfi_shadow_stack_emit(
+            [CfiTargetSpec("main", -1)],
+            span=(6, 11),
+            line=5,
+            col=4,
+        )
+    _assert_error(excinfo, "E003", (6, 11), 5, 4)
+
+
 # 72. Declarative syscall allowlist ------------------------------------------
 
 
