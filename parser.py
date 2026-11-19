@@ -1237,6 +1237,29 @@ class Parser:
 
     # ---- prefix ------------------------------------------------------------
 
+    def _parse_bracket_items(self, tok: Token) -> ArrayExpr | RepeatArray:
+        """Parse the inside of ``[...]`` (also used by ``vec![...]``).
+
+        Returns the same AST nodes as an array literal so both backends share
+        one lowering path for element lists and repeat expressions.
+        """
+        self.advance()  # '['
+        if self.check(TokenType.RBRACKET):
+            self.advance()
+            return ArrayExpr(tok.line, tok.col, [])
+        first = self.parse_expr()
+        if self.eat(TokenType.SEMI):
+            count = self.parse_expr()
+            self.expect(TokenType.RBRACKET)
+            return RepeatArray(tok.line, tok.col, first, count)
+        elems = [first]
+        while self.eat(TokenType.COMMA):
+            if self.check(TokenType.RBRACKET):
+                break
+            elems.append(self.parse_expr())
+        self.expect(TokenType.RBRACKET)
+        return ArrayExpr(tok.line, tok.col, elems)
+
     def parse_prefix(self) -> Expr:
         tok = self.peek()
 
@@ -1402,6 +1425,10 @@ class Parser:
                 self.expect(TokenType.RPAREN)
                 return MacroCall(tok.line, tok.col, name, args)
             if self.check(TokenType.LBRACKET):
+                if name == "vec":
+                    # Lower vec![a, b] / vec![value; count] to the same AST as
+                    # array literals; both backends already support both forms.
+                    return self._parse_bracket_items(tok)
                 self.advance()
                 start = self.i
                 while not self.check(TokenType.RBRACKET) and not self.at_end():
@@ -1486,22 +1513,7 @@ class Parser:
 
         # array
         if tok.type == TokenType.LBRACKET:
-            self.advance()
-            if self.check(TokenType.RBRACKET):
-                self.advance()
-                return ArrayExpr(tok.line, tok.col, [])
-            first = self.parse_expr()
-            if self.eat(TokenType.SEMI):
-                count = self.parse_expr()
-                self.expect(TokenType.RBRACKET)
-                return RepeatArray(tok.line, tok.col, first, count)
-            elems = [first]
-            while self.eat(TokenType.COMMA):
-                if self.check(TokenType.RBRACKET):
-                    break
-                elems.append(self.parse_expr())
-            self.expect(TokenType.RBRACKET)
-            return ArrayExpr(tok.line, tok.col, elems)
+            return self._parse_bracket_items(tok)
 
         # ident / path / struct literal
         if tok.type == TokenType.IDENT:

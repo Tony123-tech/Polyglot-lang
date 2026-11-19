@@ -106,9 +106,11 @@ from ast_nodes import (
     is_usize_type,
 )
 from backends.errors import (
+    HOST_CALL_ARITIES,
     InvalidIntegerParseLiteralError,
     TranslateError,
     UnsupportedNativePatternError,
+    check_host_call_arity,
 )
 from match_diagnostics import warn_match_issues
 from monomorph import monomorphize
@@ -152,9 +154,68 @@ use std::sync::Mutex;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 use std::collections::{BinaryHeap, VecDeque};
+use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Condvar, OnceLock};
 use std::time::{Duration, Instant};
+
+// Compiler-reserved host seam for std:fs. These helpers return the
+// language-level Result<T, String> so user code can propagate Err(String)
+// directly; the generated function boundary converts that to PyResult<T>.
+#[allow(dead_code)]
+fn __fs_py_repr(value: &str) -> String {
+    let quote = if value.contains('\'') && !value.contains('"') { '"' } else { '\'' };
+    let mut out = String::new();
+    out.push(quote);
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            c if c == quote => { out.push('\\'); out.push(c); }
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
+}
+
+#[allow(dead_code)]
+fn __fs_error(operation: &str, path: &str, error: &std::io::Error) -> String {
+    format!("{} {}: {}", operation, __fs_py_repr(path), error)
+}
+
+#[allow(dead_code)]
+fn __fs_read_text(path: String) -> Result<String, String> {
+    fs::read_to_string(&path).map_err(|e| __fs_error("read", &path, &e))
+}
+
+#[allow(dead_code)]
+fn __fs_write_text(path: String, contents: String) -> Result<(), String> {
+    fs::write(&path, contents).map_err(|e| __fs_error("write", &path, &e))
+}
+
+#[allow(dead_code)]
+fn __fs_append_text(path: String, contents: String) -> Result<(), String> {
+    use std::io::Write;
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| file.write_all(contents.as_bytes()))
+        .map_err(|e| __fs_error("append", &path, &e))
+}
+
+#[allow(dead_code)]
+fn __fs_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+#[allow(dead_code)]
+fn __fs_remove(path: String) -> Result<(), String> {
+    fs::remove_file(&path).map_err(|e| __fs_error("remove", &path, &e))
+}
 
 // Number of times a native future has been polled. Tests reset this to prove
 // that a pending future makes progress through the reactor instead of being
@@ -1679,8 +1740,28 @@ class RustCodegen:
             return left_type or right_type
         return None
 
+    def _adapt_host_result(self, expr: Expr, emitted: str) -> str:
+        """Convert a bare std:fs host result to the generated PyResult type.
+
+        A function returning ``Result<T, String>`` compiles to
+        ``PyResult<T>``. Explicit Ok/Err nodes already emit PyResult, but a
+        host call returns the language-level Result; convert only those bare
+        calls here.
+        """
+        if (
+            self._current_return_type == "Result"
+            and isinstance(expr, Call)
+            and isinstance(expr.func, Ident)
+            and expr.func.name in HOST_CALL_ARITIES
+        ):
+            return (
+                f"({emitted}).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))"
+            )
+        return emitted
+
     def _return_expr_to_rust(self, expr: Expr) -> str:
         emitted = self.expr_to_rust(expr)
+        emitted = self._adapt_host_result(expr, emitted)
         if (
             self._current_return_type == "Option"
             and isinstance(expr, MethodCall)
@@ -1754,6 +1835,13 @@ class RustCodegen:
             name = call.func.segments[-1]
         else:
             return
+        check_host_call_arity(
+            name,
+            call.args,
+            line=call.line,
+            col=call.col,
+            span=call.span,
+        )
         parameter_types = self._function_signatures.get(name)
         if parameter_types is None:
             return
@@ -2072,6 +2160,15 @@ class RustCodegen:
             )
         if isinstance(e, Call):
             self._check_call_arguments(e)
+            # String literals already lower to String::from("..."). Wrapping
+            # that again would emit String::from(String::from("...")).
+            if (
+                isinstance(e.func, Path)
+                and e.func.segments == ["String", "from"]
+                and len(e.args) == 1
+                and isinstance(e.args[0], LitStr)
+            ):
+                return self.expr_to_rust(e.args[0])
             args = ", ".join(self.expr_to_rust(a) for a in e.args)
             return f"{self.expr_to_rust(e.func)}({args})"
         if isinstance(e, MethodCall):
@@ -2156,6 +2253,8 @@ class RustCodegen:
                     return f"{recv}.or_insert({self.expr_to_rust(e.args[0])})"
                 if e.method == "or_insert_with" and len(e.args) == 1:
                     return f"{recv}.or_insert_with({self.expr_to_rust(e.args[0])})"
+                if e.method == "or_default" and not e.args:
+                    return f"{recv}.or_default()"
                 if e.method == "and_modify" and len(e.args) == 1:
                     return f"{recv}.and_modify({self.expr_to_rust(e.args[0])})"
             if e.method == "ok_or" and len(e.args) == 1:
@@ -2711,6 +2810,18 @@ class RustCodegen:
             return (
                 f"(if {self.expr_to_rust(e.cond)} {{ {then} }} else {{ {else_part} }})"
             )
+        if isinstance(e, IfLet):
+            then = self._block_as_expr(e.then_block)
+            else_part = "()"
+            if isinstance(e.else_branch, Block):
+                else_part = self._block_as_expr(e.else_branch)
+            elif e.else_branch is not None:
+                else_part = self.expr_to_rust(e.else_branch)
+            return (
+                f"(if let {self.pattern_to_rust(e.pattern)} = "
+                f"{self.expr_to_rust(e.value)} {{ {then} }} "
+                f"else {{ {else_part} }})"
+            )
         if isinstance(e, MatchExpr):
             warn_match_issues(
                 e,
@@ -2775,7 +2886,9 @@ class RustCodegen:
         if isinstance(e, Return):
             if e.value is None:
                 return "return"
-            return f"return {self.expr_to_rust(e.value)}"
+            value = self.expr_to_rust(e.value)
+            value = self._adapt_host_result(e.value, value)
+            return f"return {value}"
         if isinstance(e, Break):
             if e.value is not None:
                 return f"break {self.expr_to_rust(e.value)}"
@@ -3022,6 +3135,11 @@ class RustCodegen:
                 args = ", ".join(self.type_to_rust(a) for a in ty.args)
                 if name == "Vec":
                     return f"Vec<{args}>"
+                if name == "Result" and len(ty.args) == 2:
+                    # Language Result<T, String> is represented as
+                    # Result<T, PyErr> in generated Rust; the exposed function
+                    # boundary uses PyResult<T>.
+                    return f"Result<{self.type_to_rust(ty.args[0])}, pyo3::PyErr>"
                 return f"{name}<{args}>"
             return name
         if isinstance(ty, TypeRef):

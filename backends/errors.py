@@ -37,6 +37,31 @@ class TranslateError(Exception):
         return self.format()
 
 
+# Arity table for the compiler-reserved std:fs host seam. Both backends use
+# this table so malformed calls produce the same E003 diagnostic and span.
+HOST_CALL_ARITIES = {
+    "__fs_read_text": 1,
+    "__fs_write_text": 2,
+    "__fs_append_text": 2,
+    "__fs_exists": 1,
+    "__fs_remove": 1,
+}
+
+
+def check_host_call_arity(name: str, args, *, line: int, col: int, span=None) -> None:
+    """Raise a span-aware E003 error for a malformed host-seam call."""
+    expected = HOST_CALL_ARITIES.get(name)
+    if expected is None or len(args) == expected:
+        return
+    plural = "" if expected == 1 else "s"
+    raise TranslateError(
+        f"{name} expects {expected} argument{plural}, got {len(args)}",
+        line,
+        col,
+        span,
+    )
+
+
 class UnsupportedNativePatternError(TranslateError):
     """Raised when a source pattern cannot be represented by stable Rust."""
 

@@ -133,7 +133,7 @@ from ast_nodes import (
     is_usize_type,
 )
 from backends.base import BackendBase
-from backends.errors import TranslateError
+from backends.errors import TranslateError, check_host_call_arity
 from backends.python.runtime import (
     HOST_TARGET_WIDTH,
     _iflet_match,
@@ -865,6 +865,35 @@ class _MapSlot:
         return repr(self.get())
 
 
+def _map_default_value(value_type: str | None, mapping) -> object:
+    """Default value used by Entry::or_default for common value types."""
+    if value_type == "String":
+        return ""
+    if value_type in {"Vec", "HashSet"}:
+        return [] if value_type == "Vec" else set()
+    if value_type in {"HashMap", "BTreeMap"}:
+        return {}
+    if value_type == "bool":
+        return False
+    if value_type in {"f32", "f64"}:
+        return 0.0
+    if value_type is not None:
+        return 0
+    for existing in mapping.values():
+        if isinstance(existing, str):
+            return ""
+        if isinstance(existing, bool):
+            return False
+        if isinstance(existing, float):
+            return 0.0
+        if isinstance(existing, dict):
+            return {}
+        if isinstance(existing, (list, set)):
+            return [] if isinstance(existing, list) else set()
+        return 0
+    return 0
+
+
 class _MapEntry:
     """The subset of Rust's Entry API used by or_insert/and_modify chains."""
 
@@ -890,6 +919,11 @@ class _MapEntry:
     def or_insert_with_key(self, factory):
         if self._key not in self._mapping:
             self._mapping[self._key] = factory(self._key)
+        return self._slot()
+
+    def or_default(self, value_type=None):
+        if self._key not in self._mapping:
+            self._mapping[self._key] = _map_default_value(value_type, self._mapping)
         return self._slot()
 
     def key(self):
@@ -1562,6 +1596,76 @@ class _Result:
         return f"Err({self._value!r})"
 
 
+# ---------------------------------------------------------------------------
+# Host seam for std:fs. Compiled programs only reach these helpers when the
+# backend was created in trusted mode; the native backend exposes the same
+# five operations through its runtime prefix.
+# ---------------------------------------------------------------------------
+
+_FS_HELPERS = frozenset(
+    {
+        "__fs_read_text",
+        "__fs_write_text",
+        "__fs_append_text",
+        "__fs_exists",
+        "__fs_remove",
+    }
+)
+
+
+def _fs_result(operation: str, path: str, action) -> _Result:
+    try:
+        return _Result.from_ok(action())
+    except (OSError, UnicodeError, ValueError) as error:
+        return _Result.from_err(f"{operation} {path!r}: {error}")
+
+
+def _host_fs_read_text(path: str) -> _Result:
+    from pathlib import Path
+
+    return _fs_result("read", path, lambda: Path(path).read_text(encoding="utf-8"))
+
+
+def _host_fs_write_text(path: str, contents: str) -> _Result:
+    def write() -> None:
+        from pathlib import Path
+
+        Path(path).write_text(contents, encoding="utf-8")
+
+    return _fs_result("write", path, write)
+
+
+def _host_fs_append_text(path: str, contents: str) -> _Result:
+    def append() -> None:
+        from pathlib import Path
+
+        with Path(path).open("a", encoding="utf-8") as handle:
+            handle.write(contents)
+
+    return _fs_result("append", path, append)
+
+
+def _host_fs_exists(path: str) -> bool:
+    from pathlib import Path
+
+    return Path(path).exists()
+
+
+def _host_fs_remove(path: str) -> _Result:
+    from pathlib import Path
+
+    return _fs_result("remove", path, lambda: Path(path).unlink())
+
+
+_FS_HOST_FUNCTIONS = {
+    "__fs_read_text": _host_fs_read_text,
+    "__fs_write_text": _host_fs_write_text,
+    "__fs_append_text": _host_fs_append_text,
+    "__fs_exists": _host_fs_exists,
+    "__fs_remove": _host_fs_remove,
+}
+
+
 class _PythonEnumVariant:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -1616,6 +1720,7 @@ class Translator:
         self.generic_type_names: set[str] = set()
         self._temp_counter = 0
         self._binding_types: dict[str, str] = {}
+        self._map_value_types: dict[str, str] = {}
         self._immutable_bindings: set[str] = set()
         self._slot_bindings: set[str] = set()
         self._numeric_types: dict[str, str] = {}
@@ -1645,6 +1750,7 @@ class Translator:
         self.generic_type_names.clear()
         self._temp_counter = 0
         self._binding_types.clear()
+        self._map_value_types.clear()
         self._immutable_bindings.clear()
         self._slot_bindings.clear()
         self._numeric_types.clear()
@@ -1755,6 +1861,10 @@ class Translator:
             "Enum": _import_enum(),
             "auto": _import_auto(),
         }
+        # Host seam for std:fs. These names are reserved by the compiler and
+        # only reachable from trusted programs; untrusted compilation is
+        # rejected by PythonBackend._check_trust before reaching this point.
+        ns.update(_FS_HOST_FUNCTIONS)
         ns["_panic"] = _runtime_panic
         ns["_runtime_non_exhaustive_match"] = _runtime_non_exhaustive_match
         ns["_assert"] = _runtime_assert
@@ -2012,6 +2122,14 @@ class Translator:
             for name in [self._binding_type_name(param.ty)]
             if name is not None
         }
+        previous_map_value_types = self._map_value_types
+        self._map_value_types = {
+            param.pattern.name: value_type
+            for param in fn.params
+            if isinstance(param.pattern, PatIdent)
+            for value_type in [self._map_value_type_name(param.ty)]
+            if value_type is not None
+        }
         previous_immutable_bindings = self._immutable_bindings
         self._immutable_bindings = {
             param.pattern.name
@@ -2037,6 +2155,7 @@ class Translator:
                 body = self.translate_block_as_fn_body(fn.body)
         finally:
             self._binding_types = previous_binding_types
+            self._map_value_types = previous_map_value_types
             self._immutable_bindings = previous_immutable_bindings
             self._slot_bindings = previous_slot_bindings
             self._numeric_types = previous_numeric_types
@@ -2560,6 +2679,20 @@ class Translator:
                 return f"{ty.name}:{value_ty.name}"
         return ty.name
 
+    @staticmethod
+    def _map_value_type_name(ty: Type | None) -> str | None:
+        """Return V for a HashMap<K, V> / BTreeMap<K, V> annotation."""
+        if isinstance(ty, TypeRef):
+            return Translator._map_value_type_name(ty.inner)
+        if not isinstance(ty, TypeName):
+            return None
+        if ty.name not in {"HashMap", "BTreeMap"} or len(ty.args) < 2:
+            return None
+        value = ty.args[1]
+        if isinstance(value, TypeRef):
+            value = value.inner
+        return value.name if isinstance(value, TypeName) else None
+
     def translate_let(self, s: LetStmt) -> ast.stmt:
         if not isinstance(s.pattern, PatIdent):
             raise TranslateError(
@@ -2611,6 +2744,11 @@ class Translator:
             binding_type = "Vec"
         if binding_type in {"Option", "Result", "HashMap"} or binding_type is not None:
             self._binding_types[s.pattern.name] = binding_type
+        map_value_type = self._map_value_type_name(s.ty)
+        if map_value_type is not None:
+            self._map_value_types[s.pattern.name] = map_value_type
+        else:
+            self._map_value_types.pop(s.pattern.name, None)
         if self._is_map_slot_expr(s.value):
             self._slot_bindings.add(s.pattern.name)
         else:
@@ -2734,59 +2872,62 @@ class Translator:
         return ast.If(test=test, body=body, orelse=orelse)
 
     def _translate_iflet_expr(self, ifx: IfLet) -> ast.expr:
-        if not (
-            isinstance(ifx.pattern, PatEnum)
-            and ifx.pattern.path.split("::")[-1] == "Some"
-            and len(ifx.pattern.args) == 1
-            and isinstance(ifx.pattern.args[0], PatIdent)
-        ):
+        """Lower ``if let pat = value { a } else { b }`` to a Python expression.
+
+        Any refutable pattern supported by ``match`` may be used (including
+        ``None``, ``Ok``/``Err`` and wildcard cases). Branch bodies may contain
+        simple statements; control-flow statements still require statement
+        position because Python cannot put them inside a lambda.
+        """
+        self._validate_pattern_bindings(ifx.pattern)
+        subject_name = f"_polyglot_iflet_{self._temp_counter}"
+        self._temp_counter += 1
+        subject = ast.Name(id=subject_name, ctx=ast.Load())
+        test, bindings = self._pattern_test_bindings(
+            ifx.pattern,
+            subject,
+            self._option_result_type(ifx.value),
+        )
+        if isinstance(test, ast.Constant) and test.value is True:
             raise TranslateError(
-                "if-let expression currently supports `Some(binding)` only",
+                "if-let expression requires a refutable pattern",
                 ifx.pattern.line,
                 ifx.pattern.col,
             )
-        binding = ifx.pattern.args[0]
-        if ifx.then_block.tail is None or ifx.then_block.stmts:
-            raise TranslateError(
-                "if-let expression requires a single tail expression in the then-branch",
-                ifx.then_block.line,
-                ifx.then_block.col,
-            )
-        if isinstance(ifx.else_branch, Block) and (
-            ifx.else_branch.tail is None or ifx.else_branch.stmts
-        ):
-            raise TranslateError(
-                "if-let expression requires a single tail expression in the else-branch",
-                ifx.else_branch.line,
-                ifx.else_branch.col,
-            )
-        then_expr = self.translate_expr(ifx.then_block.tail)
+        then_expr = (
+            self._translate_block_expr(ifx.then_block)
+            if isinstance(ifx.then_block, Block)
+            else self.translate_expr(ifx.then_block)
+        )
         else_expr = self._translate_else_expr(ifx.else_branch)
+        names = sorted(bindings)
+        then_call = ast.Call(
+            func=ast.Lambda(
+                args=ast.arguments(
+                    posonlyargs=[],
+                    args=[ast.arg(arg=name) for name in names],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=then_expr,
+            ),
+            args=[bindings[name] for name in names],
+            keywords=[],
+        )
+        branch = ast.IfExp(test=test, body=then_call, orelse=else_expr)
         return ast.Call(
-            func=ast.Name(id="_iflet_match", ctx=ast.Load()),
-            args=[
-                self.translate_expr(ifx.value),
-                ast.Lambda(
-                    args=ast.arguments(
-                        posonlyargs=[],
-                        args=[ast.arg(arg=binding.name)],
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
-                    ),
-                    body=then_expr,
+            func=ast.Lambda(
+                args=ast.arguments(
+                    posonlyargs=[],
+                    args=[ast.arg(arg=subject_name)],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
                 ),
-                ast.Lambda(
-                    args=ast.arguments(
-                        posonlyargs=[],
-                        args=[],
-                        kwonlyargs=[],
-                        kw_defaults=[],
-                        defaults=[],
-                    ),
-                    body=else_expr,
-                ),
-            ],
+                body=branch,
+            ),
+            args=[self.translate_expr(ifx.value)],
             keywords=[],
         )
 
@@ -3622,6 +3763,13 @@ class Translator:
             name = call.func.segments[-1]
         else:
             return
+        check_host_call_arity(
+            name,
+            call.args,
+            line=call.line,
+            col=call.col,
+            span=call.span,
+        )
         parameter_types = self._function_signatures.get(name)
         if parameter_types is None:
             return
@@ -5604,10 +5752,12 @@ class Translator:
             return self.translate_expr(block.tail)
 
         previous_binding_types = self._binding_types
+        previous_map_value_types = self._map_value_types
         previous_slot_bindings = self._slot_bindings
         previous_numeric_types = self._numeric_types
         previous_immutable_bindings = self._immutable_bindings
         self._binding_types = dict(previous_binding_types)
+        self._map_value_types = dict(previous_map_value_types)
         self._slot_bindings = set(previous_slot_bindings)
         self._numeric_types = dict(previous_numeric_types)
         self._immutable_bindings = set(previous_immutable_bindings)
@@ -5656,6 +5806,7 @@ class Translator:
                 values.append(ast.Constant(value=None))
         finally:
             self._binding_types = previous_binding_types
+            self._map_value_types = previous_map_value_types
             self._slot_bindings = previous_slot_bindings
             self._numeric_types = previous_numeric_types
             self._immutable_bindings = previous_immutable_bindings
@@ -5813,6 +5964,17 @@ class Translator:
             recv = self.translate_expr(e.receiver)
             if e.method == "into_iter" and not e.args:
                 return recv
+            if (
+                e.method == "or_default"
+                and not e.args
+                and self._is_map_entry_expr(e.receiver)
+            ):
+                value_type = self._map_value_type_for_entry(e.receiver)
+                return ast.Call(
+                    func=ast.Attribute(value=recv, attr="or_default", ctx=ast.Load()),
+                    args=[ast.Constant(value=value_type)],
+                    keywords=[],
+                )
             if self._is_user_method_call(e):
                 return ast.Call(
                     func=ast.Attribute(value=recv, attr=e.method, ctx=ast.Load()),
@@ -6062,6 +6224,8 @@ class Translator:
         if branch is None:
             return ast.Constant(value=None)
         if isinstance(branch, Block):
+            if branch.stmts:
+                return self._translate_block_expr(branch)
             if branch.tail is not None:
                 return self.translate_expr(branch.tail)
             return ast.Constant(value=None)
@@ -6099,11 +6263,14 @@ class Translator:
                 scrutinee_type,
             )
             if isinstance(arm.body, Block):
-                body: ast.expr = (
-                    self.translate_expr(arm.body.tail)
-                    if arm.body.tail is not None
-                    else ast.Constant(value=None)
-                )
+                if arm.body.stmts:
+                    body: ast.expr = self._translate_block_expr(arm.body)
+                else:
+                    body = (
+                        self.translate_expr(arm.body.tail)
+                        if arm.body.tail is not None
+                        else ast.Constant(value=None)
+                    )
             else:
                 body = self.translate_expr(arm.body)
             if bindings:
@@ -6294,6 +6461,19 @@ class Translator:
                 return self._is_map_entry_expr(expr.receiver)
         return False
 
+    def _map_value_type_for_entry(self, expr: Expr) -> str | None:
+        """Resolve the value type of the map behind an Entry receiver."""
+        if isinstance(expr, Paren):
+            return self._map_value_type_for_entry(expr.inner)
+        if isinstance(expr, MethodCall):
+            if expr.method == "entry":
+                if isinstance(expr.receiver, Ident):
+                    return self._map_value_types.get(expr.receiver.name)
+                return None
+            if expr.method == "and_modify":
+                return self._map_value_type_for_entry(expr.receiver)
+        return None
+
     def _is_map_get_mut_expr(self, expr: Expr) -> bool:
         if isinstance(expr, Paren):
             return self._is_map_get_mut_expr(expr.inner)
@@ -6317,7 +6497,12 @@ class Translator:
         if isinstance(expr, MethodCall):
             if expr.method in {"unwrap", "expect"}:
                 return self._is_map_get_mut_expr(expr.receiver)
-            if expr.method in {"or_insert", "or_insert_with"}:
+            if expr.method in {
+                "or_insert",
+                "or_insert_with",
+                "or_insert_with_key",
+                "or_default",
+            }:
                 return self._is_map_entry_expr(expr.receiver)
         return False
 
