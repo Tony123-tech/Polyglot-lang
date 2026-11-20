@@ -7,7 +7,8 @@ One-page orientation for the repository.
 `polyglot-lang` is a small Rust-like language with a shared lexer, parser,
 and AST. A `.poly` file can run on a stdlib-only Python backend or compile
 to a native PyO3 extension. An experimental compute-only backend emits
-WebAssembly text format (`.wat`). All backends are selected through the
+WebAssembly text format (`.wat`), and an experimental Zig backend compiles a
+narrow subset to a C-ABI shared library. All backends are selected through the
 same interface and CLI.
 
 Python 3.14.8 or later is required.
@@ -22,6 +23,7 @@ Python 3.14.8 or later is required.
 | [NOTES](../NOTES.md) | Design journal: symptoms, causes, fixes, lessons, test baselines |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Development setup, tests, Makefile, adding error codes/examples |
 | [architecture.md](architecture.md) | ASCII pipeline diagram and layer responsibilities |
+| [zig.md](zig.md) | Experimental Zig backend: saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, and boundaries |
 | [visualizer.md](visualizer.md) | Interactive AST, monomorphization, diagnostics, and dual-backend UI |
 | [experimental_pillars.md](experimental_pillars.md) | Opt-in hot-patching, meta-compiler, synthesis, time-travel, and transmutation foundations |
 | [quantum_hotpatch.md](quantum_hotpatch.md) | Opt-in `runtime/hotpatch/` primitives, native PyO3 crate, and honesty boundaries |
@@ -42,6 +44,13 @@ Python 3.14.8 or later is required.
 - **WASM (experimental)** — `polyglot build file.poly --backend wasm`
   writes a `.wat` module for a compute-only `i64`/`bool` subset. It
   requires the optional `wasm` extra (`wasmtime`).
+- **Zig (experimental)** — `polyglot run file.poly --backend zig` or
+  `polyglot build file.poly --backend zig`. Requires `zig` on `PATH`.
+  Generates Zig, builds a dynamic library with `zig build-lib`, and loads
+  `__cabi_*` symbols through `ctypes`. Adds saturating `+`/`-`/`*` with a
+  trailing pipe, arbitrary-width `uN`/`iN` integers, `#[parallel]` range
+  loops, and `SimdN<T>` builtins for a narrow AST subset. Builds are cached
+  under `~/.cache/polyglot-zig`. See [zig.md](zig.md).
 
 ## Key boundaries
 
@@ -60,6 +69,11 @@ Python 3.14.8 or later is required.
 - Async is experimental. Native futures use a real waker/reactor,
   integrate with `asyncio`, and support timer wakeups. Async `&mut self`
   methods use an atomic borrow guard and commit copied fields on success.
+- The Zig backend is experimental and outside the Python/native parity
+  contract. It covers a narrow AST subset, produces a C-ABI library rather
+  than an importable extension, truncates integers to 64 bits at the Python
+  boundary, and provides no parallel-loop synchronization or ordering
+  guarantees. See [zig.md](zig.md) and SPEC 8.12/10.42.
 
 ## Verifying the repository
 

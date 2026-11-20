@@ -13,12 +13,124 @@
 - M10: Termination checking
 - M5: Async extensions (Send-aware PyFuture, async impl methods, cancellation, timeout)
 - F1: Deliverable CLI
+- Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 
-**Latest baseline:** 1636 passed, 6 skipped, 22 deselected; slow 22 passed, 1642 deselected.
+**Latest baseline:** 1902 passed, 6 skipped, 22 deselected; slow 22 passed, 1908 deselected.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
+
+## Zig backend — an opt-in execution mode
+
+**Goal:** Explore Zig as an alternative code generator without changing the
+shared front end, the Python/native parity contract, or the stable CLI
+behaviour. The backend is selected with `get_backend("zig")` or `--backend zig`
+on `run`, `build`, `exec`, and `compile`.
+
+### Mechanics
+
+`ZigCodegen` walks the shared AST and emits Zig source. Each top-level function
+gets a normal Zig `fn` plus an `export fn __cabi_<name>` wrapper. The wrapper
+converts C-ABI integer parameters to the declared Zig type, calls the function,
+and converts the result back. `ZigBackend` hashes the generated source, reuses
+a cached dynamic library when the hash matches, and otherwise runs:
+
+```text
+zig build-lib <src> -dynamic -O ReleaseFast -femit-bin=<lib>
+```
+
+`ctypes.CDLL` loads the library, and `compile()` returns a namespace whose
+callables are the `__cabi_*` symbols. The cache lives under
+`~/.cache/polyglot-zig`; the directory is created with mode `0700`. The
+artifact is a C-ABI library, not a PyO3 extension, so `polyglot build` cannot
+produce something importable with `import <stem>`.
+
+### Saturating arithmetic
+
+Zig already has `+|`, `-|`, and `*|`, so the backend emits them directly.
+`zig/features.py` provides the shared Python-side model:
+
+- `saturating_op(left, right, op, type_name)` computes the raw result and
+  clamps it to `int_bounds(type_name)`.
+- `int_bounds` understands both standard widths and arbitrary `uN`/`iN`.
+- `wrap_arbitrary_int` truncates a value to a declared width.
+
+`zig/lowering.py` is a separate, zero-intrusion fallback. It deep-copies the
+AST and rewrites saturating binary nodes into calls to `_zig_sat_add`,
+`_zig_sat_sub`, and `_zig_sat_mul`, which the Python backend can inject with
+`inject_zig_runtime`. That fallback clamps at `i64` bounds; it is deliberately
+not bit-width aware.
+
+### Arbitrary bit-width integers
+
+`parse_arbitrary_int_type` accepts `uN`/`iN` for `0 <= N <= 65535`, and
+`ZigCodegen` emits the same type name to Zig. Zig stores the value at that
+width. The Python boundary is the limiting factor: every integer becomes a
+64-bit `ctypes` value (`u64` for unsigned types, `i64` otherwise), so values
+wider than 64 bits are truncated when they cross back into Python. The spec
+records this as a platform boundary rather than pretending the ABI preserves
+the full width.
+
+### `#[parallel]` lowering
+
+For a `#[parallel]` function, the backend copies the parameters and function
+locals into a generated context struct, then splits each direct range `for`
+loop into chunks. It spawns up to `min(16, CPU count)` workers, each running a
+generated `worker_N` function over a half-open chunk, and joins every spawned
+thread before the loop completes.
+
+The important limits are structural:
+
+- only a direct range loop in the annotated function is parallelized;
+- nested loops and loops inside other statements run serially;
+- a value copy means scalar writes do not escape, while pointer/slice
+  arguments still alias the caller's memory;
+- there are no locks, reductions, ordering guarantees, or race detection.
+
+This is enough for the tested scaling pattern, not a general parallel runtime.
+
+### SIMD lowering
+
+`SimdN<T>` is recognized syntactically and maps to `@Vector(N, T)`. The builtin
+calls lower as follows:
+
+| Source | Zig |
+| ------ | --- |
+| `Simd::splat(x)` | `@splat(x)` |
+| `Simd::load(ptr, i, n)` | `ptr[i..][0..n].*` |
+| `Simd::store(ptr, i, n, v)` | `ptr[i..][0..n].* = v` |
+| `Simd::reduce_add(v)` | `@reduce(.Add, v)` |
+| `Simd::reduce_mul(v)` | `@reduce(.Mul, v)` |
+| `Simd::reduce_min(v)` | `@reduce(.Min, v)` |
+| `Simd::reduce_max(v)` | `@reduce(.Max, v)` |
+
+The length must be a literal in the type name, and there is no masking,
+gather/scatter, or general vector inference.
+
+### Honest boundaries
+
+The tested surface is intentionally narrow: free functions, scalar parameters
+and returns, `let`, assignment, `while`, direct range `for`, `return`, integer
+casts, indexing, binary operations, saturating operations, arbitrary-width
+integers, `#[parallel]` range loops, and the SIMD builtins. Structs, enums,
+`if`, `match`, strings, `Vec`, `Option`, `Result`, and ordinary user-function
+calls are not lowered. In particular, the emitter has no general call lowering;
+the tested programs either use the SIMD builtins or avoid calls. Unsupported
+constructs are outside the contract and are not guaranteed to be rejected with
+a diagnostic, so they must not be presented as working features.
+
+### Tests and lesson
+
+`tests/test_zig_backend.py` skips when `zig` is unavailable and covers
+saturating arithmetic, arbitrary widths, the fallback lowering, parallel
+scaling, SIMD arithmetic, horizontal reductions, the runnable example, and
+the CLI run/build paths.
+
+**Lesson:** An alternative backend is useful as an experiment only when its
+boundaries are explicit. Reusing the AST keeps the front end honest, while a
+C-ABI wrapper, a narrow lowering subset, and a separate cache make it clear
+that the Zig mode is not a drop-in replacement for the parity-tested backends.
 
 ## Experimental pillars — drawing the honesty line
 
@@ -139,6 +251,66 @@ docs should describe that one path rather than backend-specific workarounds.
 Where a real difference remains — native `Err` payloads are `PyErr`, LSP
 positions are character-based, only local fix edits are safe — record it as
 an explicit limitation instead of implying parity.
+
+## 100 framework functions — registry over scattered entry points
+
+**Symptom:** The 100-function request numbered Frame 8 as 71–80 but listed
+only 72–80, and spelled function 4 `parse_ Pratt_expr_with_precedence` with an
+embedded space. There was also no single place to discover or invoke the
+requested functions, and each subsystem had its own entry-point conventions.
+
+**Cause:** The existing `runtime.capabilities` registry covers a different
+100-function pillar directive, so it could not be reused for the compiler,
+IR, backend, diagnostics, CI, and documentation functions in this request.
+Without a canonical mapping, callers would depend on module paths instead of
+stable numbers and names.
+
+**Fix:** Added `framework_functions` with a 1–100 registry, frame titles,
+`get_function`, `invoke`, `iter_functions`, and `validate_registry`. Each frame
+lives in its own module (`compiler/frontend`, `compiler/types`, `compiler/ir`,
+`backends/python`, `backends/rust`, `runtime/hotpatch`, `runtime/concurrency`,
+`diagnostics`, `tools/build_ci`, `docs`, `tests/regression_harness`) with
+dedicated tests. Function 4 was normalized to `parse_pratt_expr_with_precedence`;
+slot 71 was filled with a real `diag_create_diagnostic_context` constructor so
+all ten frames have ten functions without renaming any supplied entry.
+
+**Lesson:** A numeric contract is only useful if it is validated. The registry
+test asserts contiguous numbering, unique names, and importable callables, so
+a missing or duplicated implementation fails as a normal test rather than as
+an integration surprise. Platform-sensitive functions (GIL, MAP_JIT, PEP 667,
+raw-address TOCTOU) return structured models and report their boundaries
+instead of claiming privileged behaviour.
+
+## Verification, telemetry, and release readiness — isolated by construction
+
+**Symptom:** Comparing the two backends by hand only found mismatches that a
+developer happened to run, and "all checks pass" meant remembering eight
+separate commands. Packaging looked healthy in the source tree but the built
+wheel omitted several modules that the 100-function registry imports, and
+telemetry data had no place to surface in the CLI or visualizer.
+
+**Cause:** There was no deterministic program generator with a stable seed, no
+single ordered gate that reused the FRAME 9 verifiers, and the setuptools
+package list predated the new framework packages. `tests/` is intentionally
+absent from wheels, but the registry pointed functions 94–100 at it, so a fresh
+install could not resolve all 100 callables. Telemetry helpers produced data
+only when a caller happened to ask for it.
+
+**Fix:** Added a template-based fuzzer whose per-case RNG derives from
+`(seed, index)`, a gate that runs checks in a documented order and aggregates
+them with `ci_generate_release_gate_report`, and a session telemetry collector
+wired into the CLI and visualizer. Moved FRAME 10 harness implementations to
+the installable `regression.harness` package and kept the old test import as a
+re-export. Added `diagnostics`, `docs`, `framework_functions`, and
+`tools.build_ci` to the wheel/sdist package list, plus Cargo package metadata
+and cache-isolation tests.
+
+**Lesson:** A verification story is only as strong as its isolation. Fuzzer
+artifacts live under the gitignored `.artifacts/` directory and are written
+only on mismatch; cargo and Python caches get scope-derived directories outside
+the workspace; telemetry payloads are redacted before serialization. Privileged
+mechanisms remain labelled as models or refusals — MAP_JIT owns pages only,
+PEP 667 covers future entries, and raw-address checks do not remove TOCTOU.
 
 ## N1 complete
 

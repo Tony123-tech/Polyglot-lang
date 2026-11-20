@@ -1,6 +1,6 @@
 # polyglot-lang
 
-A Rust-like language with a shared lexer, parser, and AST, plus a Python backend, a native PyO3 extension backend, and an experimental compute-only WebAssembly backend.
+A Rust-like language with a shared lexer, parser, and AST, plus a Python backend, a native PyO3 extension backend, an experimental compute-only WebAssembly backend, and an experimental Zig backend.
 
 ## Why polyglot-lang?
 
@@ -19,12 +19,14 @@ and choose how to run it:
 - **Python backend** — `polyglot run add.poly` (no build step, no Rust)
 - **Native backend** — `polyglot build add.poly` (compiles to a PyO3 extension)
 - **WASM backend (experimental)** — `polyglot build add.poly --backend wasm` (writes WebAssembly text format)
+- **Zig backend (experimental)** — `polyglot run add.poly --backend zig` (compiles through the system Zig toolchain and loads the result with `ctypes`)
 
-The backends share a front end and are parity-tested for the documented
-language subset. Unsupported features and some runtime behavior remain
-backend-specific; see the support matrix and known limitations below. No
-`Cargo.toml` or `pyproject.toml` scaffolding is needed for a single-file
-program.
+The Python and native backends share a front end and are parity-tested for
+the documented language subset. Unsupported features and some runtime behavior
+remain backend-specific; see the support matrix and known limitations below.
+The WASM and Zig backends are opt-in experiments and are not part of that
+parity contract. No `Cargo.toml` or `pyproject.toml` scaffolding is needed for
+a single-file program.
 
 ## Quick Start
 
@@ -92,7 +94,7 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | M4        | Done   | Additional fixed-width integer types and the cross-backend cast matrix                                                           |
 | M5        | Done   | Send-aware `PyFuture`, async `&self`/`&mut self` impl methods, drop-based cancellation, a `mio` reactor with timers, and an `asyncio` bridge |
 
-**Current test status:** 1636 passed, 6 skipped, 22 deselected (`pytest -q`); 22 passed, 1642 deselected (`pytest -q -m slow`).
+**Current test status:** 1902 passed, 6 skipped, 22 deselected (`pytest -q`); 22 passed, 1908 deselected (`pytest -q -m slow`).
 
 ## Support matrix
 
@@ -135,13 +137,50 @@ iteration order is unspecified; sort before comparing. `get_mut` on
 The experimental WASM backend is not part of this matrix. It supports only
 `i64` and `bool` values, with no strings, aggregates, or host imports.
 
+### Experimental Zig backend
+
+The Zig backend is a separate opt-in execution mode. It is not part of the
+Python/native parity contract, and it does not replace either backend for
+normal use. It is selected with `--backend zig` on `run`, `build`, `exec`, and
+`compile`, or with `get_backend("zig")`.
+
+| Feature | Zig backend | Notes |
+| ------- | ----------- | ----- |
+| Top-level function definitions and C-ABI wrappers | ✅ | The tested subset is intentionally narrow |
+| `let`, assignment, `while`, range `for`, `return`, binary and cast expressions | ✅ | See SPEC 8.12 |
+| Integer casts | ✅ | Integer targets only; float casts are not lowered |
+| Saturating arithmetic | ✅ | `+`, `-`, and `*` with a trailing pipe, clamped at declared bounds |
+| Arbitrary bit-width `uN`/`iN` (`0..=65535`) | ✅ Zig-native | Python C ABI exposes 64 bits only |
+| `#[parallel]` range-loop splitting | ✅ | Direct `for i in start..end` loops only |
+| `SimdN<T>` and `Simd::*` builtins | ✅ | `splat`, `load`, `store`, `reduce_add`, `reduce_mul`, `reduce_min`, `reduce_max` |
+| Structs, enums, `if`, `match`, strings, `Vec`, `Option`, `Result` | ⬜ Not lowered | Outside the current Zig contract |
+| Ordinary user-function calls | ⬜ Not lowered | Only the SIMD builtins are special-cased today |
+| Importable Python extension from `polyglot build` | ⬜ No | The artifact is a C-ABI shared library, not a PyO3 module |
+
+Quick example:
+
+```polyglot
+fn main() -> i64 { (250 as u8 +| 20 as u8) as i64 }
+```
+
+```sh
+polyglot run sat.poly --backend zig   # prints 255
+```
+
+The backend requires `zig` on `PATH`. It writes generated Zig and a cached
+dynamic library under `~/.cache/polyglot-zig`, keyed by a hash of the generated
+source. `polyglot build --backend zig` copies the cached library next to the
+source (as `<stem>.so` on macOS); load it with `ctypes`, not `import`. See
+[docs/zig.md](docs/zig.md) for the full feature guide and boundaries.
+
 ## Features
 
 - **Shared front end:** Turns source text into tokens, a parsed program, and AST nodes.
 - **Python backend:** Translates the Rust-like AST to a Python AST, then compiles and executes it.
 - **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting Python extension (`.so` on macOS and Linux, `.pyd` on Windows).
 - **WASM backend (experimental):** Lowers an `i64`/`bool` compute-only subset to WebAssembly text format (`.wat`) and runs it through `wasmtime`.
-- **Common backend interface:** Select a backend with `get_backend("python")`, `get_backend("native")`, or `get_backend("wasm")`. Calling `backend.compile(program)` returns a namespace dictionary.
+- **Zig backend (experimental):** Generates Zig source, builds a dynamic library with `zig build-lib -dynamic -O ReleaseFast`, and exposes `__cabi_*` wrappers through `ctypes`. It adds Zig-style saturating arithmetic, arbitrary bit-width integers, `#[parallel]` range-loop splitting, and `SimdN<T>` vector builtins for a narrow, tested AST subset. See [docs/zig.md](docs/zig.md) and SPEC 8.12.
+- **Common backend interface:** Select a backend with `get_backend("python")`, `get_backend("native")`, `get_backend("wasm")`, or `get_backend("zig")`. Calling `backend.compile(program)` returns a namespace dictionary.
 - **CLI:** `polyglot run`, `polyglot build`, `polyglot check`, `polyglot lsp`, the compatibility `polyglot compile` command, the machine-readable `polyglot exec` command, and the interactive `polyglot visualizer` (alias `gui`).
 - **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
 - **N6:** Additional `Vec` methods (`first`, `last`, `get`, `truncate`, `rotate_*`, `fill`, `swap`, `resize`, `split_off`, `partition`, `sort_*`, `is_sorted`, and others) and `String` methods (`find`, `rfind`, `strip_*`, `split_once`, `lines`, `as_bytes`, `is_char_boundary`, and others).
@@ -157,24 +196,28 @@ The experimental WASM backend is not part of this matrix. It supports only
 - **Broader `if let`:** `Some`, `None`, `Ok`, and `Err` patterns work in statement and expression positions (including `let` initialisers and call arguments) on both backends.
 - **Extended entry API:** `HashMap::entry` adds `or_default()` alongside `or_insert`, `or_insert_with`, `or_insert_with_key`, and `and_modify`.
 - **Richer toolchain diagnostics:** `polyglot exec --error-format=json` and the diagnostic helper carry deterministic fix hints, and the language server publishes `textDocument/publishDiagnostics` on open, change, and save.
+- **Framework function registry:** 100 numbered compiler/runtime/tooling functions across ten frames are discoverable through `framework_functions`; the canonical list and naming notes are in [docs/framework_functions.md](docs/framework_functions.md).
+- **Differential parity fuzzer:** `python tools/diff_fuzz.py --seed 42 --case-count 8 --json` generates deterministic programs (recursive generics, trait bounds, match guards, arithmetic/control flow, and E001–E008 cases), runs Python and native backends under isolated cache scopes, and writes minimal mismatch artifacts under `.artifacts/diff_fuzz/` only on a real mismatch.
+- **Unified release gate:** `python tools/release_gate.py --quick` (or `--full`) runs ruff, scaffold drift, core pytest suites, bounded fuzz seeds, isolated cargo checks, docs checks, and a worktree check in a fixed order, then emits one pass/fail report.
+- **Session telemetry:** `polyglot telemetry`, `polyglot timings`, `polyglot cache`, and `polyglot hotpatch` print compile-phase timings, cache hit rates, monomorphization counts, and hot-patch status. The visualizer exposes the same data at `GET /api/telemetry` in a collapsed Telemetry panel. All payloads are path-redacted.
 - **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
 - **Distributed actors (experimental):** An opt-in `distributed/` runtime moves actors between nodes with a versioned Python/native codec, checkpointable await journals, anchored connections, epoch/fencing leases, and checkpoint-based rollback. See [docs/distributed.md](docs/distributed.md).
 
 ## CLI
 
 ```sh
-polyglot run <file> [--backend python|native|wasm] [--target-width N]
-polyglot build <file> [--backend python|native|wasm] [--out-dir <dir>] [--incremental]
+polyglot run <file> [--backend python|native|wasm|zig] [--target-width N]
+polyglot build <file> [--backend python|native|wasm|zig] [--out-dir <dir>] [--incremental]
 polyglot check <file> [--all-errors]
 polyglot lsp
-polyglot compile --backend python|native|wasm (--file <path> | --stdin)
-polyglot exec (<file> | --stdin) [--backend python|native|wasm|jit] [--result-file <path>]
+polyglot compile --backend python|native|wasm|zig (--file <path> | --stdin)
+polyglot exec (<file> | --stdin) [--backend python|native|wasm|jit|zig] [--result-file <path>]
 polyglot visualizer [--host 127.0.0.1] [--port 8765] [--no-open]
 ```
 
 - `run` compiles and executes a file and prints the result of `main()` when it returns a value. `--target-width 32` or `64` simulates the corresponding `usize`/`isize` width on the Python backend.
-- `build` compiles a file. The native backend produces an extension module, the WASM backend writes a `.wat` file, and both print the artifact path. `--incremental` reuses per-function Rust fragments across native rebuilds.
-- `check` parses, translates (Python backend), and runs termination checks without executing. `--all-errors` recovers from top-level syntax errors and reports every parse error it finds.
+- `build` compiles a file. The native backend produces an extension module, the WASM backend writes a `.wat` file, and the Zig backend copies a C-ABI dynamic library; all print the artifact path. `--incremental` reuses per-function Rust fragments across native rebuilds. A Zig build artifact is loaded with `ctypes`; it is not an importable Python extension.
+- `check` parses, translates (Python backend), and runs termination checks without executing. It does not take `--backend`; it always uses the Python translation path. `--all-errors` recovers from top-level syntax errors and reports every parse error it finds.
 - `lsp` runs the stdio language server.
 - `compile` is a compatibility command used by the HTTP executor and older tooling. It prints the exported top-level names.
 - `exec` compiles and executes like `run`, but prints only program output. With `--result-file`, it also writes JSON containing compile/run timings, the runner's peak RSS, the return value, and structured E001–E008 diagnostics. It is the execution primitive behind the visualizer.
@@ -182,7 +225,7 @@ polyglot visualizer [--host 127.0.0.1] [--port 8765] [--no-open]
 - Errors use the toolchain five-line format, or six lines when a span is available. Pass `--verbose` to include a traceback.
 - `--error-format text|json` selects the diagnostic format on `run`, `build`, `check`, `compile`, and `exec`. JSON output is a single object with `code`, `message`, `line`, `col`, `span`, and `source`.
 
-The Python backend has no native dependencies. The native backend requires a Rust toolchain (`cargo` and `rustc`) and PyO3-compatible build tooling. The WASM backend requires the optional `wasm` extra (`wasmtime`).
+The Python backend has no native dependencies. The native backend requires a Rust toolchain (`cargo` and `rustc`) and PyO3-compatible build tooling. The WASM backend requires the optional `wasm` extra (`wasmtime`). The Zig backend requires `zig` on `PATH`; run `zig version` to check it.
 
 ## Include directive
 
@@ -253,6 +296,7 @@ The `examples/` directory contains runnable programs:
 - `hashmap.poly` — HashMap insert/get/iteration
 - `option_result.poly` — Option, Result, `?`, and `if let`
 - `terminates.poly` — `#[terminates]` decreasing loop
+- `zig_parallel_simd.poly` — Zig saturating arithmetic, `#[parallel]`, and SIMD reductions
 
 Run them with:
 
@@ -270,6 +314,20 @@ Explicit numeric types follow Rust where Python's defaults differ:
 - Annotated numeric bindings, assignments, compound assignments, and returns wrap at the declared width, matching native release builds.
 
 Overflow parity is limited to explicitly typed bindings; unannotated inference still uses Python's unbounded integers. These semantics are covered by `tests/test_native_n8_types.py`.
+
+The experimental Zig backend adds two integer features that are not part of
+the Python/native contract:
+
+- **Saturating arithmetic.** `+|`, `-|`, and `*|` clamp at the bounds of the
+  declared integer type instead of wrapping or raising.
+- **Arbitrary bit-width integers.** `uN` and `iN` for `0 <= N <= 65535` are
+  represented at their native Zig width. At the Python boundary every integer
+  is converted to a 64-bit `ctypes` value, so widths above 64 bits are
+  truncated. See SPEC 8.12 and [docs/zig.md](docs/zig.md).
+
+The Python fallback lowering rewrites the saturating operators to
+`_zig_sat_add`, `_zig_sat_sub`, and `_zig_sat_mul` and clamps at `i64` bounds;
+that fallback is not bit-width aware.
 
 ## Async
 
@@ -347,6 +405,14 @@ Cargo's `target` directory stays within each build directory. After clearing
 the cache, the first build takes about two minutes; a warm cached build takes
 seconds. 22 slow tests, including source-line mapping, are deselected by
 default.
+
+The Zig backend caches generated Zig and its dynamic library under
+`~/.cache/polyglot-zig`, keyed by a SHA-256 prefix of the generated source.
+A cache hit skips `zig build-lib`. Remove the directory to force a rebuild:
+
+```sh
+rm -rf ~/.cache/polyglot-zig
+```
 
 See [NOTES.md](NOTES.md#build-performance) for detailed build-performance notes.
 
@@ -448,6 +514,26 @@ location is unavailable. The distributed runtime has its own guide at
   See SPEC 8.2 and 10.34.
 - The WASM backend is experimental and compute-only. It supports `i64`/`bool`
   values with no strings, aggregates, or host imports.
+- The Zig backend is experimental and opt-in. It is not part of the
+  Python/native parity contract or the main support matrix. Its current
+  lowering covers a narrow AST subset: free functions, scalar parameters and
+  returns, `let`, assignment, `while`, direct range `for`, returns, integer
+  casts, indexing, binary operators, saturating operators, arbitrary-width
+  integers, `#[parallel]` range loops, and the SIMD builtins. Structs, enums,
+  `if`, `match`, strings, collections, and ordinary user-function calls are
+  not lowered; programs outside the tested subset are not covered by the
+  contract. See SPEC 8.12 and 10.42.
+- The Zig backend exposes only a C ABI. `polyglot build --backend zig` writes a
+  shared library with `__cabi_*` symbols for `ctypes`; it is not an importable
+  Python extension module. All Python-boundary integers are 64-bit, so
+  arbitrary-width values wider than 64 bits are truncated at that boundary.
+- `#[parallel]` splits only a direct range `for` loop in the annotated function
+  into up to 16 worker threads (capped by available CPUs). It provides no
+  ordering, reduction, or synchronization guarantees, and loop bodies still
+  need to avoid data races by construction. Nested loops run serially.
+- SIMD support is limited to the named `SimdN<T>` types and the `Simd::splat`,
+  `Simd::load`, `Simd::store`, and `Simd::reduce_*` builtins. There is no
+  masking, gather/scatter, or general vector type inference.
 - `HashMap` supports the entry subset (`or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`, `or_default`); `Entry::insert` remains deferred on the native backend. See SPEC 10.41.
 - The `#[terminates]` checker accepts multiple self-recursive calls when each
   strictly decreases an argument under a lower-bound guard (e.g. classic
@@ -486,15 +572,25 @@ pytest -q -m slow
 the slow tests. `make check` runs the linters, the docs-sync check, and the
 fast suite.
 
-The native backend caches build artifacts under `~/.cache/polyglot-native`. To clear the cache:
+Zig backend tests are skipped when `zig` is not on `PATH`. They exercise
+saturating arithmetic, arbitrary bit widths, `#[parallel]` loops, SIMD
+vectors and reductions, the lowering fallback, and the CLI `run`/`build`
+paths. Run just that file with:
 
 ```sh
-rm -rf ~/.cache/polyglot-native
+pytest -q tests/test_zig_backend.py
+```
+
+The native backend caches build artifacts under `~/.cache/polyglot-native`.
+The Zig backend caches under `~/.cache/polyglot-zig`. To clear both caches:
+
+```sh
+rm -rf ~/.cache/polyglot-native ~/.cache/polyglot-zig
 ```
 
 ## Architecture
 
-`source → lexer → parser → AST → (Python AST → compile/exec | Rust + PyO3 → Cargo build → extension) → Python namespace`
+`source → lexer → parser → AST → (Python AST → compile/exec | Rust + PyO3 → Cargo build → extension | Zig → zig build-lib → ctypes) → Python namespace`
 
 ## Roadmap
 
@@ -503,8 +599,10 @@ reactor thread, timer and Unix fd wakeups, cross-thread Send awaits, and an
 `asyncio` bridge. Remaining known limitations are listed under
 [Known limitations](#known-limitations). The main out-of-scope items are
 `while let Some(x) = iter.next()`, language-level async timer/I/O primitives,
-and the compute-only WASM subset. The
-experimental pillar modules are separate opt-in research foundations; see
+and the compute-only WASM subset. The Zig backend is an additional opt-in
+experiment; its narrow AST subset and C-ABI boundaries are documented in
+[docs/zig.md](docs/zig.md). The experimental pillar modules are separate
+opt-in research foundations; see
 [docs/experimental_pillars.md](docs/experimental_pillars.md).
 
 ## Notes

@@ -14,6 +14,9 @@ and layer responsibilities. In short:
 - `backends/rust/` — Rust/PyO3 codegen, async reactor runtime, and Cargo
   build driver.
 - `backends/wasm/` — experimental compute-only WebAssembly text backend.
+- `zig/` — experimental Zig backend (`backend.py` codegen/build/load,
+  `features.py` saturating arithmetic and bit-width bounds, `lowering.py`
+  Python fallback).
 - `api/cli.py` — the `polyglot` command-line interface.
 - `api/lsp.py` — the stdio language server.
 - `tests/` — pytest suite, including native and slow tests.
@@ -38,12 +41,20 @@ The experimental WASM backend needs the optional `wasm` extra:
 
     pip install -e ".[dev,wasm]"
 
+The experimental Zig backend needs `zig` on `PATH`:
+
+    zig version
+
+Zig tests are skipped when the toolchain is absent. They are not required for
+the Python/native parity suite.
+
 ## Running tests
 
     pytest -q
     pytest -q -n auto
     pytest -q -m slow
     pytest -q tests/test_m3_collections.py
+    pytest -q tests/test_zig_backend.py
 
 Or use the Makefile:
 
@@ -56,9 +67,11 @@ Or use the Makefile:
     make check         # lint + format-check + docs-sync + fast tests
 
 Native tests compile Rust; the first run is slow, subsequent runs hit
-the cache under `~/.cache/polyglot-native`. To clear it:
+the cache under `~/.cache/polyglot-native`. Zig tests build a dynamic library
+and cache it under `~/.cache/polyglot-zig`, keyed by a hash of the generated
+source. To clear both:
 
-    rm -rf ~/.cache/polyglot-native
+    rm -rf ~/.cache/polyglot-native ~/.cache/polyglot-zig
 
 Slow tests are deselected by default via `addopts = "-m 'not slow'"`.
 Run them explicitly with `make test-slow` or `pytest -q -m slow`.
@@ -158,4 +171,6 @@ Scopes: frontend, python, rust, api, cli, tests, docs, build, ci.
   backends/rust/codegen.py.
 - Language server: api/lsp.py.
 - Experimental WASM subset: backends/wasm/codegen.py.
+- Experimental Zig backend: zig/backend.py, zig/features.py, and
+  zig/lowering.py (see docs/zig.md).
 - Shell completions: tools/completions/.

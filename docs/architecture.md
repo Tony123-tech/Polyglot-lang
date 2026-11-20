@@ -1,8 +1,8 @@
 # Architecture overview
 
 `polyglot-lang` compiles one `.poly` source file with two primary
-interchangeable backends (Python and native PyO3), plus an experimental
-compute-only WASM text backend. The front end is shared; only the
+interchangeable backends (Python and native PyO3), plus experimental
+compute-only WASM and Zig backends. The front end is shared; only the
 lowering and execution stages differ.
 
 ```text
@@ -47,6 +47,11 @@ lowering and execution stages differ.
 The optional experimental WASM backend consumes the same AST and writes
 WebAssembly text format (`.wat`) for an `i64`/`bool` compute-only subset.
 
+The optional experimental Zig backend also consumes the same AST. `ZigCodegen`
+emits Zig source for a narrow scalar subset, `zig build-lib -dynamic -O
+ReleaseFast` builds a dynamic library, and `ctypes` loads the `__cabi_*`
+wrappers. It is a separate execution mode, not a third parity backend.
+
 ## Layers
 
 - **Front end:** `lexer.py`, `parser.py`, `ast_nodes.py`. Parser nodes carry
@@ -66,6 +71,12 @@ WebAssembly text format (`.wat`) for an `i64`/`bool` compute-only subset.
   directory.
 - **WASM backend (experimental):** `backends/wasm/codegen.py` lowers the
   `i64`/`bool` subset to `.wat`; `wasmtime` is an optional dependency.
+- **Zig backend (experimental):** `zig/backend.py` holds `ZigBackend` and
+  `ZigCodegen`, `zig/features.py` implements saturating arithmetic and
+  arbitrary bit-width bounds, and `zig/lowering.py` rewrites saturating
+  operators for the Python fallback. The backend caches under
+  `~/.cache/polyglot-zig` and loads a C-ABI dynamic library through
+  `ctypes`. See [zig.md](zig.md).
 - **CLI/API:** `api/cli.py` implements `run`, `build`, `check`, `compile`,
   `exec`, `visualizer`/`gui`, and `lsp`; `api/` also contains the optional
   HTTP worker/server and the dependency-free visualizer
@@ -92,6 +103,8 @@ WebAssembly text format (`.wat`) for an `i64`/`bool` compute-only subset.
   mirrored by Section 10 entries.
 - Language semantics are not changed by a single backend; differences are
   recorded rather than silently accepted.
+- The Zig execution mode is an opt-in experiment with its own narrow subset
+  and C-ABI boundary. It does not extend the Python/native parity contract.
 
 See [overview.md](overview.md), [../README.md](../README.md),
 [../GUIDE.md](../GUIDE.md), [../SPECIFICATION.md](../SPECIFICATION.md), and

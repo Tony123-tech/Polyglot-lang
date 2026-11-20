@@ -26,6 +26,15 @@ cargo --version
 If those commands work, you can compile `.poly` files to native
 extensions.
 
+The experimental Zig backend needs only the Zig toolchain:
+
+```sh
+zig version
+```
+
+If that prints a version, you can try `--backend zig`. Zig is not required for
+the Python or native backends.
+
 ## 2. Your first `.poly` file
 
 Create `hello.poly`:
@@ -351,7 +360,188 @@ the cache directory:
 rm -rf ~/.cache/polyglot-native
 ```
 
-## 9. Error codes
+## 9. When to use the Zig backend (experimental)
+
+The Zig backend is an opt-in execution mode for experimenting with Zig-style
+integer semantics, threads, and vectors. It is **not** part of the
+Python/native parity contract. Use it when you specifically want to try:
+
+- saturating arithmetic that clamps instead of wrapping;
+- arbitrary bit-width integers such as `u8`, `u24`, or `i19`;
+- a `#[parallel]` range loop;
+- `SimdN<T>` vector operations and horizontal reductions.
+
+For normal programs, keep using the Python or native backend. The Zig lowering
+covers only a small AST subset, explained below.
+
+### Run a first Zig program
+
+Create `sat.poly`:
+
+```polyglot
+fn main() -> i64 {
+    (250 as u8 +| 20 as u8) as i64
+}
+```
+
+Run it with:
+
+```sh
+polyglot run sat.poly --backend zig
+```
+
+Output:
+
+```text
+255
+```
+
+The `+|` operator adds with saturation. `250u8 + 20` would normally overflow;
+instead it clamps at `255`. The sibling operators are `-|` and `*|`:
+
+```polyglot
+fn sat_sub(a: u8, b: u8) -> u8 { a -| b }
+fn sat_mul(a: u8, b: u8) -> u8 { a *| b }
+```
+
+`sat_sub(10, 30)` returns `0`, and `sat_mul(20, 20)` returns `255`.
+
+### Arbitrary bit-width integers
+
+Any `uN` or `iN` with `N` between 0 and 65535 is accepted:
+
+```polyglot
+fn sat_u24(a: u24, b: u24) -> u24 {
+    a +| b
+}
+```
+
+From Python, call it through the backend:
+
+```python
+from backends import get_backend
+from lexer import lex
+from parser import parse
+
+source = """
+fn sat_u24(a: u24, b: u24) -> u24 { a +| b }
+"""
+namespace = get_backend("zig", trusted=True).compile(parse(lex(source)))
+print(namespace["sat_u24"](16_777_210, 100))  # 16777215
+```
+
+Zig stores the value at its declared width. The Python `ctypes` boundary is
+64-bit, so values wider than 64 bits are truncated when they cross into
+Python. The lowering fallback used by non-Zig execution clamps at `i64`
+bounds and is not bit-width aware.
+
+### Parallel range loops
+
+Add `#[parallel]` to a function with a direct range `for` loop:
+
+```polyglot
+#[parallel]
+fn scale(out: &mut [f64], inp: &[f64], factor: f64, n: usize) {
+    for i in 0..n {
+        out[i] = (inp[i] * factor) + 1.0;
+    }
+}
+```
+
+The backend splits `0..n` into chunks and runs them on up to 16 worker threads
+(capped by the available CPU count). Compile the function and call it from
+Python with `ctypes` arrays:
+
+```python
+import ctypes
+
+from backends import get_backend
+from lexer import lex
+from parser import parse
+
+source = """
+#[parallel]
+fn scale(out: &mut [f64], inp: &[f64], factor: f64, n: usize) {
+    for i in 0..n {
+        out[i] = (inp[i] * factor) + 1.0;
+    }
+}
+"""
+namespace = get_backend("zig", trusted=True).compile(parse(lex(source)))
+
+n = 10_000
+inp = (ctypes.c_double * n)(*[float(i) for i in range(n)])
+out = (ctypes.c_double * n)()
+
+namespace["scale"](out, inp, 2.5, n)
+assert out[10] == 26.0
+```
+
+Only the annotated function's direct range loop is parallelized. Nested loops
+run serially. The backend does not add locks or reductions, so the loop body
+must write disjoint elements or otherwise be race-free by construction.
+Ordering between iterations is not guaranteed.
+
+### SIMD vectors
+
+`SimdN<T>` maps to Zig's `@Vector(N, T)`. The supported builtins are:
+
+| Builtin | Meaning |
+| ------- | ------- |
+| `Simd::splat(x)` | Broadcast one scalar to every lane |
+| `Simd::load(ptr, index, count)` | Load `count` lanes starting at `index` |
+| `Simd::store(ptr, index, count, value)` | Store `count` lanes starting at `index` |
+| `Simd::reduce_add(v)` | Horizontal sum |
+| `Simd::reduce_mul(v)` | Horizontal product |
+| `Simd::reduce_min(v)` | Horizontal minimum |
+| `Simd::reduce_max(v)` | Horizontal maximum |
+
+A four-lane dot product looks like this:
+
+```polyglot
+fn simd_dot4(a: &[f64], b: &[f64]) -> f64 {
+    let va: Simd4<f64> = Simd::load(a, 0, 4);
+    let vb: Simd4<f64> = Simd::load(b, 0, 4);
+    Simd::reduce_add(va * vb)
+}
+```
+
+The full runnable example is
+[examples/zig_parallel_simd.poly](examples/zig_parallel_simd.poly). It combines
+`#[parallel]`, `Simd4<f64>`, `splat`, `load`, `store`, `reduce_add`, and a
+saturating `u8` return in `main()`.
+
+### Build and cache
+
+```sh
+polyglot build sat.poly --backend zig
+```
+
+The CLI writes the shared library next to the source (as `sat.so` on macOS).
+The backend caches generated Zig and the library under
+`~/.cache/polyglot-zig`, keyed by a hash of the generated source. Clear it with:
+
+```sh
+rm -rf ~/.cache/polyglot-zig
+```
+
+The build artifact has C-ABI `__cabi_*` symbols and is intended to be loaded
+with `ctypes`. It is not an importable Python extension module, so
+`import sat` will not work.
+
+### What the Zig backend does not support
+
+The current lowering covers free functions, scalar parameters and returns,
+`let`, assignment, `while`, direct range `for`, `return`, integer casts,
+indexing, binary operations, saturating operations, arbitrary-width integers,
+parallel range loops, and the SIMD builtins above. It does **not** lower
+structs, enums, `if`, `match`, strings, `Vec`, `Option`, `Result`, or ordinary
+user-function calls. Programs outside that subset are outside the Zig
+contract; use the Python or native backend for them. See
+[docs/zig.md](docs/zig.md) for the complete feature reference, SPEC 8.12 for
+the normative rules, and SPEC 10.42 for the boundary entry.
+
+## 10. Error codes
 
 Polyglot uses stable error codes. When you see an error, look it up
 in the [README's error code table](README.md#error-codes):
@@ -373,7 +563,7 @@ an `E001` type mismatch adds an `as <type>` text edit. `polyglot exec
 Some diagnostics carry a message only, because the correct edit cannot be
 derived from the diagnostic alone.
 
-## 10. What to do when you get stuck
+## 11. What to do when you get stuck
 
 1. Read the error message. It usually tells you what to write.
 2. Check the [SPECIFICATION](SPECIFICATION.md) for the rule.
@@ -381,7 +571,39 @@ derived from the diagnostic alone.
 4. Run `polyglot check hello.poly` to check the program without
    running it.
 
-## 11. Next steps
+## 12. Telemetry and verification
+
+Inspect what a compile run did without changing your program:
+
+```sh
+polyglot telemetry          # phases, total time, monomorphization counts
+polyglot timings            # alias for the timing section
+polyglot cache              # hit rates, hits/misses by scope, rebuild reasons
+polyglot hotpatch           # epoch, active capabilities, rollbacks, latest E008
+polyglot telemetry --json   # machine-readable, path-redacted payload
+```
+
+The same data is available from the visualizer (`polyglot visualizer`) in the
+collapsed **Telemetry** panel and from `GET /api/telemetry`. If nothing has run
+yet in the current session, each section reports an explicit empty state.
+Hot-patch entries report capability boundaries; they do not claim privileged
+MAP_JIT, PEP 667, or raw-address patching on platforms where those paths are
+modelled or refused.
+
+Before publishing a change, run the unified gate:
+
+```sh
+python tools/release_gate.py --quick      # fast PR loop
+python tools/release_gate.py --full       # extended fuzz seeds + full pytest
+python tools/diff_fuzz.py --seed 42 --case-count 8 --json
+```
+
+Fuzz mismatches are written to `.artifacts/diff_fuzz/` with the exact seed and
+source needed to reproduce them. Clean runs leave no files behind. Use
+`--allow-dirty` on the gate only when you deliberately want to verify an
+uncommitted worktree.
+
+## 13. Next steps
 
 - Read the [README](README.md) for the full feature list.
 - Read the [SPECIFICATION](SPECIFICATION.md) if you want to know

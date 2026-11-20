@@ -436,6 +436,25 @@ This section defines the platform differences permitted by this specification. E
 - A cross-backend parity test performs write/read/append/exists/remove round-trips through `std:fs` and asserts identical results.
 - A test asserts `E003` with a character span for each host-seam arity violation in both backends.
 
+### 8.12 Zig execution mode (experimental)
+
+- **8.12.1** The Zig backend is an optional execution mode selected by `--backend zig` on `run`, `build`, `exec`, and `compile`, or by `get_backend("zig")`. It is not one of the two mandatory backends in 1.2, is not part of the Python/native parity contract, and MUST NOT be used to weaken a requirement that applies to those backends.
+- **8.12.2** The Zig backend MUST require a `zig` executable on `PATH`. It generates Zig source from the shared AST, builds a dynamic library with `zig build-lib -dynamic -O ReleaseFast`, and loads the exported `__cabi_*` symbols with `ctypes`. The generated source and library MUST be cached under `~/.cache/polyglot-zig` in a directory keyed by a hash of the generated source; a cache hit MUST skip the Zig build.
+- **8.12.3** The Zig build artifact is a C-ABI shared library, not a PyO3 extension module. It exposes one `export fn __cabi_<name>` wrapper per top-level function. `polyglot build --backend zig` copies the cached library next to the source. The copied artifact MUST NOT be presented as importable with Python's `import` statement.
+- **8.12.4** At the `__cabi_*` boundary, integer parameters and results MUST be represented as 64-bit values (`u64` for unsigned Zig types, `i64` otherwise). Zig-native values wider than 64 bits MUST be truncated when converted at that boundary. Floating-point and pointer parameters are passed through as `f32`/`f64` and pointers; `void` results are supported.
+- **8.12.5** The binary operators `+|`, `-|`, and `*|` MUST perform saturating addition, subtraction, and multiplication, clamping at the minimum or maximum value of the declared integer type instead of wrapping. They are Zig-only extensions and are not part of the portable integer contract in 2.5.
+- **8.12.6** The type names `uN` and `iN` for an integer literal `N` with `0 <= N <= 65535` MUST be accepted as arbitrary bit-width integer types. Values MUST be represented at the declared Zig width. Widths above 64 bits remain subject to the truncating C-ABI rule in 8.12.4. The Python fallback lowering in `zig/lowering.py` rewrites the saturating operators to `_zig_sat_add`, `_zig_sat_sub`, and `_zig_sat_mul` and clamps at `i64` bounds; that fallback is not bit-width aware.
+- **8.12.7** A `#[parallel]` annotation on a free function MUST split a direct range `for` loop in that function body into chunks executed by up to 16 worker threads, further capped by the available CPU count. Only the annotated function's direct range loop is parallelized; nested loops run serially. The implementation MUST NOT be read as providing iteration ordering, reduction, locking, or any other synchronization guarantee. A program is responsible for ensuring that parallel iterations do not race.
+- **8.12.8** The type form `SimdN<T>` MUST map to Zig's `@Vector(N, T)`. The builtins `Simd::splat`, `Simd::load`, `Simd::store`, `Simd::reduce_add`, `Simd::reduce_mul`, `Simd::reduce_min`, and `Simd::reduce_max` MUST lower to the corresponding Zig vector operations. Masking, gather/scatter, and general vector type inference are outside this execution mode.
+- **8.12.9** The Zig execution mode lowers a narrow scalar subset: free functions, scalar parameters and returns, `let`, assignment, `while`, direct range `for`, `return`, integer casts, indexing, binary operations, saturating operations, arbitrary-width integers, `#[parallel]` range loops, and the SIMD builtins. Structs, enums, `if`, `match`, strings, `Vec`, `Option`, `Result`, and ordinary user-function calls are not lowered. Programs outside this subset are outside the Zig contract and MAY fail to compile or produce behaviour that is not covered by this specification.
+- **8.12.10** A change to this section MUST follow the versioning rule in 11.1 and MUST record the resulting boundary in Section 10.
+
+**Acceptance criteria**
+
+- `tests/test_zig_backend.py` covers saturating `+|`/`-|`/`*|`, `u8` and `u24` arithmetic, the Python fallback lowering, a `#[parallel]` range loop, SIMD vector arithmetic and reductions, and the CLI `run`/`build` paths.
+- The Zig tests are skipped when `zig` is not installed; the Python and native suites do not depend on the Zig toolchain.
+- `examples/zig_parallel_simd.poly` combines `#[parallel]`, `Simd4<f64>`, `Simd::load`/`store`/`reduce_add`, and a saturating `u8` return.
+
 ## 9. Toolchain and Delivery
 
 - **9.1** The toolchain MUST include a lexer, a parser, an AST, both backends, diagnostics that map native errors to source positions, and a module mechanism.
@@ -453,6 +472,11 @@ This section defines the platform differences permitted by this specification. E
 - **9.9** The Python backend MUST support Python 3.14.8 or later. Earlier versions are not supported and MUST NOT be claimed as conforming.
 - **9.10** The CLI MUST provide `run`, `build`, and `check` subcommands. Errors MUST use the five-line format of 2.4.7.
 - **9.11** The package MUST be installable as `pip install polyglot-lang`. The Python backend MUST have no native dependencies; the native backend MUST document its Rust toolchain requirement.
+- **9.12** The toolchain MUST expose a stable registry of 100 numbered framework functions spanning lexing/parsing, types/monomorphization, IR/optimization, both backends, hot-patching, concurrency, diagnostics, CI gates, and docs/regression harnesses. `framework_functions.validate_registry()` MUST confirm contiguous numbering, unique names, and importable callables. See `docs/framework_functions.md`.
+- **9.13** A deterministic differential fuzzer MUST generate valid programs covering recursive generic structs/enums, `vec!` element propagation, trait bounds and impls, match guards, arithmetic/boolean control flow, and E001–E008 cases; execute each case through the Python and native backends under isolated cache scopes; compare normalized values, side effects, and structured error codes; and save minimal seed/source artifacts only on mismatch. Clean runs MUST NOT create working-tree files. `tools/diff_fuzz.py --seed N --case-count M --json` MUST be reproducible for a fixed seed.
+- **9.14** A unified release gate MUST run ruff format/lint, scaffold drift verification, core pytest suites, bounded fuzz seeds, isolated `cargo check`/`cargo clippy`, docs sync/lint, and a git worktree check in a fixed order, aggregate them with `ci_generate_release_gate_report`, and exit non-zero on any blocker. `--quick` and `--full` MUST select bounded and extended verification respectively.
+- **9.15** The CLI and visualizer MUST expose session telemetry containing compile-phase timings, cache hits/misses by scope and rebuild reason, monomorphization specialization counts, and hot-patch capability/epoch/rollback/event status. Telemetry payloads MUST be JSON-safe, MUST report graceful empty states, and MUST NOT leak absolute local paths. Model-only hot-patch boundaries (MAP_JIT, PEP 667, raw-address TOCTOU) MUST remain visible in capability metadata.
+- **9.16** Wheels and sdists MUST ship every module referenced by the 100-function registry. `tests/` stays out of wheels, so framework functions 94–100 resolve through the installable `regression.harness` package; `tests/regression_harness.py` is only a compatibility re-export. Cargo metadata MUST be complete enough for `cargo package` to run without manifest warnings, and builds MUST use isolated cache/target directories outside the workspace.
 
 **Acceptance criteria**
 
@@ -506,6 +530,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.39** Diagnostic fix hints are deterministic and local: an edit is emitted only when the replacement can be derived from the diagnostic itself (currently implicit `as` casts under `E001`). Other codes may carry an actionable message without a text edit, and no hint is produced when the correct fix cannot be determined. See 9.3.
 - **10.40** The language server publishes at most one diagnostic per validation event and converts 0-based character offsets to LSP positions without applying UTF-16 code-unit encoding; non-BMP text before a diagnostic can shift the reported column. LSP 3.17 has no `publishDiagnosticsProvider` capability, so diagnostics are unsolicited notifications on `didOpen`, `didChange`, and `didSave`. See 9.3.
 - **10.41** The `HashMap` entry API supports `or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`, and `or_default`. `Entry::insert` is not lowered by the native backend and remains Deferred. See 7.2.7.
+- **10.42** The Zig backend is an experimental, opt-in execution mode outside the Python/native parity contract. It requires a Zig toolchain, lowers only the narrow subset in 8.12.9, produces a C-ABI shared library rather than an importable Python extension, truncates Python-boundary integers to 64 bits, parallelizes only a direct range loop without ordering or synchronization guarantees, and exposes only the named SIMD builtins. See 8.12.
 
 ## 11. Versioning
 
@@ -531,6 +556,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.19** v0.3.8 also records the opt-in experimental pillar foundations: quiescent-point hot-patching, sandboxed compiler-pass evolution, bounded certificate-checked synthesis, deterministic cross-FFI checkpoint replay, and guarded speculative specialization. They are explicitly outside the stable conformance surface; 10.36 records their safety boundaries.
 - **11.20** v0.3.8+ records the unified capability registry for the ten pillars (100 functions), the dual-backend host bridge and generated PyO3 binding scaffold, and the `#[gpu]`/`#[npu]` span-aware `E007` feature gate. Parity is defined as identical names and diagnostics on both backends, not as universal availability of privileged mechanisms. See 10.37 and `docs/unified_pillars.md`.
 - **11.21** v0.3.9 lowers `vec![...]` (including `vec![value; count]`) and `String::from(...)` in both backends, adds lazy `Option`/`Result::unwrap_or_else`, adds the pure-`.poly` `std:fs` module and its trusted host seam (8.11), broadens `if let` to expression positions and builtin `Ok`/`Err`/`None` patterns (5.4), adds `HashMap` `entry(k).or_default()`, extends `#[terminates]` proofs to multiple self-recursive calls with call-site `E002` spans, expands `stdlib/algo` and `stdlib/str_utils`, and adds structured fix hints plus LSP diagnostic publication. It retires 10.12, 10.32, and 10.33 and adds 10.38–10.41.
+- **11.22** v0.3.9+ documents the opt-in Zig execution mode: `get_backend("zig")` and `--backend zig` on `run`, `build`, `exec`, and `compile`; Zig-style saturating arithmetic (`+|`, `-|`, `*|`); arbitrary bit-width `uN`/`iN` integers; `#[parallel]` range-loop splitting; and `SimdN<T>` vector builtins with horizontal reductions. It adds 8.12 and 10.42 and records the mode's C-ABI truncation, narrow AST subset, cache, and lack of synchronization guarantees. The experimental mode is not part of the Python/native parity contract.
 
 ## 12. Conformance Status
 
@@ -542,10 +568,10 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 1636 passed, 6 skipped, 22 deselected.
-- `pytest -q -m slow`: 22 passed, 1642 deselected.
+- `pytest -q`: 1902 passed, 6 skipped, 22 deselected.
+- `pytest -q -m slow`: 22 passed, 1908 deselected.
 
-The suite reports 0 failed. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints) and its cross-backend parity tests were added, replacing the earlier stale baseline.
+The suite reports 0 failed. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints), the 100-function framework registry with its ten frame test suites, and the differential fuzzer / release gate / telemetry / packaging suites, replacing the earlier stale baseline.
 
 - **12.1.1** The numbers above are from the current repository state at the time of writing. They MUST be updated whenever the test suite changes. The summary counts in 12.2.0 are derived from the 12.2 table below and MUST be recomputed whenever a row changes.
 - **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. The baseline is now restored; Blocked criteria have been re-evaluated in 12.2 and any that remain are marked **Partial** with a note recording what is still unverified.

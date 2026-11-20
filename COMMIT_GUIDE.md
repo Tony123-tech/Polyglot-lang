@@ -8,7 +8,8 @@ this repository.
 - Do not accumulate unrelated changes into a single commit.
 - A commit message must be summarizable in one sentence.
 - If a change touches multiple subsystems, split it by subsystem:
-  frontend, Python backend, Rust backend, API/CLI, tests, docs, build/CI.
+  frontend, Python backend, Rust backend, Zig backend, API/CLI, tests,
+  docs, build/CI.
 
 ## 2. Stage explicitly
 
@@ -40,7 +41,7 @@ type(scope): summary
 Allowed types: `feat`, `fix`, `refactor`, `test`, `docs`, `build`,
 `chore`, `perf`, `ci`.
 
-Scope is the subsystem: `frontend`, `python`, `rust`, `api`, `cli`,
+Scope is the subsystem: `frontend`, `python`, `rust`, `zig`, `api`, `cli`,
 `tests`, `docs`, `build`, `ci`.
 
 ## 5. Report after each commit

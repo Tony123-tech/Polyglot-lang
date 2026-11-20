@@ -2,6 +2,70 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Zig backend feature expansion
+
+- Expanded the experimental Zig backend into a documented opt-in execution
+  mode, selected with `--backend zig` on `run`, `build`, `exec`, and `compile`
+  or with `get_backend("zig")`. It generates Zig source, builds a dynamic
+  library with `zig build-lib -dynamic -O ReleaseFast`, caches it under
+  `~/.cache/polyglot-zig`, and loads `__cabi_*` wrappers with `ctypes`.
+- Added Zig-style saturating arithmetic `+|`, `-|`, and `*|`, including
+  `saturating_op`, `int_bounds`, and `wrap_arbitrary_int` helpers and a
+  zero-intrusion `lower_zig_ast` fallback that rewrites the operators to
+  `_zig_sat_add`, `_zig_sat_sub`, and `_zig_sat_mul`.
+- Added arbitrary bit-width integer types `uN`/`iN` for `0 <= N <= 65535`,
+  represented at their native Zig width. The Python C ABI exposes 64-bit
+  integers, so wider values truncate at that boundary.
+- Added `#[parallel]` lowering for direct range `for` loops, splitting work
+  across up to 16 threads capped by the available CPU count. There are no
+  ordering, reduction, locking, or synchronization guarantees; nested loops
+  run serially.
+- Added `SimdN<T>` lowering to `@Vector(N, T)` with `Simd::splat`,
+  `Simd::load`, `Simd::store`, and `Simd::reduce_add`/`reduce_mul`/
+  `reduce_min`/`reduce_max`.
+- Added `examples/zig_parallel_simd.poly`, combining `#[parallel]`, SIMD
+  load/store/reduction, and a saturating `u8` return, plus extended coverage
+  in `tests/test_zig_backend.py` for arbitrary widths, parallel scaling, SIMD,
+  the example program, and CLI `run`/`build`.
+- Documented the mode in README, GUIDE, SPEC 8.12/10.42/11.22, NOTES,
+  `docs/overview.md`, `docs/architecture.md`, `CONTRIBUTING.md`, and the new
+  `docs/zig.md`. The Zig backend is explicitly outside the Python/native
+  parity contract; it lowers a narrow AST subset, produces a C-ABI library
+  rather than an importable extension, and truncates Python-boundary integers
+  to 64 bits.
+
+## Unreleased — verification, telemetry, and release readiness
+
+- Added `tools/diff_fuzz.py`, a deterministic seed-reproducible differential
+  fuzzer that compares Python and native backends under isolated cache scopes,
+  covers recursive generics/traits/match guards/control flow/E001–E008 cases,
+  and writes minimal mismatch artifacts only when a mismatch occurs.
+- Added `tools/release_gate.py` with `--quick`/`--full`, fixed-order checks,
+  isolated cargo target directories, bounded fuzz seeds, and one aggregated
+  `ci_generate_release_gate_report` result.
+- Added `api/telemetry.py` with a thread-safe collector/serializer, path
+  redaction, compile timing/cache/monomorph/hot-patch aggregation, CLI commands
+  (`telemetry`, `timings`, `cache`, `hotpatch`), and a visualizer `/api/telemetry`
+  endpoint plus collapsed panel with graceful empty states.
+- Fixed wheel/sdist packaging: `framework_functions`, `diagnostics`, `docs`,
+  `tools.build_ci`, and the new installable `regression.harness` package are
+  shipped so the 100-function registry resolves in fresh environments;
+  `tests/regression_harness.py` is now a compatibility re-export. Added Cargo
+  package metadata and isolated cache/build tests.
+
+## Unreleased — 100 framework functions
+
+- Added `framework_functions`, a stable registry for 100 numbered compiler,
+  runtime, diagnostics, CI, docs, and regression-harness functions across ten
+  frames, with `get_function`, `invoke`, `iter_functions`, and
+  `validate_registry`.
+- Added frame modules under `compiler/frontend`, `compiler/types`, `compiler/ir`,
+  `backends/python`, `backends/rust`, `runtime/hotpatch`, `runtime/concurrency`,
+  `diagnostics`, `tools/build_ci`, `docs`, and `tests/regression_harness.py`,
+  each with dedicated tests.
+- Documented the canonical list and naming notes in `docs/framework_functions.md`
+  and added SPEC 9.12 for the registry contract.
+
 ## Unreleased — Priority language and tooling features (v0.3.9)
 
 - Lowered `vec![...]` in the parser to the shared `ArrayExpr`/`RepeatArray`
@@ -165,8 +229,10 @@ Version history derived from SPECIFICATION.md Section 11.
   diagnostics. It is not built by `polyglot build` or CI.
 - Documented the capability matrix in `docs/unified_pillars.md` and aligned the
   `#[gpu]`/`#[npu]` feature gate with the accelerator boundary.
-- Added a Zig backend and lowering pass, including Zig-style `errdefer` and the
-  saturating `+|`, `-|`, and `*|` operator family.
+- Added the initial Zig backend and lowering pass, including the saturating
+  `+|`, `-|`, and `*|` operator family. The later Zig feature expansion above
+  adds `#[parallel]`, SIMD, arbitrary bit-width integers, and the documented
+  C-ABI boundaries.
 - Fixed recursive generic struct and enum expansion by caching the in-progress
   instantiation before transforming variants, so `Node<T>` and `Tree<T>` reach
   a fixed point instead of exhausting the recursion limit.
