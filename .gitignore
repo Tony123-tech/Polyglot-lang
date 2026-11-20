@@ -12,6 +12,9 @@ venv/
 .cache/
 **/target/
 
+# Isolated verification artifacts (fuzzer mismatches, release-gate reports)
+.artifacts/
+
 # OS / IDE
 .DS_Store
 .idea/

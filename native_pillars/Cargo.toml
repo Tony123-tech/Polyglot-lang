@@ -2,6 +2,10 @@
 name = "polyglot_pillars"
 version = "0.1.0"
 edition = "2021"
+description = "PyO3 extension backend for the polyglot-lang compiler"
+license = "MIT"
+repository = "https://github.com/Tony123-tech/Polyglot-lang"
+publish = false
 
 [lib]
 name = "polyglot_pillars"

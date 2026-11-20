@@ -53,12 +53,17 @@ include = [
     "backends*",
     "compiler*",
     "debug*",
+    "diagnostics*",
     "distributed*",
+    "docs*",
+    "framework_functions*",
     "proofs*",
+    "regression*",
     "runtime*",
     "security*",
     "stdlib*",
     "swarm*",
+    "tools.build_ci*",
     "zig*",
 ]
 
