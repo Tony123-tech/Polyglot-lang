@@ -1,0 +1,21 @@
+#[parallel]
+fn simd_scale_add(out: &mut [f64], inp: &[f64], scale: f64, bias: f64, chunks: usize) {
+    let v_scale: Simd4<f64> = Simd::splat(scale);
+    let v_bias: Simd4<f64> = Simd::splat(bias);
+    for c in 0..chunks {
+        let idx: usize = c * 4;
+        let v: Simd4<f64> = Simd::load(inp, idx, 4);
+        let res: Simd4<f64> = (v * v_scale) + v_bias;
+        Simd::store(out, idx, 4, res);
+    }
+}
+
+fn simd_dot4(a: &[f64], b: &[f64]) -> f64 {
+    let va: Simd4<f64> = Simd::load(a, 0, 4);
+    let vb: Simd4<f64> = Simd::load(b, 0, 4);
+    Simd::reduce_add(va * vb)
+}
+
+fn main() -> i64 {
+    (250 as u8 +| 20 as u8) as i64
+}

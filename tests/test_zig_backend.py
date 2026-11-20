@@ -95,3 +95,15 @@ def test_zig_simd_vector_parallel():
     assert (
         out_arr[0] == 5.0 and out_arr[3] == 11.0 and out_arr[1023] == 1023.0 * 2.0 + 5.0
     )
+
+
+def test_zig_simd_horizontal_reduce_and_example():
+    import ctypes
+    from pathlib import Path
+
+    src = Path("examples/zig_parallel_simd.poly").read_text(encoding="utf-8")
+    ns = compile_zig(parse(lex(src)))
+    a = (ctypes.c_double * 4)(1.0, 2.0, 3.0, 4.0)
+    b = (ctypes.c_double * 4)(10.0, 20.0, 30.0, 40.0)
+    assert ns["simd_dot4"](a, b) == 300.0
+    assert ns["main"]() == 255

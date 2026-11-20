@@ -85,7 +85,11 @@ class ZigCodegen:
                 return f"[*]{'' if ty.mutable else 'const '}{self._zig_type(ty.inner.inner)}"
             return self._zig_type(ty.inner)
         if isinstance(ty, TypeName):
-            if ty.name.startswith("Simd") and ty.name[4:].isdigit() and len(ty.args) == 1:
+            if (
+                ty.name.startswith("Simd")
+                and ty.name[4:].isdigit()
+                and len(ty.args) == 1
+            ):
                 return f"@Vector({ty.name[4:]}, {self._zig_type(ty.args[0])})"
             if ty.name in {"f32", "f64", "bool", "usize", "isize"} or (
                 ty.name[:1] in {"i", "u"} and ty.name[1:].isdigit()
@@ -244,6 +248,17 @@ class ZigCodegen:
                 return f"{self._emit_expr(a[0])}[{self._emit_expr(a[1])}..][0..{self._emit_expr(a[2])}].*"
             if m == "store" and len(a) == 4:
                 return f"{self._emit_expr(a[0])}[{self._emit_expr(a[1])}..][0..{self._emit_expr(a[2])}].* = {self._emit_expr(a[3])}"
+            if (
+                m in {"reduce_add", "reduce_mul", "reduce_min", "reduce_max"}
+                and len(a) == 1
+            ):
+                op = {
+                    "reduce_add": ".Add",
+                    "reduce_mul": ".Mul",
+                    "reduce_min": ".Min",
+                    "reduce_max": ".Max",
+                }[m]
+                return f"@reduce({op}, {self._emit_expr(a[0])})"
         return "0"
 
 
