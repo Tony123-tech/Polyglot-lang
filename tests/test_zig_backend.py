@@ -69,3 +69,29 @@ def test_zig_cli_run_and_build(tmp_path):
         == 0
     )
     assert (tmp_path / "demo_zig.so").exists()
+
+
+def test_zig_simd_vector_parallel():
+    import ctypes
+
+    src = """
+    #[parallel]
+    fn simd_fma(out: &mut [f64], inp: &[f64], scale: f64, bias: f64, chunks: usize) {
+        let v_scale: Simd4<f64> = Simd::splat(scale);
+        let v_bias: Simd4<f64> = Simd::splat(bias);
+        for c in 0..chunks {
+            let idx: usize = c * 4;
+            let v: Simd4<f64> = Simd::load(inp, idx, 4);
+            let res: Simd4<f64> = (v * v_scale) + v_bias;
+            Simd::store(out, idx, 4, res);
+        }
+    }
+    """
+    ns = compile_zig(parse(lex(src)))
+    n = 1024
+    inp_arr = (ctypes.c_double * n)(*[float(i) for i in range(n)])
+    out_arr = (ctypes.c_double * n)()
+    ns["simd_fma"](out_arr, inp_arr, 2.0, 5.0, n // 4)
+    assert (
+        out_arr[0] == 5.0 and out_arr[3] == 11.0 and out_arr[1023] == 1023.0 * 2.0 + 5.0
+    )
