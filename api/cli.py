@@ -8,6 +8,7 @@ Subcommands:
     compile  (compatibility) Compile and print exported names.
     exec  Compile and execute with JSON timing/memory metadata.
     visualizer  Serve the interactive AST/monomorphization visualizer.
+    telemetry  Show recorded compile/cache/hotpatch telemetry (aliases: timings, cache, hotpatch).
 """
 
 from __future__ import annotations
@@ -389,6 +390,18 @@ def cmd_compile(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_telemetry(args: argparse.Namespace) -> int:
+    """Print the session telemetry snapshot as JSON or aligned text."""
+    from api.telemetry import format_terminal, snapshot
+
+    payload = snapshot()
+    if args.json:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        print(format_terminal(payload, section=args.section, color=args.color))
+    return 0
+
+
 def _add_error_format(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--error-format",
@@ -633,6 +646,45 @@ def build_parser() -> argparse.ArgumentParser:
     compile_p.add_argument("--verbose", action="store_true")
     _add_error_format(compile_p)
     compile_p.set_defaults(func=cmd_compile)
+
+    def add_telemetry_arguments(
+        command_parser: argparse.ArgumentParser, *, section: str
+    ) -> None:
+        command_parser.add_argument(
+            "--section",
+            choices=["all", "telemetry", "timings", "cache", "hotpatch"],
+            default=section,
+            help="Section to render (default: %(default)s)",
+        )
+        command_parser.add_argument(
+            "--json", action="store_true", help="Print the JSON snapshot"
+        )
+        command_parser.add_argument(
+            "--color", action="store_true", help="Use ANSI colors in text output"
+        )
+        command_parser.set_defaults(func=cmd_telemetry, section=section)
+
+    telemetry_p = sub.add_parser(
+        "telemetry",
+        help="Show recorded session telemetry",
+        description=(
+            "Render compile timings, cache metrics, monomorphization counts, "
+            "and explicit hotpatch activity from this CLI session."
+        ),
+    )
+    add_telemetry_arguments(telemetry_p, section="all")
+
+    for alias, alias_section in (
+        ("timings", "telemetry"),
+        ("cache", "cache"),
+        ("hotpatch", "hotpatch"),
+    ):
+        alias_p = sub.add_parser(
+            alias,
+            help=f"Alias for telemetry --section {alias_section}",
+            description=f"Alias for `polyglot telemetry --section {alias_section}`.",
+        )
+        add_telemetry_arguments(alias_p, section=alias_section)
 
     return parser
 

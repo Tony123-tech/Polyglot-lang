@@ -446,6 +446,59 @@
     white-space: pre-wrap; word-break: break-word;
   }
 
+  /* Session telemetry: collapsed by default, outside the AST tree. */
+  .telemetry-panel { grid-column: 1 / -1; display: block; }
+  .telemetry-panel > summary {
+    display: flex; align-items: center; gap: 9px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(15, 23, 42, .55);
+    color: var(--cyan);
+    font-size: 12.5px; letter-spacing: .055em; text-transform: uppercase;
+    cursor: pointer; user-select: none;
+    list-style: none;
+  }
+  .telemetry-panel > summary::-webkit-details-marker { display: none; }
+  .telemetry-panel > summary::before { content: "▸"; color: var(--cyan); }
+  .telemetry-panel[open] > summary::before { content: "▾"; }
+  .telemetry-head {
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    padding: 8px 14px 0;
+  }
+  .telemetry-status { color: var(--dim); font: 10.5px var(--mono); }
+  .telemetry-status.ok { color: var(--green); }
+  .telemetry-status.warn { color: var(--amber); }
+  .telemetry-status.bad { color: var(--red); }
+  .telemetry-status.loading { color: var(--amber); animation: telemetry-pulse 1s ease-in-out infinite; }
+  @keyframes telemetry-pulse { 50% { opacity: .4; } }
+  .btn.telemetry-refresh { padding: 4px 10px; font-size: 11px; color: var(--cyan); border-color: rgba(34, 211, 238, .35); }
+  .btn.telemetry-refresh:hover { border-color: var(--cyan); background: rgba(8, 145, 178, .16); }
+  .telemetry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; padding: 10px 14px 14px; }
+  .telemetry-section { min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: rgba(2, 6, 23, .4); overflow: hidden; }
+  .telemetry-section h3 {
+    margin: 0; padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    color: #a5f3fc; background: rgba(8, 145, 178, .08);
+    font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .telemetry-body { padding: 8px 10px; max-height: 190px; overflow: auto; }
+  .telemetry-table { width: 100%; border-collapse: collapse; font: 11px var(--mono); }
+  .telemetry-table th { color: var(--dim); text-align: left; font-weight: 600; padding: 3px 6px 5px 0; border-bottom: 1px solid var(--border); }
+  .telemetry-table td { padding: 3px 6px 3px 0; color: #cbd5e1; border-bottom: 1px solid rgba(30, 41, 59, .6); }
+  .telemetry-table td:last-child, .telemetry-table th:last-child { text-align: right; padding-right: 0; }
+  .telemetry-table tr.telemetry-total td { color: var(--green); font-weight: 700; }
+  .telemetry-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 3px 0; font: 11px var(--mono); border-bottom: 1px solid rgba(30, 41, 59, .55); }
+  .telemetry-row:last-child { border-bottom: 0; }
+  .telemetry-key { color: var(--dim); }
+  .telemetry-value { color: #cbd5e1; font-weight: 600; text-align: right; word-break: break-word; }
+  .telemetry-note { margin-top: 8px; color: var(--amber); font: 10.5px var(--mono); }
+  @media (prefers-reduced-motion: reduce) {
+    .telemetry-panel *, .telemetry-panel *::before, .telemetry-panel *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
   .toast {
     position: fixed; left: 50%; bottom: 22px; z-index: 100;
     transform: translate(-50%, 16px);
@@ -636,6 +689,34 @@
     <pre class="console-output empty">Press “Run both” to execute.</pre>
     <details class="stderr-wrap"><summary>stderr</summary><pre class="console-stderr"></pre></details>
   </section>
+
+  <details class="panel telemetry-panel" id="telemetry-panel">
+    <summary>Telemetry</summary>
+    <div class="telemetry-head">
+      <span class="telemetry-status" id="telemetry-status" aria-live="polite">not loaded</span>
+      <button class="btn ghost telemetry-refresh" id="telemetry-refresh" type="button">Refresh</button>
+    </div>
+    <div class="telemetry-grid">
+      <section class="telemetry-section">
+        <h3>Compile phases</h3>
+        <div class="telemetry-body" id="telemetry-timings">
+          <div class="empty">No telemetry recorded yet in this session.</div>
+        </div>
+      </section>
+      <section class="telemetry-section">
+        <h3>Cache</h3>
+        <div class="telemetry-body" id="telemetry-cache">
+          <div class="empty">No telemetry recorded yet in this session.</div>
+        </div>
+      </section>
+      <section class="telemetry-section">
+        <h3>Hotpatch</h3>
+        <div class="telemetry-body" id="telemetry-hotpatch">
+          <div class="empty">No telemetry recorded yet in this session.</div>
+        </div>
+      </section>
+    </div>
+  </details>
 </main>
 
 <footer>
@@ -698,6 +779,12 @@ const els = {
   factConcrete: document.getElementById("fact-concrete"),
   factDiagnostics: document.getElementById("fact-diagnostics"),
   toast: document.getElementById("toast"),
+  telemetryPanel: document.getElementById("telemetry-panel"),
+  telemetryTimings: document.getElementById("telemetry-timings"),
+  telemetryCache: document.getElementById("telemetry-cache"),
+  telemetryHotpatch: document.getElementById("telemetry-hotpatch"),
+  telemetryRefresh: document.getElementById("telemetry-refresh"),
+  telemetryStatus: document.getElementById("telemetry-status"),
   panels: {
     python: document.getElementById("panel-python"),
     native: document.getElementById("panel-native"),
@@ -1614,6 +1701,247 @@ async function loadHealth() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Session telemetry
+// ---------------------------------------------------------------------------
+
+const TELEMETRY_EMPTY = "No telemetry recorded yet in this session.";
+
+function telemetryEmpty(element) {
+  element.replaceChildren(make("div", "empty", TELEMETRY_EMPTY));
+}
+
+function telemetryCount(source, keys, fallback = null) {
+  if (!source || typeof source !== "object") return fallback;
+  for (const key of keys) {
+    const value = source[key];
+    if (Array.isArray(value)) return value.length;
+    if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return fallback;
+}
+
+function telemetryTextRows(element, rows) {
+  element.replaceChildren();
+  if (!rows.length) {
+    telemetryEmpty(element);
+    return;
+  }
+  for (const [label, value] of rows.slice(0, 12)) {
+    const row = make("div", "telemetry-row");
+    row.append(make("span", "telemetry-key", label));
+    row.append(make("b", "telemetry-value", String(value)));
+    element.append(row);
+  }
+}
+
+function telemetryNumberRows(value, prefix, rows, limit) {
+  if (rows.length >= limit) return;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    rows.push([prefix, value]);
+  } else if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const label = prefix ? prefix + "[" + index + "]" : String(index);
+      telemetryNumberRows(value[index], label, rows, limit);
+    }
+  } else if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      telemetryNumberRows(child, prefix ? prefix + "." + key : key, rows, limit);
+    }
+  }
+}
+
+function renderTelemetryTimings(element, timings, monomorph) {
+  const source = timings && typeof timings === "object" ? timings : {};
+  const rows = [];
+  const phaseMs = source.phase_ms;
+  if (phaseMs && typeof phaseMs === "object") {
+    for (const [phase, value] of Object.entries(phaseMs)) {
+      if (Number.isFinite(Number(value))) rows.push([phase, Number(value)]);
+    }
+  } else {
+    const skip = new Set(["phases", "benchmarks", "critical_phase", "samples"]);
+    for (const [key, value] of Object.entries(source)) {
+      if (!skip.has(key)) telemetryNumberRows(value, key, rows, 10);
+    }
+  }
+  const specializations = telemetryCount(monomorph, [
+    "total_specializations", "specialization_count", "specializations",
+  ]);
+  const families = monomorph && monomorph.families;
+  const familyCount = families && typeof families === "object"
+    ? Object.keys(families).length
+    : null;
+  if (!rows.length && specializations === null) {
+    telemetryEmpty(element);
+    return;
+  }
+  element.replaceChildren();
+  const table = make("table", "telemetry-table");
+  const headRow = make("tr");
+  headRow.append(make("th", "", "Phase"), make("th", "", "Time"));
+  const head = make("thead");
+  head.append(headRow);
+  const body = make("tbody");
+  for (const [label, value] of rows) {
+    const row = make("tr");
+    row.append(make("td", "", label || "phase"), make("td", "", formatMs(value)));
+    body.append(row);
+  }
+  const explicitTotal = telemetryCount(source, ["total_ms", "total", "wall_ms"]);
+  const total = explicitTotal !== null
+    ? explicitTotal
+    : rows.reduce((sum, [, value]) => sum + value, 0);
+  const totalRow = make("tr", "telemetry-total");
+  totalRow.append(make("td", "", explicitTotal !== null ? "Total" : "Total (phases)"));
+  totalRow.append(make("td", "", rows.length ? formatMs(total) : "—"));
+  body.append(totalRow);
+  table.append(head, body);
+  element.append(table);
+  if (specializations !== null) {
+    const note = "specializations: " + specializations +
+      (familyCount !== null ? " · families: " + familyCount : "");
+    element.append(make("div", "telemetry-note", note));
+  }
+  if (families && typeof families === "object") {
+    const counts = Object.entries(families)
+      .slice(0, 5)
+      .map(([name, info]) =>
+        name + ": " + telemetryCount(info, ["instantiations", "specializations"], 0)
+      );
+    if (counts.length) element.append(make("div", "telemetry-note", counts.join(" · ")));
+  }
+}
+
+function renderTelemetryCache(element, cache) {
+  const source = cache && typeof cache === "object" ? cache : {};
+  const rows = [];
+  const hits = telemetryCount(source, ["total_hits", "hits", "hit_count"]);
+  const misses = telemetryCount(source, ["total_misses", "misses", "miss_count"]);
+  const rate = telemetryCount(source, ["hit_rate", "hitRate"]);
+  if (hits !== null) rows.push(["Hits", String(hits)]);
+  if (misses !== null) rows.push(["Misses", String(misses)]);
+  if (rate !== null) {
+    rows.push(["Hit rate", (rate <= 1 ? rate * 100 : rate).toFixed(1) + "%"]);
+  } else if (hits !== null && misses !== null && hits + misses > 0) {
+    rows.push(["Hit rate", ((hits / (hits + misses)) * 100).toFixed(1) + "%"]);
+  }
+  const reasons = source.rebuild_reasons || source.reasons;
+  if (reasons && typeof reasons === "object" && !Array.isArray(reasons)) {
+    const entries = Object.entries(reasons).slice(0, 4);
+    if (entries.length) {
+      rows.push(["Rebuild reasons", entries.map(([name, count]) => name + " ×" + count).join(", ")]);
+    }
+  } else if (Array.isArray(reasons) && reasons.length) {
+    rows.push(["Rebuild reasons", reasons.slice(0, 4).map(String).join(", ")]);
+  } else if (typeof reasons === "string" && reasons) {
+    rows.push(["Rebuild reasons", reasons]);
+  }
+  for (const scope of Array.isArray(source.scopes) ? source.scopes.slice(0, 3) : []) {
+    if (!scope || typeof scope !== "object") continue;
+    rows.push([
+      "Scope " + String(scope.scope || "default"),
+      telemetryCount(scope, ["hits"], 0) + " / " + telemetryCount(scope, ["misses"], 0) + " h/m",
+    ]);
+  }
+  const backends = source.backends;
+  if (backends && typeof backends === "object") {
+    for (const [name, info] of Object.entries(backends).slice(0, 4)) {
+      if (!info || typeof info !== "object") continue;
+      rows.push([
+        name + " cache",
+        telemetryCount(info, ["hits"], 0) + " / " + telemetryCount(info, ["misses"], 0) + " h/m",
+      ]);
+    }
+  }
+  telemetryTextRows(element, rows);
+}
+
+function renderTelemetryHotpatch(element, hotpatch, events) {
+  const source = hotpatch && typeof hotpatch === "object" ? hotpatch : {};
+  const rows = [];
+  const epoch = telemetryCount(source, ["epoch", "current_epoch"]);
+  if (epoch !== null) rows.push(["Epoch", String(epoch)]);
+  const capabilities = source.capabilities;
+  if (capabilities && typeof capabilities === "object") {
+    const active = Object.entries(capabilities)
+      .filter(([, info]) => info && typeof info === "object" && info.active)
+      .map(([name]) => name);
+    rows.push(["Active capabilities", active.length ? active.slice(0, 8).join(", ") : "none"]);
+  }
+  const rollbacks = telemetryCount(source, ["rollbacks", "rollback_count"]);
+  if (rollbacks !== null) rows.push(["Rollbacks", String(rollbacks)]);
+  let diagnostic = source.latest_diagnostic || source.diagnostic || source.last_diagnostic;
+  if (!diagnostic && Array.isArray(events)) {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (!event || String(event.kind || "") !== "hotpatch") continue;
+      const payload = event.payload || event;
+      diagnostic = payload.diagnostic || payload.message || payload.event;
+      if (diagnostic) break;
+    }
+  }
+  if (diagnostic) {
+    rows.push([
+      "Latest diagnostic",
+      typeof diagnostic === "object"
+        ? String(diagnostic.message || diagnostic.code || JSON.stringify(diagnostic))
+        : String(diagnostic),
+    ]);
+  }
+  telemetryTextRows(element, rows);
+}
+
+function renderTelemetry(data) {
+  if (!data || data.available === false) {
+    telemetryEmpty(els.telemetryTimings);
+    telemetryEmpty(els.telemetryCache);
+    telemetryEmpty(els.telemetryHotpatch);
+    return;
+  }
+  renderTelemetryTimings(els.telemetryTimings, data.timings, data.monomorph);
+  const cache = data.cache || {};
+  const cacheEmpty = !(cache.scopes || []).length &&
+    !Object.keys(cache.backends || {}).length &&
+    !Object.keys(cache.rebuild_reasons || {}).length;
+  if (cacheEmpty) telemetryEmpty(els.telemetryCache);
+  else renderTelemetryCache(els.telemetryCache, cache);
+  const hotpatch = data.hotpatch || {};
+  const hotpatchEmpty = !(hotpatch.events || []).length &&
+    hotpatch.epoch == null && !hotpatch.latest_diagnostic;
+  if (hotpatchEmpty) telemetryEmpty(els.telemetryHotpatch);
+  else renderTelemetryHotpatch(els.telemetryHotpatch, hotpatch, data.recent_events);
+}
+
+async function loadTelemetry() {
+  els.telemetryRefresh.disabled = true;
+  els.telemetryStatus.className = "telemetry-status loading";
+  els.telemetryStatus.textContent = "loading…";
+  try {
+    const response = await fetch("/api/telemetry", { cache: "no-store" });
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    if (!response.ok || !data || typeof data !== "object") {
+      throw new Error("telemetry unavailable");
+    }
+    renderTelemetry(data);
+    els.telemetryStatus.textContent = data.available ? "live" : (data.note || "unavailable");
+    els.telemetryStatus.className = "telemetry-status " + (data.available ? "ok" : "warn");
+  } catch {
+    renderTelemetry(null);
+    els.telemetryStatus.textContent = "unavailable";
+    els.telemetryStatus.className = "telemetry-status bad";
+  } finally {
+    els.telemetryRefresh.disabled = false;
+  }
+}
+
 function onSourceChanged() {
   updateCursor();
   state.focusSpan = null;
@@ -1654,6 +1982,7 @@ function bindEvents() {
   });
   els.analyzeBtn.addEventListener("click", runAnalyze);
   els.runBtn.addEventListener("click", runBoth);
+  els.telemetryRefresh.addEventListener("click", loadTelemetry);
   window.addEventListener("resize", () => {
     els.highlight.scrollTop = els.source.scrollTop;
     els.highlight.scrollLeft = els.source.scrollLeft;
@@ -1666,6 +1995,7 @@ function init() {
   renderEditorHighlight();
   bindEvents();
   loadHealth();
+  loadTelemetry();
   runAnalyze();
 }
 

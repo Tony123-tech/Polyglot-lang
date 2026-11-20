@@ -7,6 +7,7 @@ The server is intentionally small and local-only:
 * ``POST /api/run`` shells out to ``python -m api.cli exec`` so user programs
   never execute inside the HTTP server.
 * ``GET /api/health`` reports toolchain availability for the UI.
+* ``GET /api/telemetry`` exposes a redacted, session-local telemetry snapshot.
 
 Only the standard library is used, and the default bind address is
 ``127.0.0.1``. Code executed through ``/api/run`` is trusted local code: the
@@ -34,7 +35,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from api.telemetry import collector, snapshot
 from api.visualizer import analyze
+from lexer import lex
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -47,6 +50,7 @@ MIN_TIMEOUT = 1.0
 MAX_TIMEOUT = 600.0
 ALLOWED_BACKENDS = ("python", "native", "wasm", "jit")
 DEFAULT_BACKENDS = ("python", "native")
+TELEMETRY_SCHEMA = "polyglot-telemetry/v1"
 
 try:  # pragma: no cover - depends on installation metadata
     from importlib.metadata import PackageNotFoundError
@@ -316,12 +320,177 @@ def run_request(payload: dict[str, Any]) -> dict[str, Any]:
         with ThreadPoolExecutor(max_workers=len(backends)) as pool:
             results = list(pool.map(invoke, backends))
 
-    return {
+    response = {
         "ok": bool(results) and all(item["ok"] for item in results),
         "source_length": len(source),
         "results": results,
         "duration_ms": round((time.perf_counter() - started) * 1000, 3),
     }
+    _record_run_telemetry(source, results)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Best-effort telemetry recording
+#
+# Every recorder below is wrapped by its caller in ``try/except Exception``:
+# telemetry is diagnostic-only and must never change a user-facing response.
+# Only lengths, phase labels, durations and counts are recorded.
+# ---------------------------------------------------------------------------
+
+
+def _safe_label(value: Any, *, limit: int = 48) -> str | None:
+    text = value.strip() if isinstance(value, str) else None
+    if not text or len(text) > limit or "/" in text or "\\" in text:
+        return None
+    return text
+
+
+def _finite_ms(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not 0 <= value < 1e9:
+        return None
+    return float(value)
+
+
+def _monomorph_telemetry_summary(result: dict[str, Any]) -> dict[str, Any]:
+    concrete = result.get("monomorphized")
+    concrete = concrete if isinstance(concrete, dict) else {}
+    instantiations = concrete.get("instantiations")
+    instantiations = instantiations if isinstance(instantiations, list) else []
+    by_kind: dict[str, int] = {}
+    for item in instantiations:
+        kind = _safe_label(item.get("kind")) if isinstance(item, dict) else None
+        if kind:
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+    count = len(instantiations)
+    return {
+        "backend": "python",
+        "total_specializations": count,
+        "families": by_kind,
+    }
+
+
+def _record_analyze_telemetry(source: str, result: dict[str, Any]) -> None:
+    timing = result.get("timing")
+    timing = timing if isinstance(timing, dict) else {}
+    samples: dict[str, dict[str, float]] = {}
+
+    # ``analyze()`` reports parse (lex + parse) and monomorphize timings.  Lex
+    # has no separate measurement, so take a real one rather than guess a split.
+    lex_started = time.perf_counter()
+    try:
+        lex(source)
+    except Exception:  # noqa: S110 - telemetry must never fail the request
+        pass
+    finally:
+        samples["lex"] = {"ms": round((time.perf_counter() - lex_started) * 1000, 3)}
+    for key, field in (("parse", "parse_ms"), ("monomorphize", "monomorphize_ms")):
+        duration = _finite_ms(timing.get(field))
+        if duration is not None:
+            samples[key] = {"ms": duration}
+
+    summary = _monomorph_telemetry_summary(result)
+    collector().record_compile(
+        backend="python",
+        samples=samples,
+        source_length=len(source),
+        monomorph=summary,
+    )
+
+
+def _cache_telemetry(result: dict[str, Any]) -> tuple[int, int, list[str], str | None]:
+    cache = result.get("cache")
+    cache = cache if isinstance(cache, dict) else {}
+    reasons: list[str] = []
+    raw_reasons = [
+        result.get("rebuild_reason"),
+        result.get("cache_rebuild_reason"),
+        cache.get("rebuild_reason"),
+        cache.get("miss_reason"),
+        cache.get("reason"),
+    ]
+    extra_reasons = result.get("rebuild_reasons", cache.get("rebuild_reasons"))
+    if isinstance(extra_reasons, (list, tuple)):
+        raw_reasons.extend(extra_reasons)
+    for reason in raw_reasons:
+        label = _safe_label(reason, limit=64)
+        if label and label not in reasons:
+            reasons.append(label)
+
+    flag = result.get("reused")
+    for key in ("cache_hit", "from_cache"):
+        if flag is None:
+            flag = result.get(key)
+    for key in ("reused", "hit"):
+        if flag is None:
+            flag = cache.get(key)
+
+    built = (
+        bool(reasons)
+        or result.get("rebuilt") is True
+        or cache.get("built") is True
+        or cache.get("rebuilt") is True
+        or (_finite_ms(result.get("compile_ms")) or 0) > 0
+    )
+    scope = _safe_label(cache.get("scope"))
+    if flag is True:
+        return 1, 0, reasons, scope
+    if flag is False or built:
+        return 0, 1, reasons, scope
+    return 0, 0, reasons, scope
+
+
+def _record_hotpatch_telemetry(result: dict[str, Any]) -> None:
+    payload = result.get("hotpatch")
+    if not isinstance(payload, dict):
+        return
+    event = _safe_label(payload.get("event"), limit=32)
+    if not event:
+        return
+    epoch = payload.get("epoch")
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or not 0 <= epoch < 1e9:
+        epoch = None
+    collector().record_hotpatch(
+        event,
+        capability=_safe_label(payload.get("capability")),
+        epoch=epoch,
+        diagnostic=_safe_label(payload.get("diagnostic"), limit=64),
+    )
+
+
+def _record_run_telemetry(source: str, results: list[dict[str, Any]]) -> None:
+    for result in results:
+        try:
+            if not isinstance(result, dict):
+                continue
+            backend = _safe_label(result.get("backend"), limit=24)
+            backend = backend if backend in ALLOWED_BACKENDS else "unknown"
+            samples: dict[str, dict[str, float]] = {}
+            for key, field in (
+                ("compile", "compile_ms"),
+                ("total", "duration_ms"),
+            ):
+                duration = _finite_ms(result.get(field))
+                if duration is not None:
+                    samples[key] = {"ms": duration}
+            if samples:
+                collector().record_compile(
+                    backend=backend, samples=samples, source_length=len(source)
+                )
+            hits, misses, reasons, scope = _cache_telemetry(result)
+            collector().record_cache(
+                samples=None,
+                backend=backend,
+                hits=hits,
+                misses=misses,
+                rebuild_reasons=reasons,
+                scope=scope or backend,
+            )
+            _record_hotpatch_telemetry(result)
+        except Exception:  # noqa: S110 - telemetry must never fail the request
+            pass
 
 
 class VisualizerHandler(BaseHTTPRequestHandler):
@@ -387,6 +556,9 @@ class VisualizerHandler(BaseHTTPRequestHandler):
         if path == "/api/health":
             self._send_json(HTTPStatus.OK, health_payload())
             return
+        if path == "/api/telemetry":
+            self._send_json(HTTPStatus.OK, snapshot())
+            return
         if path == "/favicon.ico":
             self._send_bytes(HTTPStatus.NO_CONTENT, b"", "image/x-icon")
             return
@@ -420,6 +592,10 @@ class VisualizerHandler(BaseHTTPRequestHandler):
                     {"ok": False, "error": f"{type(error).__name__}: {error}"},
                 )
                 return
+            try:
+                _record_analyze_telemetry(source, result)
+            except Exception:  # noqa: S110 - telemetry must never fail the request
+                pass
             self._send_json(HTTPStatus.OK, result)
             return
 
@@ -465,6 +641,7 @@ def health_payload() -> dict[str, Any]:
         "ok": True,
         "name": "polyglot-visualizer",
         "version": VERSION,
+        "telemetry_schema": TELEMETRY_SCHEMA,
         "python": sys.version.split()[0],
         "executable": sys.executable,
         "cargo": shutil.which("cargo"),
@@ -537,6 +714,7 @@ __all__ = [
     "ALLOWED_BACKENDS",
     "DEFAULT_BACKENDS",
     "DEFAULT_TIMEOUT",
+    "TELEMETRY_SCHEMA",
     "VisualizerHTTPServer",
     "health_payload",
     "make_server",
