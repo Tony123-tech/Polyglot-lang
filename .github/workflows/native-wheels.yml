@@ -1,0 +1,125 @@
+# Native wheel build/SBOM/signing/publish pipeline. All steps here are CI-only.
+# `workflow_dispatch` only builds artifacts; it never signs or publishes.
+name: Native wheels
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build wheel (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    # OIDC token is needed only by the release-only Sigstore signing step.
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: macos-x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows-x86_64
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native_pillars
+
+      - name: Install maturin and CycloneDX
+        run: python -m pip install "maturin>=1.7" cyclonedx-py
+
+      # --compatibility linux is only valid for Linux builds. It is passed here
+      # (not hardcoded in native_pillars/pyproject.toml) so macOS/Windows stay valid.
+      - name: Build wheel (Linux compatibility)
+        if: runner.os == 'Linux'
+        working-directory: native_pillars
+        run: maturin build --release --out dist --target ${{ matrix.target }} --compatibility linux
+
+      - name: Build wheel (macOS/Windows)
+        if: runner.os != 'Linux'
+        working-directory: native_pillars
+        run: maturin build --release --out dist --target ${{ matrix.target }}
+
+      - name: Generate SBOM
+        working-directory: native_pillars
+        run: cyclonedx-py environment --output-format JSON --output-file sbom.json
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.artifact }}
+          path: native_pillars/dist/*.whl
+          if-no-files-found: error
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.artifact }}
+          path: native_pillars/sbom.json
+          if-no-files-found: error
+
+      # Signing is intentionally release-only: workflow_dispatch builds are not signed.
+      - name: Sign wheels (release only)
+        if: github.event_name == 'release'
+        uses: sigstore/gh-action-sigstore-python@v3
+        with:
+          inputs: native_pillars/dist/*.whl
+          upload-signing-artifacts: false
+          release-signing-artifacts: false
+
+      # v3 writes <wheel>.sigstore.json sidecars next to each input wheel.
+      - name: Upload signing bundles (release only)
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signatures-${{ matrix.artifact }}
+          path: native_pillars/dist/*.sigstore.json
+          if-no-files-found: error
+
+  publish:
+    name: Publish wheels to PyPI (release only)
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    # Configure the PyPI trusted publisher for this repository with the
+    # `pypi` environment and workflow file `native-wheels.yml`. No tokens live here.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download built wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish with trusted publishing (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

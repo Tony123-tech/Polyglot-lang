@@ -1,3 +1,6 @@
+# Fast PR/push checks. See .github/workflows/release-gate.yml for the full
+# ordered gate and .github/workflows/native-wheels.yml for native wheel builds;
+# docs/native_distribution.md explains which steps are CI-only.
 name: CI
 
 on:
@@ -50,3 +53,27 @@ jobs:
         with:
           name: pytest-cache
           path: .pytest_cache
+
+  gate:
+    name: Quick release gate
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native_pillars
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      # Fast gate for PRs; the full ordered gate is in release-gate.yml.
+      - name: Run quick release gate
+        run: python tools/release_gate.py --quick

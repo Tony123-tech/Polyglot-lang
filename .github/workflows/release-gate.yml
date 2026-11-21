@@ -1,0 +1,54 @@
+# Full ordered release gate (tools/release_gate.py --full).
+# CI-only: the worktree starts clean, so --allow-dirty is deliberately omitted.
+name: Release gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    name: Release gate (${{ matrix.os }}, Python ${{ matrix.python-version }}, Rust ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    # Full mode runs 12 fuzz seeds x 24 cases plus the whole pytest suite.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        python-version: ["3.14"]
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Stable Rust is selected via the matrix `rust` toolchain value.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native_pillars
+
+      - name: Install package and dev dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run full release gate
+        run: python tools/release_gate.py --full
+
+      - name: Upload release-gate artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-artifacts-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: .artifacts/
+          if-no-files-found: ignore

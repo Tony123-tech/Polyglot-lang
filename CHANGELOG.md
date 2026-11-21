@@ -2,6 +2,69 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — research frames H–K
+
+- Added Frame H (`compiler.formal`): bounded symbolic execution, bounded
+  relational refinement with injected backend runners, and minimized
+  infeasible-path witnesses. Exhausted step/unroll/path/time budgets and solver
+  timeouts are structured `E008`/`E004` diagnostics; `Unknown` feasibility is
+  never reported as a proof.
+- Added Frame I (`compiler.termination`): declared structural/lexicographic
+  variants with per-call decrease checks, conservative counted/monotone
+  loop-bound certificates with explicit `UnboundedOrUnknown`, and deterministic
+  resource-fuel contracts charged through the sandbox meter.
+- Added Frame J (`runtime.hard_state`): declared points-to/alias
+  over-approximation with TOCTOU windows, total live-state schema migrations
+  with rollback plans, and quarantined deterministic fault replay. `MAP_JIT`,
+  raw-FFI, and PEP 667 dynamic frames remain explicit boundaries.
+- Added Frame K (`tools.adversarial`): deterministic grammar-bounded case
+  generation, isolated mutation-score gating, and a spec-oracle report that
+  records exact commands/outputs and bounded caveats.
+- Added the `research-frames` release-gate stage (14 stages total) between
+  `hard-frames-parity` and `diff-fuzz`, with an injectable in-process oracle
+  runner so verification never spawns native, JIT, or WASM code. Added
+  `tools.adversarial*` to the wheel package list.
+- Added 42 focused tests across the four research frames and release-gate
+  coverage for stage ordering, oracle failures, and malformed reports.
+
+## Unreleased — hard frames and three-way parity
+
+- Added compile-time WASM aggregate specialization (`backends.wasm.aggregates`):
+  generic programs are monomorphized, then struct literals, vectors, enum
+  variants and bounded generic methods are lowered to scalar WAT expressions.
+  Scalar locals remain real WASM locals so mutation and loops stay correct.
+- Added shared WASM preflight validation (`backends.wasm.validation`) that reuses
+  the Python/native error types, so normalized `E001`–`E008` codes and messages
+  match exactly. Dynamic aggregate ABIs remain explicit `E003` boundary skips.
+- Extended `tools/three_way_parity.py` with a CLI and full 12/12 parity across
+  Python, Rust-PyO3, and WASM for seeds `1`, `42`, `9999`, and `2026`; no skips
+  and divergence artifacts only on real mismatches.
+- Added the `hard-frames-parity` release-gate stage after `pytest-core`, wiring
+  the JIT/WASM/hard-frame suites plus the four parity seeds with an injectable
+  per-seed runner.
+- Fixed the experimental Zig SIMD/parallel C-ABI defects: vector `extern struct`
+  wrappers, a single `std` import, and eviction of stale zero-byte dylibs.
+- Documented the WASM aggregate boundary, the three-way CI parity stage, and the
+  verified test baseline in README, SPECIFICATION, and the guides.
+
+## Unreleased — expansion batch
+
+- Expanded the differential fuzzer corpus with Option/Result, string/float,
+  collection, async-shaped, stdlib-include, and hotpatch-state templates; closed
+  the E003 native skip by exercising a shared host-call arity diagnostic; and
+  added bounded mismatch shrinking so artifacts contain minimal reproducers.
+- Expanded session telemetry with automatic hot-patch event capture from the RCU,
+  rollback-journal, and frame-migrator subsystems, baseline save/compare support
+  in the CLI and visualizer, and cache-pruning/codegen-fragment counters.
+- Expanded the release gate with cargo format/doc, dependency/metadata audit,
+  Markdown link checking, benchmark regression, and release-metadata stages,
+  plus optional parallel fuzz seeds with a shared warm dependency cache.
+- Added GitHub Actions workflows for the unified release gate and maturin-based
+  native wheel builds (with SBOM and release-only signing/trusted publishing),
+  and documented the distribution boundaries.
+- Added a read-only third-party audit report for `dfmacro`, `PyFrameRestart`,
+  and the external terminal UI, with explicit scope decisions.
+
 ## Unreleased — Zig backend feature expansion
 
 - Expanded the experimental Zig backend into a documented opt-in execution

@@ -149,3 +149,112 @@ and call it with `framework_functions.invoke(4, ...)`.
   `tests/regression_harness.py` is a compatibility re-export so in-repo tests keep
   their original import path. This keeps `validate_registry()` working in a
   fresh install, where `tests/` is intentionally absent.
+
+## 1,000-function rollout manifest
+
+The registry above is the original 100-function surface. The ten-batch
+expansion to 1,000 functions is tracked separately by
+`compiler.framework_manifest`, which exposes one entry per zero-padded id
+`0001`–`1000`. Every entry records its batch, canonical name, implementation
+module, status, and focused test module, so progress is machine-verifiable:
+
+```python
+from compiler import framework_manifest as manifest
+
+manifest.validate()  # asserts a complete, gap-free, uniquely named rollout
+manifest.coverage_summary()
+# {'total': 1000, 'implemented': 1000, 'pending': 0,
+#  'with_test_coverage': 1000, 'batches_completed': 10}
+manifest.implemented_count()  # 1000
+manifest.get("0001").test_module  # 'tests.test_framework_f1'
+```
+
+All ten batches are implemented. Batch 1 (`0001`–`0100`, Frontend Lexing,
+Parsing, Spans & AST) lives in `compiler.frontend`; ids `0001`–`0010`
+intentionally reuse the names above. Each of batches 2–10 reuses the ten legacy
+FRAME functions of its area and adds ninety new helpers in disjoint modules.
+The row tables are owned by the per-area `rollout` modules (for example
+`compiler.types.rollout`) and imported by the manifest, so ids, callables, and
+test modules cannot drift. Batch 6 uses the real top-level `zig` package; there
+is no `backends.zig` package. Frontend failures use `PolyglotError` from
+`compiler.frontend.errors`, a specialization of `PillarError` on the shared
+`E001`–`E008` surface.
+
+## Production frames (JIT, WASM, and hard compiler/runtime)
+
+The 1,000-function manifest above tracks the original registry. Three later
+frames add production-grade implementations that compose with it rather than
+duplicating it. They are documented here for discoverability; their canonical
+sources are the named modules.
+
+### Frame A — speculative JIT (`runtime.jit`)
+
+| Function | Contract |
+| --- | --- |
+| `jit_compile_hot_trace` | Per-key hotness counting; compiles at the threshold via `backends.jit` (or records a model trace); rejects shape changes with `E008`. |
+| `jit_emit_type_and_bounds_guards` | Evaluates type / non-null / bounds guards against concrete values and returns a `GuardReport`. |
+| `jit_deoptimize_to_interpreter_frame` | Bails out to the interpreter with live values, stack, and span preserved; guard exhaustion raises `E008`. |
+| `jit_manage_executable_memory_rx` | Owns `MAP_JIT` blocks (or models them), enforces W^X immutability, and refuses to reclaim pinned blocks. |
+| `jit_patch_ic_and_call_sites` | Copy-on-write, version-checked inline-cache/call-site publication; defers patches that would mutate live code. |
+| `jit_invalidate_on_redefinition_or_hotpatch` | Advances version/epoch, invalidates traces, clears sites, and reclaims or defers code blocks. |
+| `jit_emit_diagnostic_e008` | Structured, span-carrying `E008` diagnostic factory. |
+
+Privileged native codegen and `MAP_JIT` allocation require `allow_native` /
+`opt_in_executable_memory` and a supported host; otherwise all seven functions
+operate in model mode. See SPEC 13.1.
+
+### Frame B — WASM production frame (`backends.wasm.framework`)
+
+| Function | Contract |
+| --- | --- |
+| `wasm_lower_ir_to_module` | Lowers source/AST/HIR/MIR to WAT and `.wasm`; unsupported nodes raise `E003`, missing runtime `E007`. |
+| `wasm_layout_linear_memory_and_stack` | Aligned bump layout plus a 16-byte-aligned shadow stack; enforces the wasm32 4 GiB ceiling (`E008`). |
+| `wasm_marshal_adt_and_result_abi` | Round-trip encoding of struct / tagged `Result` / string / slice values into linear-memory bytes. |
+| `wasm_bind_host_imports_and_exports` | Validated host-import/export signatures; delegates exports to real `wasmtime` host functions. |
+| `wasm_guard_trap_and_oom_paths` | Structured bounds/stack/OOM checks; `E008` in strict mode. |
+| `wasm_isolate_instance_state` | Fresh `Engine`/`Store`/`Memory` per run with caller-scoped module caching. |
+| `wasm_verify_dual_backend_parity` | Normalized Python/Rust-PyO3/WASM outcome comparison with explicit boundary skips. |
+
+Before WAT emission, `backends.wasm.validation.wasm_preflight_validate` reuses
+the shared typed errors so `E001`–`E008` codes and messages match the Python and
+native backends, and `backends.wasm.aggregates.lower_wasm_aggregates`
+monomorphizes generics and specializes compile-time structs, vectors, enums and
+bounded methods into scalar expressions. Scalar bindings remain real WASM
+locals; a dynamic aggregate ABI is an explicit `E003` boundary. See SPEC 13.2.
+
+### Frame C — hard compiler/runtime frames
+
+| Module | Hard frames |
+| --- | --- |
+| `compiler.types.hard` | Bounded mutually recursive generic expansion with alias unification; trait coherence/projection/HRTB checks. |
+| `compiler.ir.hard` | Dominance and loop-header validation; branch-aware move tracking; deterministic RAII cleanup. |
+| `runtime.hotpatch.hard` | RCU reader/writer invariants, descriptor migration, raw-address TOCTOU re-validation, verified atomic rollback. |
+| `tools.build_ci.hard` | Isolated per-backend build/cache environments, seed-reproducible matrix, divergence-only artifacts. |
+
+These frames compose with `tools.three_way_parity`, which runs a fixed
+seed-reproducible Python/Rust-PyO3/WASM matrix under isolated caches and writes
+artifacts only for genuine divergence. All 12 cases now run on all three
+backends for seeds `1`, `42`, `9999`, and `2026` with zero skips. The release
+gate's `hard-frames-parity` stage (between `pytest-core` and `diff-fuzz`) runs
+the JIT/WASM/hard-frame suites plus those per-seed parity checks; its runner is
+injectable so tests stay hermetic. See SPEC 13.3–13.4.
+
+## Research frames (H–K)
+
+These frames add bounded verification tooling without changing JIT or WASM
+behavior. They are intentionally separate from the 100-function registry, and
+none of them claims an undecidable property unconditionally: exhausted bounds,
+timeouts, and `Unknown` results are reported as structured `E001`–`E008`
+diagnostics. See SPEC 9.21 and 13.3.8.
+
+| Module | Public functions | Boundary |
+| --- | --- | --- |
+| `compiler.formal` (H) | `formal_sym_exec_bounded_paths`, `formal_check_relational_refinement`, `formal_synthesize_infeasible_path_witness`, `formal_require_bounded_proof` | Step/unroll/path/time budgets; interval solver leaves nonlinear guards `Unknown`; witnesses minimize only recorded symbolic atoms. |
+| `compiler.termination` (I) | `term_check_structural_and_lexicographic_variants`, `term_infer_loop_bound_certificates`, `term_enforce_resource_fuel_contracts` | Variants/subterm fields are caller-declared; uncounted loops are `UnboundedOrUnknown`; fuel is charged through the replayable sandbox meter. |
+| `runtime.hard_state` (J) | `hard_analyze_points_to_and_alias_sets`, `hard_plan_live_state_schema_migration`, `hard_quarantine_and_replay_faults` | Points-to sets are declared over-approximations; only total, unambiguous migrations are safe; `MAP_JIT`/raw FFI/PEP 667 frames are hazards or explicit boundaries. |
+| `tools.adversarial` (K) | `adv_mutate_ast_and_type_constraints`, `adv_run_mutation_score_gate`, `adv_verify_spec_oracle_and_report` | Generation is deterministic and grammar-bounded, not exhaustive; mutation score measures test sensitivity; artifacts live only under caller-supplied roots. |
+
+The release gate's `research-frames` stage (between `hard-frames-parity` and
+`diff-fuzz`) runs the four focused suites and an injectable in-process
+spec-oracle check. The default oracle evaluates the real frame functions and
+records bounded caveats; no native, JIT, or WASM code is spawned.

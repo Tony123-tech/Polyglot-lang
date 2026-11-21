@@ -477,6 +477,11 @@ This section defines the platform differences permitted by this specification. E
 - **9.14** A unified release gate MUST run ruff format/lint, scaffold drift verification, core pytest suites, bounded fuzz seeds, isolated `cargo check`/`cargo clippy`, docs sync/lint, and a git worktree check in a fixed order, aggregate them with `ci_generate_release_gate_report`, and exit non-zero on any blocker. `--quick` and `--full` MUST select bounded and extended verification respectively.
 - **9.15** The CLI and visualizer MUST expose session telemetry containing compile-phase timings, cache hits/misses by scope and rebuild reason, monomorphization specialization counts, and hot-patch capability/epoch/rollback/event status. Telemetry payloads MUST be JSON-safe, MUST report graceful empty states, and MUST NOT leak absolute local paths. Model-only hot-patch boundaries (MAP_JIT, PEP 667, raw-address TOCTOU) MUST remain visible in capability metadata.
 - **9.16** Wheels and sdists MUST ship every module referenced by the 100-function registry. `tests/` stays out of wheels, so framework functions 94–100 resolve through the installable `regression.harness` package; `tests/regression_harness.py` is only a compatibility re-export. Cargo metadata MUST be complete enough for `cargo package` to run without manifest warnings, and builds MUST use isolated cache/target directories outside the workspace.
+- **9.17** The fuzzer corpus MUST cover Option/Result flows, strings and floats, collections, stdlib includes, and hotpatch-shaped immutable state in addition to the categories in 9.13. Native-unsupported templates MUST be reported as skips with a reason, never as fabricated mismatches. Mismatches MUST be shrunk before artifact emission, with a bounded number of additional native builds, so saved reproducers are minimal.
+- **9.18** Telemetry MUST capture hot-patch activity automatically from the RCU epoch manager, rollback journal, and frame migrator through a dependency-free runtime event bus; these events MUST be redacted and MUST NOT claim privileged MAP_JIT/PEP 667/TOCTOU behavior. Telemetry MUST support path-redacted baseline persistence and comparison outside the workspace, and MUST report cache-prune and codegen-fragment counters in its snapshot.
+- **9.19** The release gate MUST additionally verify cargo formatting/docs, dependency and package metadata, Markdown link integrity, benchmark regression, and release metadata, in a defined order after the stages in 9.14. It MUST support optional parallel fuzz seeds that preserve deterministic report order and a shared warm dependency cache. CI configuration MUST run the full gate on clean worktrees and publish maturin-built native wheels with SBOMs; release-only signing and trusted publishing MUST be declared but MUST NOT be claimed as executed locally.
+- **9.20** The release gate MUST include a `hard-frames-parity` stage after the core pytest suites and before bounded fuzzing. It MUST run the JIT/WASM/hard-frame suites and the three-backend parity seeds `1`, `42`, `9999`, and `2026` as separately reported checks; any mismatch, harness error, or suite failure MUST block the gate. The parity runner MUST be injectable so verification tests never compile native code.
+- **9.21** The repository MUST provide research frames H–K without adding WASM or JIT behavior: `compiler.formal` (bounded symbolic execution, bounded relational refinement, infeasible-path witnesses), `compiler.termination` (declared structural/lexicographic variants, syntactic loop-bound certificates, deterministic resource-fuel contracts), `runtime.hard_state` (declared points-to/alias over-approximation, total live-state schema migration with rollback, quarantined deterministic replay), and `tools.adversarial` (deterministic grammar-bounded case generation, mutation-score gate, spec-oracle report). Every result MUST be bounded and MUST report bound exhaustion, timeouts, or `Unknown` as structured `E001`–`E008` diagnostics; no frame MAY claim an undecidable property unconditionally. `MAP_JIT`, raw-FFI, and PEP 667 dynamic-frame paths MUST remain explicit boundaries. The release gate MUST include a `research-frames` stage after `hard-frames-parity` and before bounded fuzzing that runs the H–K focused suites plus an injectable, in-process spec-oracle check; a missing or failed check MUST block the gate.
 
 **Acceptance criteria**
 
@@ -557,6 +562,8 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.20** v0.3.8+ records the unified capability registry for the ten pillars (100 functions), the dual-backend host bridge and generated PyO3 binding scaffold, and the `#[gpu]`/`#[npu]` span-aware `E007` feature gate. Parity is defined as identical names and diagnostics on both backends, not as universal availability of privileged mechanisms. See 10.37 and `docs/unified_pillars.md`.
 - **11.21** v0.3.9 lowers `vec![...]` (including `vec![value; count]`) and `String::from(...)` in both backends, adds lazy `Option`/`Result::unwrap_or_else`, adds the pure-`.poly` `std:fs` module and its trusted host seam (8.11), broadens `if let` to expression positions and builtin `Ok`/`Err`/`None` patterns (5.4), adds `HashMap` `entry(k).or_default()`, extends `#[terminates]` proofs to multiple self-recursive calls with call-site `E002` spans, expands `stdlib/algo` and `stdlib/str_utils`, and adds structured fix hints plus LSP diagnostic publication. It retires 10.12, 10.32, and 10.33 and adds 10.38–10.41.
 - **11.22** v0.3.9+ documents the opt-in Zig execution mode: `get_backend("zig")` and `--backend zig` on `run`, `build`, `exec`, and `compile`; Zig-style saturating arithmetic (`+|`, `-|`, `*|`); arbitrary bit-width `uN`/`iN` integers; `#[parallel]` range-loop splitting; and `SimdN<T>` vector builtins with horizontal reductions. It adds 8.12 and 10.42 and records the mode's C-ABI truncation, narrow AST subset, cache, and lack of synchronization guarantees. The experimental mode is not part of the Python/native parity contract.
+- **11.23** v0.3.9++ adds 9.20 and 13.3.7 (the ordered `hard-frames-parity` release-gate stage with fixed seeds), 13.2.7 (shared WASM preflight diagnostics and compile-time aggregate specialization with explicit dynamic-ABI boundaries), and records that the four Zig SIMD/parallel C-ABI defects are fixed. The three-way parity matrix now runs all 12 cases on all three backends with zero skips.
+- **11.24** v0.3.9+++ adds 9.21 and 13.3.8: research frames H–K (bounded formal methods, termination/variant proofs, hard-state migration/replay, and adversarial verification) with explicit `Unknown`/bound/timeout boundaries and no WASM or JIT changes. The release gate gains a `research-frames` stage with an injectable in-process spec-oracle runner, and the wheel package list includes `tools.adversarial*`.
 
 ## 12. Conformance Status
 
@@ -568,10 +575,10 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 1902 passed, 6 skipped, 22 deselected.
-- `pytest -q -m slow`: 22 passed, 1908 deselected.
+- `pytest -q`: 2979 passed, 6 skipped, 24 deselected.
+- `pytest -q -m slow`: 24 passed, 3030 deselected.
 
-The suite reports 0 failed. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints), the 100-function framework registry with its ten frame test suites, and the differential fuzzer / release gate / telemetry / packaging suites, replacing the earlier stale baseline.
+The four previously failing Zig SIMD/parallel C-ABI cases in `tests/test_zig_backend.py` and `tests/test_auto.py` now pass: the generated wrappers use `extern struct` vector parameters/returns, the `std` import is emitted once, and stale zero-byte dylibs are evicted and rebuilt. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints), the 100-function framework registry with its ten frame test suites, the differential fuzzer / release gate / telemetry / packaging suites, the completed 1,000-function rollout (all ten batches, 1000 functions), the speculative JIT / WASM production / hard compiler-runtime frames with their focused suites, WASM compile-time aggregate specialization with shared `E001`–`E008` preflight diagnostics, the full three-way parity matrix (12/12 cases on all three backends with zero skips), and the `hard-frames-parity` release-gate stage, replacing the earlier stale baseline.
 
 - **12.1.1** The numbers above are from the current repository state at the time of writing. They MUST be updated whenever the test suite changes. The summary counts in 12.2.0 are derived from the 12.2 table below and MUST be recomputed whenever a row changes.
 - **12.1.2** A criterion marked **Blocked** is not a conformance failure; it is a dependency on the test suite baseline being restored. The baseline is now restored; Blocked criteria have been re-evaluated in 12.2 and any that remain are marked **Partial** with a note recording what is still unverified.
@@ -681,3 +688,110 @@ No item blocks a v0.3.8 conformance claim, provided that:
 | 8.10.2 native `HashMap::get_mut` boundary reference | The by-value native map cannot safely return a mutable reference; the documented platform behaviour returns a copy. See 10.20. |
 
 Each item above is either (a) covered by a Deferred clause, (b) a test-recording gap rather than a behaviour gap, or (c) explicitly assigned to next milestone in the roadmap.
+
+## 13. Production JIT, WASM, and hard-frame requirements
+
+This section records the requirements for the speculative JIT frame, the WASM
+production frame, and the hard compiler/runtime frames that sit above the
+1,000-function rollout. These are model-and-tooling contracts: they must remain
+deterministic, structured-diagnostic, and safe on every host, even when the
+privileged operation they model is available only on one platform.
+
+### 13.1 Frame A — speculative JIT (`runtime.jit`)
+
+- **13.1.1** `jit_compile_hot_trace` MUST count executions per trace key and
+  compile only at the hotness threshold; redefining a key with a different
+  shape MUST raise `E008` rather than serve stale code.
+- **13.1.2** Native codegen and executable-memory allocation MUST be gated on
+  an explicit caller opt-in and a supported host (macOS/arm64 `MAP_JIT`). All
+  other hosts and callers MUST receive a fully functional *model* trace so the
+  state machine remains testable.
+- **13.1.3** Guards MUST be type, non-null, and bounds checks evaluated
+  against concrete values, returning a report on failure (not an exception).
+  A failed guard MUST deoptimize via `jit_deoptimize_to_interpreter_frame`,
+  preserving all live values, the stack, and the source span. Guard exhaustion
+  MUST produce `E008`.
+- **13.1.4** Executable blocks MUST be immutable once published (W^X after
+  commit) and MUST NOT be reclaimed while an active frame pins them. Inline
+  caches and call sites MUST be patched copy-on-write under a per-site lock,
+  deferring patches that would mutate live code.
+- **13.1.5** Redefinition and hotpatch events MUST advance a version and epoch,
+  invalidate dependent traces, clear call sites, and reclaim or defer code
+  blocks. A hotpatch target that does not match the trace key MUST raise
+  `E008`. Every diagnostic in this frame MUST carry the trace span.
+
+### 13.2 Frame B — WASM production frame (`backends.wasm.framework`)
+
+- **13.2.1** `wasm_lower_ir_to_module` MUST lower source, AST, HIR, or validated
+  MIR to valid WAT and (where `wasmtime` is installed) a `.wasm` binary.
+  Unsupported source constructs MUST raise structured `E003` diagnostics with
+  a source span; a missing runtime MUST raise `E007`.
+- **13.2.2** Linear memory MUST respect the `wasm32` 4 GiB ceiling (checked
+  limit `2**32` by default). Field layout MUST be aligned, bump-allocated, and
+  bounds-checked against a 16-byte-aligned shadow stack before any access.
+- **13.2.3** The ABI MUST round-trip structs, tagged `Result`, strings, and
+  slices deterministically; malformed shapes, out-of-range integers, and
+  truncated payloads MUST raise structured diagnostics (`E001`/`E008`).
+- **13.2.4** Host imports MUST be explicitly declared and implemented; export
+  signatures MUST match the module's declared signatures. Signature drift or
+  an unknown delegation target MUST raise `E001`. No ambient filesystem,
+  clock, or process capability may be imported.
+- **13.2.5** Trap/OOM paths MUST be reported as structured results (or `E008`
+  in strict mode) without corrupting memory. Each isolated instance MUST use a
+  fresh `Engine`/`Store`/`Memory` so no state leaks between runs; compiled
+  modules may be cached only under a caller-supplied temp root.
+- **13.2.6** `wasm_verify_dual_backend_parity` MUST compare normalized
+  Python/Rust-PyO3/WASM outcomes and record WASM-unsupported constructs as
+  explicit boundary skips, not false mismatches.
+- **13.2.7** Before WAT emission, `wasm_preflight_validate` MUST reuse the
+  shared frontend error types so the normalized `E001`–`E008` codes and messages
+  are identical to the Python and native backends. `lower_wasm_aggregates` MUST
+  monomorphize generics and specialize compile-time struct literals, vectors,
+  enum variants, and bounded generic methods into scalar `i64`/`bool`
+  expressions. Scalar locals MUST remain real WASM locals so mutation and
+  loop-carried values are preserved. An aggregate function parameter, return
+  value, or other dynamic aggregate ABI MUST raise structured `E003` with the
+  source position instead of producing an invalid module.
+
+### 13.3 Frame C — hard compiler/runtime frames
+
+- **13.3.1** Mutually recursive generic expansion MUST unify aliases, detect
+  cycles, and enforce a bounded specialization budget; exceeding the budget
+  MUST raise `E002` and undefined references `E005`, never `RecursionError`.
+- **13.3.2** Trait analysis MUST reject overlapping implementations (`E001`),
+  missing associated types and unsatisfied higher-rank bounds (`E002`).
+- **13.3.3** CFG verification MUST compute dominance sets, identify natural
+  loop headers, and reject back edges whose header does not dominate the source
+  (`E005`). Move analysis MUST be branch-aware and join states MUST agree.
+- **13.3.4** RAII cleanup MUST schedule drops on all paths and reject a leak on
+  an early-return or unwind path with `E002`.
+- **13.3.5** Hotpatch concurrency models MUST reject reclamation while readers
+  are active, descriptor loss during migration, raw-address TOCTOU (address or
+  version drift), and failed verification MUST roll back atomically; all
+  failures are `E008`.
+- **13.3.6** Differential parity MUST be seed-reproducible, use isolated
+  per-backend cache scopes and temp paths, normalize codes/failure modes rather
+  than exception identities, and persist seed + source + normalized outcomes
+  only on a genuine divergence.
+- **13.3.7** The release gate MUST include a `hard-frames-parity` stage between
+  `pytest-core` and `diff-fuzz`. It MUST run the JIT/WASM/hard-frame suites and
+  the three-way parity seeds `1`, `42`, `9999`, and `2026`; each seed result is
+  an independently reported check, and any mismatch or harness error blocks the
+  gate. The per-seed runner MUST be injectable so unit tests never compile
+  native code.
+- **13.3.8** The release gate MUST include a `research-frames` stage between
+  `hard-frames-parity` and `diff-fuzz`. It MUST run the H–K focused suites and
+  an adversarial spec-oracle check as separately reported checks; any failed
+  or missing check blocks the gate. The oracle runner MUST be injectable so
+  verification tests never spawn native, JIT, or WASM code, and the gate MUST
+  report that a passing oracle is bounded rather than a complete proof.
+
+### 13.4 Platform and security caveats
+
+- **13.4.1** `MAP_JIT` and the per-thread write-protect toggle are Apple
+  Silicon/macOS specific; other hosts run model mode only. PEP 667 frame
+  semantics and raw-address TOCTOU are modelled, not exercised against a live
+  interpreter frame by default.
+- **13.4.2** Native execution and host-import bridges are privileged paths:
+  they require `trusted=True` and explicit opt-in. They are never enabled by
+  untrusted input handling.

@@ -72,29 +72,29 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 
 ## Status
 
-| Milestone | Status | Scope                                                                                                                            |
-| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| N0        | Done   | Empty program → Cargo → load module                                                                                              |
-| N1        | Done   | Free functions, `i64`/`f64`/`bool`/`String`, `Vec`, structs with `impl` exposed as PyO3 classes, and `if`                        |
-| N2a       | Done   | Native `while`, `loop`, and `match`                                                                                              |
-| N2b       | Done   | `Vec` methods: `push`, `pop`, `len`, and indexing                                                                                |
-| N2c       | Done   | Multiple structs/enums as `pyclass`                                                                                              |
-| N2d       | Done   | Improved caching and Rust-error mapping to source lines                                                                          |
-| N3        | Done   | `Vec` iteration, `contains`, `sort`/`sort_by`, `map`/`filter`/`fold`, slicing, and mutation methods                              |
-| N4        | Done   | String length/iteration, split/join, replace/trim, case conversion, `parse`, `format!`, `write!`, slicing, and comparison        |
-| N5        | Done   | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing                         |
-| N6        | Done   | Additional `Vec` and `String` methods, including search, slicing, rotation, and sort helpers                                     |
-| N7        | Done   | Distinct `usize`/`isize` types, explicit casts, and target-width-aware boundary checks                                           |
-| N8        | Done   | Collections-layer `HashMap` operations and Python/native dictionary boundaries                                                   |
-| N9        | Done   | Platform-defined Option/Result combinators and native Result continuations                                                       |
-| N10       | Done   | SPEC v0.2.7 and final conformance status                                                                                         |
-| M10       | Done   | Opt-in termination checking for `#[terminates]` functions                                                                        |
-| F1        | Done   | Installable package, CLI, examples, and delivery documentation                                                                   |
-| M3        | Done   | HashMap entry completion, `BTreeMap`, `HashSet`, and nested `HashMap` depth 1                                                    |
-| M4        | Done   | Additional fixed-width integer types and the cross-backend cast matrix                                                           |
+| Milestone | Status | Scope                                                                                                                                        |
+| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| N0        | Done   | Empty program → Cargo → load module                                                                                                          |
+| N1        | Done   | Free functions, `i64`/`f64`/`bool`/`String`, `Vec`, structs with `impl` exposed as PyO3 classes, and `if`                                    |
+| N2a       | Done   | Native `while`, `loop`, and `match`                                                                                                          |
+| N2b       | Done   | `Vec` methods: `push`, `pop`, `len`, and indexing                                                                                            |
+| N2c       | Done   | Multiple structs/enums as `pyclass`                                                                                                          |
+| N2d       | Done   | Improved caching and Rust-error mapping to source lines                                                                                      |
+| N3        | Done   | `Vec` iteration, `contains`, `sort`/`sort_by`, `map`/`filter`/`fold`, slicing, and mutation methods                                          |
+| N4        | Done   | String length/iteration, split/join, replace/trim, case conversion, `parse`, `format!`, `write!`, slicing, and comparison                    |
+| N5        | Done   | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing                                     |
+| N6        | Done   | Additional `Vec` and `String` methods, including search, slicing, rotation, and sort helpers                                                 |
+| N7        | Done   | Distinct `usize`/`isize` types, explicit casts, and target-width-aware boundary checks                                                       |
+| N8        | Done   | Collections-layer `HashMap` operations and Python/native dictionary boundaries                                                               |
+| N9        | Done   | Platform-defined Option/Result combinators and native Result continuations                                                                   |
+| N10       | Done   | SPEC v0.2.7 and final conformance status                                                                                                     |
+| M10       | Done   | Opt-in termination checking for `#[terminates]` functions                                                                                    |
+| F1        | Done   | Installable package, CLI, examples, and delivery documentation                                                                               |
+| M3        | Done   | HashMap entry completion, `BTreeMap`, `HashSet`, and nested `HashMap` depth 1                                                                |
+| M4        | Done   | Additional fixed-width integer types and the cross-backend cast matrix                                                                       |
 | M5        | Done   | Send-aware `PyFuture`, async `&self`/`&mut self` impl methods, drop-based cancellation, a `mio` reactor with timers, and an `asyncio` bridge |
 
-**Current test status:** 1902 passed, 6 skipped, 22 deselected (`pytest -q`); 22 passed, 1908 deselected (`pytest -q -m slow`).
+**Current test status:** 2979 passed, 6 skipped, 24 deselected (`pytest -q`); 24 passed, 3030 deselected (`pytest -q -m slow`). The experimental Zig SIMD/parallel C-ABI defects have been fixed in `zig/backend.py` (vector `extern struct` wrappers, a single `std` import, and eviction of stale zero-byte dylibs); all four previously failing cases now pass.
 
 ## Support matrix
 
@@ -116,10 +116,10 @@ If you don't have a Rust toolchain, you can skip this step. The Python backend (
 | `if let` in expression position (`Some`/`None`/`Ok`/`Err`)                     | ✅               | ✅             |
 | HashMap `entry(k).or_default()`                                                | ✅               | ✅             |
 | Error codes (E001–E008)                                                        | ✅               | ✅             |
-| Structured fix hints in CLI JSON and LSP diagnostics                          | ✅               | ✅             |
-| LSP `publishDiagnostics` on open/change/save                                  | ✅               | ✅             |
+| Structured fix hints in CLI JSON and LSP diagnostics                           | ✅               | ✅             |
+| LSP `publishDiagnostics` on open/change/save                                   | ✅               | ✅             |
 | `#[terminates]` checking                                                       | ✅               | ✅             |
-| Multiple self-recursive calls in `#[terminates]` proofs                       | ✅               | ✅             |
+| Multiple self-recursive calls in `#[terminates]` proofs                        | ✅               | ✅             |
 | async free functions                                                           | ✅ (synchronous) | ✅             |
 | async `&self` / `&mut self` impl methods                                       | ✅               | ✅             |
 | cross-thread await with Send captures                                          | n/a              | ✅             |
@@ -144,18 +144,18 @@ Python/native parity contract, and it does not replace either backend for
 normal use. It is selected with `--backend zig` on `run`, `build`, `exec`, and
 `compile`, or with `get_backend("zig")`.
 
-| Feature | Zig backend | Notes |
-| ------- | ----------- | ----- |
-| Top-level function definitions and C-ABI wrappers | ✅ | The tested subset is intentionally narrow |
-| `let`, assignment, `while`, range `for`, `return`, binary and cast expressions | ✅ | See SPEC 8.12 |
-| Integer casts | ✅ | Integer targets only; float casts are not lowered |
-| Saturating arithmetic | ✅ | `+`, `-`, and `*` with a trailing pipe, clamped at declared bounds |
-| Arbitrary bit-width `uN`/`iN` (`0..=65535`) | ✅ Zig-native | Python C ABI exposes 64 bits only |
-| `#[parallel]` range-loop splitting | ✅ | Direct `for i in start..end` loops only |
-| `SimdN<T>` and `Simd::*` builtins | ✅ | `splat`, `load`, `store`, `reduce_add`, `reduce_mul`, `reduce_min`, `reduce_max` |
-| Structs, enums, `if`, `match`, strings, `Vec`, `Option`, `Result` | ⬜ Not lowered | Outside the current Zig contract |
-| Ordinary user-function calls | ⬜ Not lowered | Only the SIMD builtins are special-cased today |
-| Importable Python extension from `polyglot build` | ⬜ No | The artifact is a C-ABI shared library, not a PyO3 module |
+| Feature                                                                        | Zig backend    | Notes                                                                            |
+| ------------------------------------------------------------------------------ | -------------- | -------------------------------------------------------------------------------- |
+| Top-level function definitions and C-ABI wrappers                              | ✅             | The tested subset is intentionally narrow                                        |
+| `let`, assignment, `while`, range `for`, `return`, binary and cast expressions | ✅             | See SPEC 8.12                                                                    |
+| Integer casts                                                                  | ✅             | Integer targets only; float casts are not lowered                                |
+| Saturating arithmetic                                                          | ✅             | `+`, `-`, and `*` with a trailing pipe, clamped at declared bounds               |
+| Arbitrary bit-width `uN`/`iN` (`0..=65535`)                                    | ✅ Zig-native  | Python C ABI exposes 64 bits only                                                |
+| `#[parallel]` range-loop splitting                                             | ✅             | Direct `for i in start..end` loops only                                          |
+| `SimdN<T>` and `Simd::*` builtins                                              | ✅             | `splat`, `load`, `store`, `reduce_add`, `reduce_mul`, `reduce_min`, `reduce_max` |
+| Structs, enums, `if`, `match`, strings, `Vec`, `Option`, `Result`              | ⬜ Not lowered | Outside the current Zig contract                                                 |
+| Ordinary user-function calls                                                   | ⬜ Not lowered | Only the SIMD builtins are special-cased today                                   |
+| Importable Python extension from `polyglot build`                              | ⬜ No          | The artifact is a C-ABI shared library, not a PyO3 module                        |
 
 Quick example:
 
@@ -178,7 +178,10 @@ source (as `<stem>.so` on macOS); load it with `ctypes`, not `import`. See
 - **Shared front end:** Turns source text into tokens, a parsed program, and AST nodes.
 - **Python backend:** Translates the Rust-like AST to a Python AST, then compiles and executes it.
 - **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting Python extension (`.so` on macOS and Linux, `.pyd` on Windows).
-- **WASM backend (experimental):** Lowers an `i64`/`bool` compute-only subset to WebAssembly text format (`.wat`) and runs it through `wasmtime`.
+- **WASM backend (experimental):** Lowers an `i64`/`bool` compute-only subset to WebAssembly text format (`.wat`) and runs it through `wasmtime`. A compile-time specialization pass (`backends.wasm.aggregates`) lowers structs, vectors, enum variants and bounded generic impls into the scalar expressions the WAT emitter already understands; a shared preflight validator (`backends.wasm.validation`) reuses the Python/native `E001`–`E008` diagnostics. Genuine dynamic aggregate ABIs remain explicit `E003` boundary skips, never false mismatches. The production frame in `backends.wasm.framework` adds checked linear-memory layout, struct/Result/string/slice ABI marshaling, validated host imports/exports, trap/OOM diagnostics, fresh per-run instances, and three-backend parity checks.
+- **Speculative JIT frame:** `runtime.jit` composes with the Apple Silicon `MAP_JIT` backend to track hot traces, emit type/null/bounds guards, deoptimize without losing live state, manage W^X code blocks, patch inline caches atomically, invalidate on redefinition/hotpatch, and report `E008` with spans. Privileged operations are model-only unless explicitly enabled on a supported host.
+- **Hard compiler/runtime frames:** Bounded mutually recursive generic expansion, trait coherence/projection/higher-rank bounds, dominance and loop-header validation, branch-aware move tracking, deterministic RAII cleanup, RCU/reactor/TOCTOU/rollback invariants, and isolated build/cache scopes live in `compiler.types.hard`, `compiler.ir.hard`, `runtime.hotpatch.hard`, and `tools.build_ci.hard`.
+- **Research frames H–K (bounded, no WASM/JIT changes):** `compiler.formal` adds bounded symbolic execution, relational refinement checks, and infeasible-path witnesses; `compiler.termination` adds explicit structural/lexicographic variants, loop-bound certificates, and deterministic resource-fuel contracts; `runtime.hard_state` adds declared points-to/alias over-approximations, total live-state schema migrations, and quarantined fault replay; `tools.adversarial` adds deterministic grammar-bounded case generation, mutation-score gating, and a spec-oracle report. Each frame is sound within its declared bound and reports `Unknown`, bound exhaustion, or a structured `E001`–`E008` diagnostic instead of claiming any undecidable property.
 - **Zig backend (experimental):** Generates Zig source, builds a dynamic library with `zig build-lib -dynamic -O ReleaseFast`, and exposes `__cabi_*` wrappers through `ctypes`. It adds Zig-style saturating arithmetic, arbitrary bit-width integers, `#[parallel]` range-loop splitting, and `SimdN<T>` vector builtins for a narrow, tested AST subset. See [docs/zig.md](docs/zig.md) and SPEC 8.12.
 - **Common backend interface:** Select a backend with `get_backend("python")`, `get_backend("native")`, `get_backend("wasm")`, or `get_backend("zig")`. Calling `backend.compile(program)` returns a namespace dictionary.
 - **CLI:** `polyglot run`, `polyglot build`, `polyglot check`, `polyglot lsp`, the compatibility `polyglot compile` command, the machine-readable `polyglot exec` command, and the interactive `polyglot visualizer` (alias `gui`).
@@ -197,9 +200,12 @@ source (as `<stem>.so` on macOS); load it with `ctypes`, not `import`. See
 - **Extended entry API:** `HashMap::entry` adds `or_default()` alongside `or_insert`, `or_insert_with`, `or_insert_with_key`, and `and_modify`.
 - **Richer toolchain diagnostics:** `polyglot exec --error-format=json` and the diagnostic helper carry deterministic fix hints, and the language server publishes `textDocument/publishDiagnostics` on open, change, and save.
 - **Framework function registry:** 100 numbered compiler/runtime/tooling functions across ten frames are discoverable through `framework_functions`; the canonical list and naming notes are in [docs/framework_functions.md](docs/framework_functions.md).
-- **Differential parity fuzzer:** `python tools/diff_fuzz.py --seed 42 --case-count 8 --json` generates deterministic programs (recursive generics, trait bounds, match guards, arithmetic/control flow, and E001–E008 cases), runs Python and native backends under isolated cache scopes, and writes minimal mismatch artifacts under `.artifacts/diff_fuzz/` only on a real mismatch.
-- **Unified release gate:** `python tools/release_gate.py --quick` (or `--full`) runs ruff, scaffold drift, core pytest suites, bounded fuzz seeds, isolated cargo checks, docs checks, and a worktree check in a fixed order, then emits one pass/fail report.
-- **Session telemetry:** `polyglot telemetry`, `polyglot timings`, `polyglot cache`, and `polyglot hotpatch` print compile-phase timings, cache hit rates, monomorphization counts, and hot-patch status. The visualizer exposes the same data at `GET /api/telemetry` in a collapsed Telemetry panel. All payloads are path-redacted.
+- **Differential parity fuzzer:** `python tools/diff_fuzz.py --seed 42 --case-count 8 --json` generates deterministic programs (recursive generics, trait bounds, match guards, arithmetic/control flow, Option/Result, strings/floats, collections, stdlib includes, hotpatch-shaped state, and E001–E008 cases), runs Python and native backends under isolated cache scopes, shrinks mismatches, and writes minimal artifacts under `.artifacts/diff_fuzz/` only on a real mismatch.
+- **Three-way parity harness:** `python tools/three_way_parity.py --seed 2026 --json` runs the same deterministic 12-case matrix (scalar control flow, recursive structs/enums, nested vectors, bounded generics, and E001–E008 diagnostics) on Python, Rust-PyO3, and WASM. It normalizes codes/failure modes/outcomes, uses per-case isolated caches, and persists artifacts only for genuine divergence. Seeds `1`, `42`, `9999`, and `2026` are release-gate checks.
+- **Unified release gate:** `python tools/release_gate.py --quick` (or `--full`, optionally `--jobs N`) runs ruff, scaffold drift, core pytest suites, the `hard-frames-parity` stage (JIT/WASM/hard-frame suites plus three-way parity seeds `1`, `42`, `9999`, `2026`), the `research-frames` stage (bounded formal/termination/hard-state/adversarial suites plus an in-process spec-oracle check), bounded fuzz seeds, isolated cargo checks, docs checks, worktree cleanliness, cargo format/doc, dependency/metadata audits, doc links, benchmark regression, and release metadata in a fixed 14-stage order, then emits one pass/fail report. The research runner is injectable so verification never spawns native or JIT code.
+- **Session telemetry:** `polyglot telemetry`, `polyglot timings`, `polyglot cache`, and `polyglot hotpatch` print compile-phase timings, cache hit rates, monomorphization counts, and hot-patch status. `--save-as NAME` and `--compare NAME` persist and diff baselines outside the workspace. Hot-patch events are captured automatically from RCU, rollback-journal, and frame-migrator operations. The visualizer exposes the same data at `GET /api/telemetry` in a collapsed Telemetry panel. All payloads are path-redacted.
+- **CI and distribution:** GitHub Actions runs the full gate on macOS/Linux and publishes maturin-built native wheels per platform with SBOMs; release-only signing and trusted publishing are configured in CI. See [docs/native_distribution.md](docs/native_distribution.md).
+- **Third-party audit:** [docs/third_party_audit.md](docs/third_party_audit.md) records the read-only audit surface for `dfmacro`, `PyFrameRestart`, and the external terminal UI, with explicit scope decisions.
 - **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
 - **Distributed actors (experimental):** An opt-in `distributed/` runtime moves actors between nodes with a versioned Python/native codec, checkpointable await journals, anchored connections, epoch/fencing leases, and checkpoint-based rollback. See [docs/distributed.md](docs/distributed.md).
 
@@ -268,17 +274,17 @@ fn main() -> i64 {
 
 The bundled modules are pure `.poly` and require no extra dependencies:
 
-| Module            | Contents                                                                       |
-| ----------------- | ------------------------------------------------------------------------------ |
-| `std:math`        | integer helpers, `gcd`/`lcm`/`pow_mod`/`is_prime`, and pure `f64` `sqrt`/`exp` |
-| `std:algo`        | sorting, searching, sums, extrema, `unique`, chunk sums, running maxima, and occurrence counting |
+| Module            | Contents                                                                                                 |
+| ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `std:math`        | integer helpers, `gcd`/`lcm`/`pow_mod`/`is_prime`, and pure `f64` `sqrt`/`exp`                           |
+| `std:algo`        | sorting, searching, sums, extrema, `unique`, chunk sums, running maxima, and occurrence counting         |
 | `std:str_utils`   | trimming, case conversion, split/join, padding, search, reversal, and `capitalize`/`count_lines` helpers |
-| `std:fs`          | `Result`-returning text read/write/append/exists/remove helpers over a trusted host seam |
-| `std:collections` | `Stack`, `Queue`, `SetI64`, and `Counter`                                      |
-| `std:numpy`       | dense `NdArray` creation, element-wise ops, reductions, and matrix products    |
-| `std:linalg`      | `inv`, `solve`, and `determinant` via Gauss-Jordan/Gaussian elimination        |
-| `std:random`      | deterministic Xoshiro256\*\* `Rng` with `next_u64`/`next_f64`/ranges/shuffle   |
-| `std:prelude`     | includes every module above                                                    |
+| `std:fs`          | `Result`-returning text read/write/append/exists/remove helpers over a trusted host seam                 |
+| `std:collections` | `Stack`, `Queue`, `SetI64`, and `Counter`                                                                |
+| `std:numpy`       | dense `NdArray` creation, element-wise ops, reductions, and matrix products                              |
+| `std:linalg`      | `inv`, `solve`, and `determinant` via Gauss-Jordan/Gaussian elimination                                  |
+| `std:random`      | deterministic Xoshiro256\*\* `Rng` with `next_u64`/`next_f64`/ranges/shuffle                             |
+| `std:prelude`     | includes every module above                                                                              |
 
 - `include!("std:math")` appends `.poly` automatically; `include!("std:math.poly")` also works.
 - `std:` paths are always resolved inside the packaged `stdlib/` directory. Missing modules and paths that escape that directory report `E006`.
@@ -448,18 +454,18 @@ mid-instruction `f_code` rewriting, arbitrary formal verification, transparent
 process migration, hardware isolation, or autonomous distributed repair. They
 are not part of the stable `polyglot run` / `polyglot build` contract.
 
-| Area                      | Module                  | What it does                                                                                       |
-| ------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------- |
-| Hot-patching              | `backends/hotpatch.py`  | Quiescent Python code/class swaps, live-struct migration, native symbol indirection slots; no executable-text patching |
-| Meta-compiler             | `compiler/evolution.py` | Template-based candidate passes, isolated corpus validation, and versioned history; no self-rewriting compiler |
-| Formal synthesis          | `proofs/synthesis.py`   | A controlled invariant grammar, interval/polynomial proofs, certificates, and dual-backend emission; no unrestricted natural-language proofs |
-| Time travel               | `debug/timetravel.py`   | Checkpoint/replay and object-graph snapshots; no rewinding live CPython frames or PyO3 stacks |
-| Speculative transmutation | `runtime/transmute.py`  | Type profiling, background specialization, and guarded fallback; no nanosecond deoptimization guarantee |
-| Distributed migration     | `distributed/`          | Cooperative actor checkpoint/replay with await journals and fencing; no opaque stack migration |
-| Distributed memory        | `distributed/dsm.py`    | In-process CRDTs (LWW/OR-Set/PN-Counter), Raft-style log/quorum, Merkle diffs, HLC/vector clocks, fencing, and MVCC; no `userfaultfd`, RDMA, or real cluster consensus |
-| Hardware sandboxing       | `security/sandbox.py`   | Declarative `mprotect`/seccomp/MPK/CFI plans (`E007` at execution) plus real taint, fuel, bounds, and zeroization models; no OS-enforced isolation |
+| Area                      | Module                      | What it does                                                                                                                                                                        |
+| ------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hot-patching              | `backends/hotpatch.py`      | Quiescent Python code/class swaps, live-struct migration, native symbol indirection slots; no executable-text patching                                                              |
+| Meta-compiler             | `compiler/evolution.py`     | Template-based candidate passes, isolated corpus validation, and versioned history; no self-rewriting compiler                                                                      |
+| Formal synthesis          | `proofs/synthesis.py`       | A controlled invariant grammar, interval/polynomial proofs, certificates, and dual-backend emission; no unrestricted natural-language proofs                                        |
+| Time travel               | `debug/timetravel.py`       | Checkpoint/replay and object-graph snapshots; no rewinding live CPython frames or PyO3 stacks                                                                                       |
+| Speculative transmutation | `runtime/transmute.py`      | Type profiling, background specialization, and guarded fallback; no nanosecond deoptimization guarantee                                                                             |
+| Distributed migration     | `distributed/`              | Cooperative actor checkpoint/replay with await journals and fencing; no opaque stack migration                                                                                      |
+| Distributed memory        | `distributed/dsm.py`        | In-process CRDTs (LWW/OR-Set/PN-Counter), Raft-style log/quorum, Merkle diffs, HLC/vector clocks, fencing, and MVCC; no `userfaultfd`, RDMA, or real cluster consensus              |
+| Hardware sandboxing       | `security/sandbox.py`       | Declarative `mprotect`/seccomp/MPK/CFI plans (`E007` at execution) plus real taint, fuel, bounds, and zeroization models; no OS-enforced isolation                                  |
 | GPU/NPU offloading        | `compiler/heterogeneous.py` | Affine-loop detection, textual MLIR-like IR/kernel models, fusion, tiling, quantization, and CPU fallback; real device dispatch is rejected with `E007`, as are `#[gpu]` / `#[npu]` |
-| Agent swarm/self-healing  | `swarm/agent.py`        | In-memory gossip, heuristic panic detector, HMAC-signed quorum model, reputation, canary rollout, MST healing, and span-aware audits; no real network or threshold signatures |
+| Agent swarm/self-healing  | `swarm/agent.py`            | In-memory gossip, heuristic panic detector, HMAC-signed quorum model, reputation, canary rollout, MST healing, and span-aware audits; no real network or threshold signatures       |
 
 The opt-in `runtime/hotpatch/` subsystem is a second-generation hot-patch
 implementation documented in [docs/quantum_hotpatch.md](docs/quantum_hotpatch.md).

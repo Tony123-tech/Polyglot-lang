@@ -578,36 +578,84 @@ Inspect what a compile run did without changing your program:
 ```sh
 polyglot telemetry          # phases, total time, monomorphization counts
 polyglot timings            # alias for the timing section
-polyglot cache              # hit rates, hits/misses by scope, rebuild reasons
+polyglot cache              # hit rates, hits/misses, cache prunes, rebuild reasons
 polyglot hotpatch           # epoch, active capabilities, rollbacks, latest E008
 polyglot telemetry --json   # machine-readable, path-redacted payload
+polyglot telemetry --save-as before   # store a baseline outside the workspace
+polyglot telemetry --compare before  # show timing/cache/monomorph deltas
 ```
 
 The same data is available from the visualizer (`polyglot visualizer`) in the
-collapsed **Telemetry** panel and from `GET /api/telemetry`. If nothing has run
-yet in the current session, each section reports an explicit empty state.
-Hot-patch entries report capability boundaries; they do not claim privileged
-MAP_JIT, PEP 667, or raw-address patching on platforms where those paths are
-modelled or refused.
+collapsed **Telemetry** panel and from `GET /api/telemetry`, including a baseline
+comparison selector. Hot-patch activity is captured automatically when the RCU
+epoch manager publishes a new AST, the rollback journal commits or rolls back,
+or the frame migrator patches a live function. If nothing has run yet, each
+section reports an explicit empty state. Hot-patch entries report capability
+boundaries; they do not claim privileged MAP_JIT, PEP 667, or raw-address
+patching on platforms where those paths are modelled or refused.
 
 Before publishing a change, run the unified gate:
 
 ```sh
-python tools/release_gate.py --quick      # fast PR loop
-python tools/release_gate.py --full       # extended fuzz seeds + full pytest
+python tools/release_gate.py --quick             # fast PR loop
+python tools/release_gate.py --full --jobs 4     # extended fuzz seeds + full pytest
 python tools/diff_fuzz.py --seed 42 --case-count 8 --json
+python tools/three_way_parity.py --seed 2026 --json
 ```
 
-Fuzz mismatches are written to `.artifacts/diff_fuzz/` with the exact seed and
-source needed to reproduce them. Clean runs leave no files behind. Use
+The `hard-frames-parity` gate stage runs the JIT/WASM/hard-frame suites together
+with the three-way parity seeds `1`, `42`, `9999`, and `2026`. The WASM backend
+monomorphizes generics and specializes compile-time structs, vectors, enum
+variants and bounded methods into scalar WAT before execution, while sharing the
+Python/native `E001`–`E008` preflight diagnostics. Constructs that need a real
+dynamic aggregate ABI (for example, an aggregate function parameter) are reported
+as explicit boundary skips instead of false mismatch artifacts. Use
+`--backend wasm` on a program that stays within the scalar/compile-time subset;
+`--backend auto`, `--backend python`, and `--backend native` remain available.
+
+The `research-frames` gate stage runs the bounded H–K suites plus an in-process
+spec-oracle check. Use these APIs directly when investigating a boundary:
+
+```python
+from compiler.formal import formal_sym_exec_bounded_paths, formal_require_bounded_proof
+from compiler.termination import term_infer_loop_bound_certificates
+from runtime.hard_state import hard_plan_live_state_schema_migration
+from tools.adversarial import adv_mutate_ast_and_type_constraints
+
+# Bound exhaustion, timeouts, and Unknown feasibility are explicit.
+report = formal_sym_exec_bounded_paths(source, max_unroll=4, strict=False)
+if not report.complete:
+    ...
+```
+
+Every research result is bounded: pass `strict=True` to raise the relevant
+`E001`–`E008` diagnostic on exhaustion, or inspect the returned report for
+`complete=False`, `UnboundedOrUnknown`, or `Unknown` feasibility. Structural
+subterm fields, lexicographic components, points-to sets, and migration maps
+are all caller-declared; the frames never infer a global termination, aliasing,
+or migration proof. `MAP_JIT`, raw FFI, and PEP 667 dynamic frames are recorded
+as explicit boundaries rather than silently modeled.
+
+Beyond the original checks, the gate verifies cargo format/docs, package and
+dependency metadata, Markdown links, benchmark regression, and release metadata.
+`--jobs N` runs independent fuzz seeds concurrently while keeping the report in
+seed order; each case still gets a deterministic isolated scope and the seeds
+share a warm dependency cache.
+
+Fuzz mismatches are shrunk and written to `.artifacts/diff_fuzz/` with the exact
+seed and source needed to reproduce them. Clean runs leave no files behind. Use
 `--allow-dirty` on the gate only when you deliberately want to verify an
-uncommitted worktree.
+uncommitted worktree. CI runs `--full` without that flag.
 
 ## 13. Next steps
 
 - Read the [README](README.md) for the full feature list.
 - Read the [SPECIFICATION](SPECIFICATION.md) if you want to know
   exactly what the language guarantees.
+- See [docs/native_distribution.md](docs/native_distribution.md) for how native
+  wheels are built and signed in CI, and
+  [docs/third_party_audit.md](docs/third_party_audit.md) for read-only third-party
+  audit scope decisions.
 - Try the [examples](examples/) directory.
 
 Note: `BTreeMap`, `HashSet`, and nested `HashMap` (depth 1) are available
