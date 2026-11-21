@@ -79,14 +79,58 @@ def test_codegen_emits_wat_module() -> None:
     assert "i64.add" in wat
 
 
-def test_unsupported_item_raises_with_position() -> None:
-    program = parse(lex("struct Point { x: i64 }"))
+def test_unsupported_aggregate_abi_raises_with_position() -> None:
+    program = parse(lex("struct Point { x: i64 }\nfn get(p: Point) -> i64 { p.x }"))
 
     with pytest.raises(WasmUnsupportedError) as info:
         WasmCodegen().generate(program)
 
-    assert "StructDecl" in str(info.value)
-    assert info.value.line == 1
+    assert "unsupported parameter type 'Point'" in str(info.value)
+    assert info.value.line == 2
+
+
+def test_struct_literal_is_specialized_into_scalar_wat() -> None:
+    source = """
+struct Point { x: i64 }
+fn main() -> i64 {
+    let p: Point = Point { x: 7 };
+    p.x + 1
+}
+"""
+    namespace = _compile(source)
+    assert namespace["main"]() == 8
+
+
+def test_vec_and_enum_aggregates_are_specialized() -> None:
+    source = """
+enum Tree { Leaf(i64), Node(Vec<i64>) }
+fn main() -> i64 {
+    let nested: Vec<Vec<i64>> = vec![vec![4, 2], vec![4]];
+    let tree: Tree = Tree::Node(vec![3, 1]);
+    match tree {
+        Tree::Leaf(value) => value,
+        Tree::Node(children) => children.len() as i64 + nested.len() as i64,
+    }
+}
+"""
+    namespace = _compile(source)
+    assert namespace["main"]() == 4
+
+
+def test_bounded_generic_method_is_inlined() -> None:
+    source = """
+struct Box<T: Clone> { value: T }
+impl<T: Clone> Box<T> {
+    fn new(value: T) -> Box<T> { Box { value: value } }
+    fn get(&self) -> T { self.value.clone() }
+}
+fn main() -> i64 {
+    let item: Box<i64> = Box::new(9);
+    item.get() + 1
+}
+"""
+    namespace = _compile(source)
+    assert namespace["main"]() == 10
 
 
 def test_build_writes_wat_file(tmp_path, capsys) -> None:

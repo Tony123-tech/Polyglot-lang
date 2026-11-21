@@ -42,12 +42,26 @@ CATEGORY_RECURSIVE_GENERICS = "recursive_generics"
 CATEGORY_TRAITS_IMPLS_MATCH = "traits_impls_match"
 CATEGORY_ARITHMETIC_BOOLEAN_CONTROL_FLOW = "arithmetic_boolean_control_flow"
 CATEGORY_DIAGNOSTICS = "diagnostics"
+# New families are appended so existing (seed, index) pairs keep their
+# original categories and generated sources byte-for-byte.
+CATEGORY_OPTION_RESULT = "option_result"
+CATEGORY_STRINGS_FLOATS = "strings_floats"
+CATEGORY_COLLECTIONS = "collections"
+CATEGORY_ASYNC_FUTURES = "async_futures"
+CATEGORY_STDLIB_INCLUDES = "stdlib_includes"
+CATEGORY_IMMUTABLE_STATE = "immutable_state"
 
 CATEGORIES: tuple[str, ...] = (
     CATEGORY_RECURSIVE_GENERICS,
     CATEGORY_TRAITS_IMPLS_MATCH,
     CATEGORY_ARITHMETIC_BOOLEAN_CONTROL_FLOW,
     CATEGORY_DIAGNOSTICS,
+    CATEGORY_OPTION_RESULT,
+    CATEGORY_STRINGS_FLOATS,
+    CATEGORY_COLLECTIONS,
+    CATEGORY_ASYNC_FUTURES,
+    CATEGORY_STDLIB_INCLUDES,
+    CATEGORY_IMMUTABLE_STATE,
 )
 
 DEFAULT_CASE_COUNT = 8
@@ -365,10 +379,13 @@ fn main() -> i64 {{ dfuzz_unproven({amount}) }}
 
 
 def _tpl_diagnostic_e003(rng: random.Random) -> str:
-    amount = rng.randint(1, 20)
-    return f"""// diff-fuzz: skip-native: native codegen has no E003 translate diagnostic
+    # Both backends reject a wrong-arity call to the reserved std:fs host seam
+    # with E003, so this diagnostic runs natively instead of being skipped.
+    literal = f"dfuzz-{rng.randint(1, 99)}"
+    return f"""// diff-fuzz: expect E003 host-call arity misuse
 fn main() -> i64 {{
-    dfuzz_unknown_macro!({amount});
+    let p: String = "{literal}";
+    let r = __fs_read_text(p, p);
     0
 }}
 """
@@ -381,6 +398,307 @@ fn main() -> i64 {{
     let value: i64 = "{literal}".parse::<i64>().unwrap();
     value
 }}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Option / Result flows
+# ---------------------------------------------------------------------------
+
+
+def _tpl_option_unwrap_or(rng: random.Random) -> str:
+    some, fallback = rng.randint(1, 20), rng.randint(-9, -1)
+    flag = rng.choice(("true", "false"))
+    return f"""fn dfuzz_option_unwrap_or(flag: bool) -> i64 {{
+    let maybe: Option<i64> = if flag {{ Some({some}) }} else {{ None }};
+    maybe.unwrap_or({fallback})
+}}
+
+fn main() -> i64 {{ dfuzz_option_unwrap_or({flag}) }}
+"""
+
+
+def _tpl_option_match(rng: random.Random) -> str:
+    value, present, absent = (
+        rng.randint(1, 20),
+        rng.randint(1, 9),
+        rng.randint(-9, -1),
+    )
+    flag = rng.choice(("true", "false"))
+    return f"""fn dfuzz_option_match(flag: bool) -> i64 {{
+    let maybe: Option<i64> = if flag {{ Some({value}) }} else {{ None }};
+    match maybe {{
+        Some(inner) => inner + {present},
+        None => {absent},
+    }}
+}}
+
+fn main() -> i64 {{ dfuzz_option_match({flag}) }}
+"""
+
+
+def _tpl_result_question(rng: random.Random) -> str:
+    value, bonus, error = rng.randint(1, 15), rng.randint(1, 9), rng.randint(1, 9)
+    # The native boundary converts Result<T, E> into PyResult<T>, so main
+    # unwraps the call; the `?` operator inside the callee is still exercised.
+    return f"""fn dfuzz_result_question(flag: bool) -> Result<i64, i64> {{
+    let inner = if flag {{ Ok({value}) }} else {{ Err({error}) }}?;
+    Ok(inner + {bonus})
+}}
+
+fn main() -> i64 {{ dfuzz_result_question(true).unwrap() }}
+"""
+
+
+def _tpl_result_unwrap_or(rng: random.Random) -> str:
+    value, fallback, error = (
+        rng.randint(1, 15),
+        rng.randint(-9, -1),
+        rng.randint(1, 9),
+    )
+    flag = rng.choice(("true", "false"))
+    return f"""fn dfuzz_result_unwrap_or(flag: bool) -> i64 {{
+    let value: Result<i64, i64> = if flag {{ Ok({value}) }} else {{ Err({error}) }};
+    value.unwrap_or({fallback})
+}}
+
+fn main() -> i64 {{ dfuzz_result_unwrap_or({flag}) }}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Strings and floats
+# ---------------------------------------------------------------------------
+
+
+def _tpl_string_concat(rng: random.Random) -> str:
+    left = rng.choice(("ab", "xy", "poly"))
+    right = rng.choice(("cd", "zw", "glot"))
+    extra = rng.randint(0, 7)
+    # The inline `+` form is supported by both backends; two `let`-bound
+    # Strings added together are not (native codegen rejects that shape).
+    return f"""fn dfuzz_string_concat() -> i64 {{
+    let joined = "{left}".to_string() + "{right}";
+    joined.len() as i64 + {extra}
+}}
+
+fn main() -> i64 {{ dfuzz_string_concat() }}
+"""
+
+
+def _tpl_float_arithmetic(rng: random.Random) -> str:
+    first, second, scale, bias = (
+        rng.randint(1, 9),
+        rng.randint(1, 9),
+        rng.choice(("0.5", "1.5", "2.0")),
+        rng.randint(-5, 5),
+    )
+    return f"""fn dfuzz_float_arithmetic() -> i64 {{
+    let a: f64 = {first}.5;
+    let b: f64 = {second}.0;
+    let scaled = (a + b) * {scale};
+    scaled as i64 + {bias}
+}}
+
+fn main() -> i64 {{ dfuzz_float_arithmetic() }}
+"""
+
+
+def _tpl_float_cast(rng: random.Random) -> str:
+    amount, divisor, bonus = (
+        rng.randint(2, 40),
+        rng.choice(("2.0", "4.0")),
+        rng.randint(0, 5),
+    )
+    return f"""fn dfuzz_float_cast() -> i64 {{
+    let as_float: f64 = {amount} as f64;
+    let halved = as_float / {divisor};
+    halved as i64 + {bonus}
+}}
+
+fn main() -> i64 {{ dfuzz_float_cast() }}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Collections
+# ---------------------------------------------------------------------------
+
+
+def _tpl_hashmap_lookup(rng: random.Random) -> str:
+    first, second, missing = (
+        rng.randint(1, 20),
+        rng.randint(1, 20),
+        rng.randint(-9, -1),
+    )
+    return f"""fn dfuzz_hashmap_lookup() -> i64 {{
+    let mut values: HashMap<String, i64> = HashMap::new();
+    values.insert("alpha".to_string(), {first});
+    values.insert("beta".to_string(), {second});
+    values.get("alpha".to_string()).unwrap_or({missing}) + values.len() as i64
+}}
+
+fn main() -> i64 {{ dfuzz_hashmap_lookup() }}
+"""
+
+
+def _tpl_btreemap_sorted(rng: random.Random) -> str:
+    first, second, third = rng.randint(1, 9), rng.randint(1, 9), rng.randint(1, 9)
+    return f"""fn dfuzz_btreemap_sorted() -> i64 {{
+    let mut values: BTreeMap<i64, i64> = BTreeMap::new();
+    values.insert(3, {third});
+    values.insert(1, {first});
+    values.insert(2, {second});
+    let mut out: i64 = 0;
+    for (key, _value) in values.iter() {{
+        out = out * 10 + key;
+    }}
+    out
+}}
+
+fn main() -> i64 {{ dfuzz_btreemap_sorted() }}
+"""
+
+
+def _tpl_hashset_membership(rng: random.Random) -> str:
+    first, second = rng.randint(1, 9), rng.randint(10, 19)
+    return f"""fn dfuzz_hashset_membership() -> i64 {{
+    let mut values: HashSet<i64> = HashSet::new();
+    let fresh = values.insert({first});
+    values.insert({second});
+    let found = values.contains(&{second});
+    if fresh && found {{ values.len() as i64 }} else {{ -1 }}
+}}
+
+fn main() -> i64 {{ dfuzz_hashset_membership() }}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Async / PyFuture (modeled without async boundaries)
+# ---------------------------------------------------------------------------
+# Native async functions surface as PyFuture objects while PythonBackend emits
+# coroutines, so calling one from a plain ``main`` cannot compare equal.  These
+# templates intentionally model the deterministic, await-free body of an async
+# pipeline with ordinary functions; no future/coroutine crosses the boundary.
+
+
+def _tpl_async_pipeline_step(rng: random.Random) -> str:
+    argument, threshold, bonus = (
+        rng.randint(0, 12),
+        rng.randint(4, 20),
+        rng.randint(1, 9),
+    )
+    return f"""fn dfuzz_pipeline_step(value: i64) -> i64 {{
+    let doubled = value * 2;
+    if doubled > {threshold} {{ doubled + {bonus} }} else {{ doubled - {bonus} }}
+}}
+
+fn main() -> i64 {{ dfuzz_pipeline_step({argument}) }}
+"""
+
+
+def _tpl_async_pipeline_chain(rng: random.Random) -> str:
+    argument, bump, multiplier = (
+        rng.randint(0, 12),
+        rng.randint(1, 9),
+        rng.randint(1, 5),
+    )
+    return f"""fn dfuzz_pipeline_stage(value: i64) -> i64 {{ value + {bump} }}
+
+fn dfuzz_pipeline_chain(value: i64) -> i64 {{
+    let first = dfuzz_pipeline_stage(value);
+    dfuzz_pipeline_stage(first) * {multiplier}
+}}
+
+fn main() -> i64 {{ dfuzz_pipeline_chain({argument}) }}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Standard library includes
+# ---------------------------------------------------------------------------
+# ``include!("std:<module>")`` is expanded by _program_from_source before either
+# backend sees the program; the module syntax follows tests/test_stdlib.py.
+
+
+def _tpl_stdlib_math_include(rng: random.Random) -> str:
+    magnitude, left, right = (
+        -rng.randint(1, 20),
+        rng.randint(2, 30),
+        rng.randint(2, 30),
+    )
+    return f"""include!("std:math");
+
+fn dfuzz_stdlib_math() -> i64 {{
+    let absolute = abs_i64({magnitude});
+    let shared = gcd({left}, {right});
+    max_i64(absolute, shared) + min_i64({left}, {right})
+}}
+
+fn main() -> i64 {{ dfuzz_stdlib_math() }}
+"""
+
+
+def _tpl_stdlib_str_include(rng: random.Random) -> str:
+    word = rng.choice(("poly", "rust", "lang"))
+    letter = rng.choice(("a", "l", "o"))
+    return f"""include!("std:str_utils");
+
+fn dfuzz_stdlib_str() -> i64 {{
+    let upper = to_upper("{word}".to_string());
+    upper.len() as i64 + count_byte("{word}".to_string(), "{letter}".to_string())
+}}
+
+fn main() -> i64 {{ dfuzz_stdlib_str() }}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Immutable snapshot state (hotpatch / RcuDomain style)
+# ---------------------------------------------------------------------------
+# These templates mirror epoch advances and snapshot reads with plain values
+# and functions.  No privileged hotpatch calls or shared mutable runtime state
+# are used, so both backends execute the same deterministic logic.
+
+
+def _tpl_immutable_snapshot(rng: random.Random) -> str:
+    value, bonus = rng.randint(1, 12), rng.randint(0, 5)
+    return f"""struct DFSnapshot {{
+    epoch: i64,
+    value: i64,
+}}
+
+fn dfuzz_snapshot_next(current: DFSnapshot) -> DFSnapshot {{
+    DFSnapshot {{ epoch: current.epoch + 1, value: current.value * 2 }}
+}}
+
+fn dfuzz_snapshot_value() -> i64 {{
+    let initial = DFSnapshot {{ epoch: 0, value: {value} }};
+    let first = dfuzz_snapshot_next(initial);
+    let second = dfuzz_snapshot_next(first);
+    second.value + second.epoch + {bonus}
+}}
+
+fn main() -> i64 {{ dfuzz_snapshot_value() }}
+"""
+
+
+def _tpl_immutable_epoch_reader(rng: random.Random) -> str:
+    epoch, value = rng.randint(1, 9), rng.randint(1, 20)
+    return f"""struct DFEpochState {{
+    epoch: i64,
+    value: i64,
+}}
+
+fn dfuzz_epoch_read(state: &DFEpochState) -> i64 {{ state.value + state.epoch }}
+
+fn dfuzz_epoch_advance(value: i64) -> i64 {{
+    let state = DFEpochState {{ epoch: {epoch}, value: value }};
+    dfuzz_epoch_read(&state)
+}}
+
+fn main() -> i64 {{ dfuzz_epoch_advance({value}) }}
 """
 
 
@@ -408,6 +726,34 @@ _TEMPLATES: dict[str, tuple[Callable[[random.Random], str], ...]] = {
         _tpl_diagnostic_e002,
         _tpl_diagnostic_e003,
         _tpl_diagnostic_e008,
+    ),
+    CATEGORY_OPTION_RESULT: (
+        _tpl_option_unwrap_or,
+        _tpl_option_match,
+        _tpl_result_question,
+        _tpl_result_unwrap_or,
+    ),
+    CATEGORY_STRINGS_FLOATS: (
+        _tpl_string_concat,
+        _tpl_float_arithmetic,
+        _tpl_float_cast,
+    ),
+    CATEGORY_COLLECTIONS: (
+        _tpl_hashmap_lookup,
+        _tpl_btreemap_sorted,
+        _tpl_hashset_membership,
+    ),
+    CATEGORY_ASYNC_FUTURES: (
+        _tpl_async_pipeline_step,
+        _tpl_async_pipeline_chain,
+    ),
+    CATEGORY_STDLIB_INCLUDES: (
+        _tpl_stdlib_math_include,
+        _tpl_stdlib_str_include,
+    ),
+    CATEGORY_IMMUTABLE_STATE: (
+        _tpl_immutable_snapshot,
+        _tpl_immutable_epoch_reader,
     ),
 }
 
@@ -603,19 +949,32 @@ def _call_exported(namespace: Mapping[str, Any], scope: str) -> Any:
     return None
 
 
+def _program_from_source(source: str) -> Any:
+    """Parse ``source`` and expand ``include!`` items for either backend."""
+    from ast_nodes import IncludeDecl
+    from include_expander import expand_includes
+    from lexer import lex
+    from parser import parse
+
+    program = parse(lex(source))
+    if any(isinstance(item, IncludeDecl) for item in program.items):
+        return expand_includes(program, Path(__file__).resolve())
+    return program
+
+
 def _python_compile(
     source: str, *, scope: str, cache_root: Path | None
 ) -> dict[str, Any]:
     """Compile and execute ``source`` with the Python transpiler backend."""
     del cache_root
     from backends import get_backend
-    from lexer import lex
-    from parser import parse
 
     buffer = io.StringIO()
     try:
         with _captured_stdout() as captured:
-            namespace = get_backend("python", trusted=True).compile(parse(lex(source)))
+            namespace = get_backend("python", trusted=True).compile(
+                _program_from_source(source)
+            )
             value = _call_exported(namespace, scope)
             buffer = captured
     except Exception as error:  # diagnostics are compared structurally
@@ -637,8 +996,6 @@ def _native_compile(
         }
 
     from backends.rust.compiler import NativeBackend
-    from lexer import lex
-    from parser import parse
 
     skip_reason = _native_skip_reason(source)
     if skip_reason is not None:
@@ -664,7 +1021,7 @@ def _native_compile(
         with _captured_stdout() as captured:
             backend = NativeBackend(cache_dir=root / "native-cache", trusted=True)
             namespace = backend.compile(
-                parse(lex(source)),
+                _program_from_source(source),
                 module_name=f"dfuzz_s{hash_stable(scope) & 0xFFFFFFFF}",
                 incremental=True,
                 cache_scope=scope,
@@ -757,27 +1114,20 @@ def _save_mismatch(case: FuzzCase, outcome: Result, directory: Path) -> dict[str
     return payload
 
 
-def run_case(
-    case: FuzzCase,
+def _compare_source(
+    source: str,
     *,
-    python_compile: CompileCallable | None = None,
-    native_compile: CompileCallable | None = None,
-    cache_root: Path | None = None,
-    artifacts_dir: Path | None = None,
+    scope: str,
+    root: Path,
+    python_call: CompileCallable,
+    native_call: CompileCallable,
 ) -> dict[str, Any]:
-    """Execute one generated case and return its normalized comparison."""
-    scope = _scope_for(case)
-    root = cache_root if cache_root is not None else _default_cache_root()
-    python_call = python_compile if python_compile is not None else _python_compile
-    native_call = native_compile if native_compile is not None else _native_compile
-
-    python_raw = python_call(case.source, scope=scope, cache_root=root)
-    python = _normalize_outcome(python_raw)
-
-    native = _normalize_outcome(native_call(case.source, scope=scope, cache_root=root))
+    """Compare one source through both backends and normalize the outcomes."""
+    python = _normalize_outcome(python_call(source, scope=scope, cache_root=root))
+    native = _normalize_outcome(native_call(source, scope=scope, cache_root=root))
     native_skipped: str | None = None
     if native.get("skipped"):
-        native_skipped = native.get("reason", "native backend skipped")
+        native_skipped = str(native.get("reason", "native backend skipped"))
     elif python.get("error") is None and native.get("error") is not None:
         native_error = native["error"]
         if isinstance(native_error, Mapping) and native_error.get("code") in {
@@ -792,24 +1142,195 @@ def run_case(
             native["reason"] = native_skipped
 
     mismatch = not native.get("skipped") and not _outcomes_equal(python, native)
-    outcome: dict[str, Any] = {
-        "seed": case.seed,
-        "index": case.index,
-        "category": case.category,
-        "source": case.source,
+    return {
         "python": python,
         "native": native,
         "mismatch": mismatch,
         "skipped": native_skipped is not None,
         "skip_reason": native_skipped,
-        "diff": None,
+        "diff": _diff_text(python, native) if mismatch else None,
     }
-    if mismatch:
-        outcome["diff"] = _diff_text(python, native or {})
+
+
+def _mismatch_signature(
+    outcome: Mapping[str, Any],
+) -> tuple[tuple[str, str, str], ...] | None:
+    """Return a stable classification of a mismatch, or None if there is none.
+
+    The signature uses the normalized per-key outcomes rather than the rendered
+    diff so line-number changes during shrinking do not change the class.
+    """
+    python = outcome.get("python") or {}
+    native = outcome.get("native") or {}
+    if not isinstance(python, Mapping) or not isinstance(native, Mapping):
+        return None
+    mismatch = outcome.get("mismatch")
+    if mismatch is None:
+        mismatch = not _outcomes_equal(dict(python), dict(native))
+    if not mismatch or outcome.get("skipped"):
+        return None
+    parts: list[tuple[str, str, str]] = []
+    for key in ("result", "stdout", "error"):
+        left, right = _jsonable(python.get(key)), _jsonable(native.get(key))
+        if left != right:
+            parts.append(
+                (
+                    key,
+                    json.dumps(left, sort_keys=True, ensure_ascii=False),
+                    json.dumps(right, sort_keys=True, ensure_ascii=False),
+                )
+            )
+    return tuple(parts) if parts else None
+
+
+def _shrink_mismatch_with_outcome(
+    source: str,
+    compare: Callable[[str], dict[str, Any]],
+    *,
+    max_iterations: int,
+) -> tuple[str, dict[str, Any]]:
+    """Greedily remove lines while preserving the mismatch class.
+
+    ``compare(source)`` must return a mapping with ``python``, ``native`` and
+    (ideally) ``mismatch``/``skipped`` entries, as produced by
+    :func:`_compare_source`.  ``max_iterations`` counts all ``compare`` calls,
+    including the initial baseline.  The caller can cache that baseline so no
+    extra backend build is needed for it.
+    """
+    if max_iterations < 1:
+        raise ValueError("max_iterations must be at least 1")
+    lines = source.splitlines(keepends=True)
+    baseline = compare(source)
+    best_outcome = baseline
+    if not lines:
+        return source, best_outcome
+    target = _mismatch_signature(baseline)
+    if target is None:
+        return source, best_outcome
+
+    current = list(lines)
+    calls = 1
+    while calls < max_iterations and len(current) > 1:
+        accepted: tuple[list[str], dict[str, Any]] | None = None
+        sizes = sorted(
+            {
+                len(current) - 1,
+                len(current) // 2,
+                len(current) // 4,
+                1,
+            },
+            reverse=True,
+        )
+        for size in sizes:
+            if size <= 0 or size >= len(current):
+                continue
+            for start in range(len(current) - size + 1):
+                if calls >= max_iterations:
+                    break
+                candidate_lines = current[:start] + current[start + size :]
+                candidate_source = "".join(candidate_lines)
+                calls += 1
+                candidate_outcome = compare(candidate_source)
+                if _mismatch_signature(candidate_outcome) == target:
+                    accepted = (candidate_lines, candidate_outcome)
+                    break
+            if accepted is not None or calls >= max_iterations:
+                break
+        if accepted is None:
+            break
+        current, best_outcome = accepted
+    return "".join(current), best_outcome
+
+
+def _shrink_mismatch(
+    source: str,
+    compare: Callable[[str], dict[str, Any]],
+    *,
+    max_iterations: int = 12,
+) -> str:
+    """Return a smaller source that reproduces the same mismatch class.
+
+    ``max_iterations`` bounds the total number of ``compare`` invocations
+    (baseline included).  ``run_case`` caches the baseline comparison, so at
+    most ``max_iterations - 1`` additional native builds happen per mismatch.
+    """
+    shrunk, _outcome = _shrink_mismatch_with_outcome(
+        source, compare, max_iterations=max_iterations
+    )
+    return shrunk
+
+
+_SHRINK_MAX_ITERATIONS = 12
+
+
+def run_case(
+    case: FuzzCase,
+    *,
+    python_compile: CompileCallable | None = None,
+    native_compile: CompileCallable | None = None,
+    cache_root: Path | None = None,
+    artifacts_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Execute one generated case and return its normalized comparison."""
+    scope = _scope_for(case)
+    root = cache_root if cache_root is not None else _default_cache_root()
+    python_call = python_compile if python_compile is not None else _python_compile
+    native_call = native_compile if native_compile is not None else _native_compile
+
+    initial = _compare_source(
+        case.source,
+        scope=scope,
+        root=root,
+        python_call=python_call,
+        native_call=native_call,
+    )
+    source, comparison = case.source, initial
+    if initial["mismatch"]:
+        # Replaying the original source is free: the baseline is already known.
+        # Every other candidate costs one native build, bounded below.
+        baseline_cache = {case.source: initial}
+
+        def compare(candidate: str) -> dict[str, Any]:
+            cached = baseline_cache.get(candidate)
+            if cached is not None:
+                return cached
+            result = _compare_source(
+                candidate,
+                scope=scope,
+                root=root,
+                python_call=python_call,
+                native_call=native_call,
+            )
+            baseline_cache[candidate] = result
+            return result
+
+        source, comparison = _shrink_mismatch_with_outcome(
+            case.source, compare, max_iterations=_SHRINK_MAX_ITERATIONS
+        )
+
+    outcome: dict[str, Any] = {
+        "seed": case.seed,
+        "index": case.index,
+        "category": case.category,
+        "source": source,
+        "python": comparison["python"],
+        "native": comparison["native"],
+        "mismatch": comparison["mismatch"],
+        "skipped": comparison["skipped"],
+        "skip_reason": comparison["skip_reason"],
+        "diff": comparison["diff"],
+    }
+    if outcome["mismatch"]:
         directory = (
             artifacts_dir if artifacts_dir is not None else _default_artifacts_dir()
         )
-        outcome["artifact"] = _save_mismatch(case, outcome, directory)
+        shrunk_case = FuzzCase(
+            seed=case.seed,
+            index=case.index,
+            category=case.category,
+            source=source,
+        )
+        outcome["artifact"] = _save_mismatch(shrunk_case, outcome, directory)
     return outcome
 
 
@@ -932,6 +1453,7 @@ __all__ = [
     "FuzzCase",
     "FuzzHarnessError",
     "FuzzReport",
+    "_shrink_mismatch",
     "generate_case",
     "iter_cases",
     "normalize_error",

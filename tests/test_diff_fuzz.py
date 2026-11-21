@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -45,11 +47,9 @@ def test_generation_is_deterministic_and_covers_categories():
 def test_generated_sources_parse_and_are_natively_codegeneratable():
     from backends.python.translator import PythonBackend
     from backends.rust.codegen import RustCodegen
-    from lexer import lex
-    from parser import parse
 
     for case in df.iter_cases(2026, 12):
-        program = parse(lex(case.source))
+        program = df._program_from_source(case.source)
         if case.category == df.CATEGORY_DIAGNOSTICS:
             try:
                 PythonBackend(trusted=True).compile(program)
@@ -349,3 +349,202 @@ def test_cli_json_and_exit_codes(
 
     assert df.main(["--seed", "1", "--backends", "bogus", "--json"]) == 2
     assert "harness error" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# E003 native parity
+# ---------------------------------------------------------------------------
+
+
+def _mismatch_comparison() -> dict[str, Any]:
+    return {
+        "python": {"result": 1, "stdout": "", "error": None},
+        "native": {"result": 2, "stdout": "", "error": None},
+        "mismatch": True,
+    }
+
+
+def _clean_comparison() -> dict[str, Any]:
+    return {
+        "python": {"result": 1, "stdout": "", "error": None},
+        "native": {"result": 1, "stdout": "", "error": None},
+        "mismatch": False,
+    }
+
+
+def test_e003_template_uses_shared_host_arity_error_without_skip() -> None:
+    from backends.python.translator import PythonBackend
+    from backends.rust.codegen import RustCodegen
+
+    source = df._tpl_diagnostic_e003(random.Random("e003-test"))
+    assert "__fs_read_text(p, p)" in source
+    assert "skip-native" not in source
+
+    program = df._program_from_source(source)
+    for generate in (
+        lambda item: PythonBackend(trusted=True).compile(item),
+        lambda item: RustCodegen(module_name="dfuzz_e003_test").generate(item),
+    ):
+        with pytest.raises(Exception) as excinfo:
+            generate(program)
+        normalized = df.normalize_error(excinfo.value)
+        assert normalized is not None
+        assert normalized["code"] == "E003"
+        assert normalized["message"] == "__fs_read_text expects 1 argument, got 2"
+
+
+def test_real_run_fuzz_does_not_skip_e003_case(tmp_path: Path) -> None:
+    if shutil.which("cargo") is None:
+        pytest.skip("cargo is not available for native comparison")
+
+    # Seed 1, index 3 deterministically selects the E003 template.
+    case = df.generate_case(1, 3)
+    assert "__fs_read_text(p, p)" in case.source
+
+    report = df.run_fuzz(
+        1,
+        4,
+        cache_root=tmp_path / "cache",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+    assert report.passed is True
+    assert report.skipped == []
+    assert not (tmp_path / "artifacts").exists()
+
+
+# ---------------------------------------------------------------------------
+# Mismatch shrinking
+# ---------------------------------------------------------------------------
+
+
+def test_shrink_mismatch_reduces_lines_and_keeps_same_class() -> None:
+    marker = "fn dfuzz_marker() -> i64 { 1 }"
+    source = (
+        f"{marker}\n"
+        "let noise_a = 1;\n"
+        "let noise_b = 2;\n"
+        "let noise_c = 3;\n"
+        "let noise_d = 4;"
+    )
+    seen: list[str] = []
+
+    def compare(candidate: str) -> dict[str, Any]:
+        seen.append(candidate)
+        return _mismatch_comparison() if marker in candidate else _clean_comparison()
+
+    shrunk = df._shrink_mismatch(source, compare, max_iterations=8)
+
+    assert len(shrunk.splitlines()) < len(source.splitlines())
+    assert marker in shrunk
+    original_class = df._mismatch_signature(compare(source))
+    shrunk_class = df._mismatch_signature(compare(shrunk))
+    assert original_class is not None
+    assert shrunk_class == original_class
+
+
+def test_shrink_mismatch_respects_iteration_cap() -> None:
+    seen: list[str] = []
+
+    def compare(candidate: str) -> dict[str, Any]:
+        seen.append(candidate)
+        return _mismatch_comparison()
+
+    source = "a\nb\nc\nd\ne\nf\n"
+    shrunk = df._shrink_mismatch(source, compare, max_iterations=3)
+    assert len(seen) <= 3
+    assert len(shrunk.splitlines()) < len(source.splitlines())
+
+    seen.clear()
+    unchanged = df._shrink_mismatch(source, compare, max_iterations=1)
+    assert unchanged == source
+    assert len(seen) == 1
+
+
+def test_shrink_mismatch_leaves_clean_matches_untouched() -> None:
+    seen: list[str] = []
+
+    def compare(candidate: str) -> dict[str, Any]:
+        seen.append(candidate)
+        return _clean_comparison()
+
+    source = "fn main() -> i64 { 1 }\n"
+    assert df._shrink_mismatch(source, compare, max_iterations=6) == source
+    assert seen == [source]
+
+
+def test_run_case_saves_shrunk_reproducer_artifacts(tmp_path: Path) -> None:
+    marker = "fn dfuzz_marker() -> i64 { 1 }"
+    source = f"{marker}\nlet a = 1;\nlet b = 2;\nlet c = 3;"
+
+    def compile_marker(
+        result: int, source_text: str, *, scope: str, cache_root: Path | None
+    ) -> dict[str, Any]:
+        del scope, cache_root
+        return {
+            "result": result if marker in source_text else 0,
+            "stdout": "",
+            "error": None,
+        }
+
+    case = df.FuzzCase(
+        seed=5,
+        index=0,
+        category=df.CATEGORIES[0],
+        source=source,
+    )
+    outcome = df.run_case(
+        case,
+        python_compile=lambda src, **kw: compile_marker(1, src, **kw),
+        native_compile=lambda src, **kw: compile_marker(2, src, **kw),
+        cache_root=tmp_path / "cache",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    assert outcome["mismatch"] is True
+    assert len(outcome["source"].splitlines()) < len(source.splitlines())
+    poly_path = tmp_path / "artifacts" / "5-0.poly"
+    json_path = tmp_path / "artifacts" / "5-0.json"
+    assert poly_path.read_text(encoding="utf-8") == outcome["source"]
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["source"] == poly_path.read_text(encoding="utf-8")
+    assert "result" in payload["diff"]
+
+
+# ---------------------------------------------------------------------------
+# Expanded corpus
+# ---------------------------------------------------------------------------
+
+
+def test_every_declared_category_appears_in_generated_batch() -> None:
+    count = len(df.CATEGORIES) * 2
+    cases = list(df.iter_cases(31415, count))
+    assert {case.category for case in cases} == set(df.CATEGORIES)
+    assert [case.source for case in cases] == [
+        df.generate_case(31415, index).source for index in range(count)
+    ]
+
+
+def test_new_templates_parse_compile_and_codegenerate() -> None:
+    from backends.python.translator import PythonBackend
+    from backends.rust.codegen import RustCodegen
+
+    new_categories = (
+        df.CATEGORY_OPTION_RESULT,
+        df.CATEGORY_STRINGS_FLOATS,
+        df.CATEGORY_COLLECTIONS,
+        df.CATEGORY_ASYNC_FUTURES,
+        df.CATEGORY_STDLIB_INCLUDES,
+        df.CATEGORY_IMMUTABLE_STATE,
+    )
+    checked = 0
+    for category in new_categories:
+        for template in df._TEMPLATES[category]:
+            for sample in range(3):
+                source = template(random.Random(f"template-check:{sample}"))
+                program = df._program_from_source(source)
+                namespace = PythonBackend(trusted=True).compile(program)
+                assert callable(namespace.get("main"))
+                namespace["main"]()
+                RustCodegen(module_name=f"dfuzz_template_{checked}").generate(program)
+                checked += 1
+    assert checked > 0

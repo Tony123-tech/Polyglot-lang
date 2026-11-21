@@ -12,7 +12,23 @@ from parser import parse
 
 # Anchor to the conftest.py directory, not the current working directory
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
-EXAMPLES = sorted(EXAMPLES_DIR.glob("*.poly"))
+
+
+def _is_zig_only(example: Path) -> bool:
+    """Return True for examples using syntax reserved for the Zig backend.
+
+    The Zig backend is an opt-in mode outside the Python/native parity contract
+    (see docs/zig.md), so it must not be compiled by this suite.
+    """
+    source = example.read_text(encoding="utf-8")
+    return any(
+        marker in source for marker in ("+|", "-|", "*|", "SimdN<", "#[parallel]")
+    )
+
+
+EXAMPLES = sorted(
+    example for example in EXAMPLES_DIR.glob("*.poly") if not _is_zig_only(example)
+)
 
 # Mark this test as slow (needs cargo) so it is deselected by default
 pytestmark = pytest.mark.slow

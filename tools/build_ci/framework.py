@@ -12,14 +12,18 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import platform
 import re
 import shutil
+import statistics
 import subprocess
 import sys
+import tempfile
 import time
+import tomllib
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +47,26 @@ DEFAULT_PYTEST_SUITES: tuple[str, ...] = (
 
 DOCS_SYNC_SCRIPT = "tools/check_docs_sync.py"
 DOCS_LINT_SCRIPT = "tools/lint_docs.py"
+
+TRACKED_DOC_NAMES: tuple[str, ...] = (
+    "README.md",
+    "GUIDE.md",
+    "SPECIFICATION.md",
+    "NOTES.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "COMMIT_GUIDE.md",
+)
+"""Top-level Markdown files considered by :func:`ci_verify_doc_links`."""
+
+DEFAULT_BENCHMARK_THRESHOLD = 2.0
+BENCHMARK_SOURCE = "1 + 2 * 3 - 4 / 5"
+BENCHMARK_REPETITIONS = 32
+BENCHMARK_RUNS = 5
+BENCHMARK_BASELINE_FILENAME = "benchmark-baseline.json"
+
+_MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]\n]*\]\(([^()\n]+)\)")
+_MARKDOWN_FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
 _PRUNE_LOCK_NAME = ".prune.lock"
 _STALE_LOCK_SECONDS = 300.0
@@ -171,6 +195,19 @@ def _run_check(
         returncode=int(process.returncode),
         stdout=_as_text(process.stdout),
         stderr=_as_text(process.stderr),
+    )
+
+
+def _in_process_check(
+    name: str, *, ok: bool, detail: str, error: str = ""
+) -> CheckResult:
+    """Synthesize a gate result for a verifier that never spawns a command."""
+    return CheckResult(
+        name=name,
+        command=(f"in-process:{name}",),
+        returncode=0 if ok else 1,
+        stdout=detail if ok else "",
+        stderr="" if ok else (error or detail),
     )
 
 
@@ -712,6 +749,385 @@ def ci_verify_clean_git_worktree(
     return result
 
 
+def ci_verify_rust_format_and_doc(
+    *,
+    root: Path | str,
+    runner: CommandRunner | None = None,
+    cargo_executable: str = "cargo",
+) -> tuple[CheckResult, ...]:
+    """Run ``cargo fmt --all -- --check`` and ``cargo doc --no-deps --workspace``.
+
+    Both commands run in ``root/native_pillars`` when that crate has a
+    ``Cargo.toml``, otherwise in ``root`` itself.  The caller can redirect Cargo
+    artifacts to an isolated cache directory through the injected runner, so
+    this verifier never writes into the working tree.
+    """
+    root_path = _resolve_root(root)
+    rust_root = root_path / "native_pillars"
+    if not (rust_root / "Cargo.toml").is_file():
+        rust_root = root_path
+    return (
+        _run_check(
+            "cargo-fmt",
+            (cargo_executable, "fmt", "--all", "--", "--check"),
+            rust_root,
+            runner,
+        ),
+        _run_check(
+            "cargo-doc",
+            (cargo_executable, "doc", "--no-deps", "--workspace"),
+            rust_root,
+            runner,
+        ),
+    )
+
+
+def ci_verify_dependency_audit(
+    *,
+    root: Path | str,
+    runner: CommandRunner | None = None,
+    python_executable: str | None = None,
+) -> tuple[CheckResult, ...]:
+    """Audit installed dependencies and minimal ``pyproject.toml`` metadata.
+
+    ``pip check`` is executed through the injected runner; the metadata audit is
+    synthesized in-process.  It requires ``project.license`` and
+    ``project.requires-python`` and resolves each ``[project.scripts]`` target
+    module with :func:`importlib.util.find_spec` (without importing the module).
+    """
+    root_path = _resolve_root(root)
+    python = python_executable or sys.executable
+    pip_check = _run_check(
+        "pip-check", (python, "-m", "pip", "check"), root_path, runner
+    )
+
+    findings: list[str] = []
+    pyproject = root_path / "pyproject.toml"
+    if not pyproject.is_file():
+        findings.append("pyproject.toml is missing")
+    else:
+        try:
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            findings.append(f"cannot parse pyproject.toml: {error}")
+        else:
+            project = data.get("project")
+            if not isinstance(project, Mapping):
+                findings.append("missing [project] table")
+            else:
+                if not project.get("license"):
+                    findings.append("project.license is not declared")
+                if not project.get("requires-python"):
+                    findings.append("project.requires-python is not declared")
+                scripts = project.get("scripts") or {}
+                if not isinstance(scripts, Mapping):
+                    findings.append("[project.scripts] must be a table")
+                else:
+                    for script_name, target in sorted(scripts.items()):
+                        module = str(target).split(":", 1)[0].strip()
+                        if not module:
+                            findings.append(
+                                f"script {script_name!r} has no importable module"
+                            )
+                            continue
+                        try:
+                            spec = importlib.util.find_spec(module)
+                        except (ImportError, ValueError, TypeError) as error:
+                            findings.append(
+                                f"script {script_name!r} module {module!r}: {error}"
+                            )
+                        else:
+                            if spec is None:
+                                findings.append(
+                                    f"script {script_name!r} module {module!r} "
+                                    "is not importable"
+                                )
+
+    metadata = _in_process_check(
+        "metadata-audit",
+        ok=not findings,
+        detail="license, requires-python, and script modules are valid",
+        error="\n".join(findings),
+    )
+    return (pip_check, metadata)
+
+
+def ci_verify_doc_links(
+    *,
+    root: Path | str,
+    runner: CommandRunner | None = None,
+    python_executable: str | None = None,
+) -> CheckResult:
+    """Check relative Markdown links in the tracked top-level docs and docs/*.md.
+
+    Anchors, external schemes, absolute paths, ``<placeholder>`` targets, and
+    fenced code blocks are ignored.  A single synthesized ``doc-links`` result
+    lists up to ten broken targets; links are resolved relative to the file
+    that contains them.  ``runner`` and ``python_executable`` are accepted for
+    a uniform verifier interface, but this check performs no subprocess work.
+    """
+    del runner, python_executable
+    root_path = _resolve_root(root)
+    doc_paths = [
+        root_path / name for name in TRACKED_DOC_NAMES if (root_path / name).is_file()
+    ]
+    doc_paths.extend(
+        sorted(path for path in (root_path / "docs").glob("*.md") if path.is_file())
+    )
+
+    broken: list[str] = []
+    scanned = 0
+    for path in doc_paths:
+        relative_doc = path.relative_to(root_path).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as error:
+            broken.append(f"{relative_doc}: cannot read ({error})")
+            continue
+        scanned += 1
+        in_fence = False
+        for line_number, line in enumerate(text.splitlines(), 1):
+            if _MARKDOWN_FENCE_RE.match(line):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            for match in _MARKDOWN_LINK_RE.finditer(line):
+                raw_target = match.group(1).strip()
+                if not raw_target:
+                    continue
+                target = raw_target.split()[0]
+                if (
+                    target.startswith(("#", "/", "http://", "https://", "mailto:"))
+                    or ":" in target
+                    or "<" in target
+                    or ">" in target
+                ):
+                    continue
+                relative_target = target.split("#", 1)[0]
+                if relative_target and not (path.parent / relative_target).exists():
+                    broken.append(f"{relative_doc}:{line_number}: {target}")
+
+    if broken:
+        shown = "; ".join(broken[:10])
+        suffix = " ..." if len(broken) > 10 else ""
+        return _in_process_check(
+            "doc-links",
+            ok=False,
+            detail="",
+            error=f"{len(broken)} broken relative link(s): {shown}{suffix}",
+        )
+    return _in_process_check(
+        "doc-links",
+        ok=True,
+        detail=f"checked {scanned} tracked docs; all relative links resolve",
+    )
+
+
+def _benchmark_baseline_path(root: Path, cache_root: Path | str | None) -> Path:
+    """Return a baseline file in a temp cache root outside ``root``."""
+    if cache_root is None:
+        digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:16]
+        base = Path(tempfile.gettempdir()) / f"polyglot-benchmark-{digest}"
+    else:
+        base = Path(cache_root).expanduser()
+    resolved = base.resolve()
+    if resolved == root or resolved.is_relative_to(root):
+        raise ValueError("benchmark cache root must be outside the workspace")
+    base.mkdir(parents=True, exist_ok=True)
+    return base / BENCHMARK_BASELINE_FILENAME
+
+
+def _benchmark_work_units() -> int:
+    """Run a fixed pure workload and return a deterministic operation count.
+
+    Wall-clock timing is deliberately avoided: microbenchmarks that measure
+    elapsed time flake easily on shared CI hosts.  Instead the median of five
+    runs counts tokens, consumed parse tokens, and registry resolutions for a
+    fixed source.  A regression means the same workload suddenly performs a
+    different amount of work, which is reproducible across machines.
+    """
+    from framework_functions import get_function
+
+    lex = get_function(1).callable
+    parse = get_function(4).callable
+    resolve = get_function
+    total = 0
+    for _ in range(BENCHMARK_REPETITIONS):
+        lexed = lex(BENCHMARK_SOURCE)
+        parsed = parse(BENCHMARK_SOURCE)
+        total += int(lexed["token_count"])
+        total += int(parsed.get("tokens_consumed", 0))
+        total += resolve(1).number
+    return total
+
+
+def ci_verify_benchmark_regression(
+    *,
+    root: Path | str,
+    runner: CommandRunner | None = None,
+    python_executable: str | None = None,
+    threshold: float = DEFAULT_BENCHMARK_THRESHOLD,
+    cache_root: Path | str | None = None,
+) -> CheckResult:
+    """Guard against benchmark regressions using deterministic work counts.
+
+    The median of five runs of a fixed registry workload is compared with a
+    baseline JSON stored below a temp cache root outside the workspace.  When
+    no valid baseline exists it is recorded and a passing check with a note is
+    returned.  ``threshold`` is the maximum allowed current/baseline ratio.
+    Operation counts are used instead of wall-clock durations so the gate
+    cannot flake because of scheduler noise.
+    """
+    del runner, python_executable
+    root_path = _resolve_root(root)
+    limit = float(threshold)
+    if not limit > 0:
+        raise ValueError("threshold must be positive")
+    baseline_path = _benchmark_baseline_path(root_path, cache_root)
+    current = int(
+        statistics.median(_benchmark_work_units() for _ in range(BENCHMARK_RUNS))
+    )
+
+    baseline: int | None = None
+    if baseline_path.is_file():
+        try:
+            payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+            candidate = int(payload["operations"])
+            if candidate > 0:
+                baseline = candidate
+        except OSError, KeyError, TypeError, ValueError:
+            baseline = None
+
+    if baseline is None:
+        record = {
+            "version": 1,
+            "operations": current,
+            "source": BENCHMARK_SOURCE,
+            "repetitions": BENCHMARK_REPETITIONS,
+            "runs": BENCHMARK_RUNS,
+        }
+        baseline_path.write_text(
+            json.dumps(record, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return _in_process_check(
+            "benchmark-regression",
+            ok=True,
+            detail=(
+                f"baseline recorded: operations={current}; deterministic "
+                "operation counts (no wall clock)"
+            ),
+        )
+
+    ratio = current / baseline
+    if ratio > limit:
+        return _in_process_check(
+            "benchmark-regression",
+            ok=False,
+            detail="",
+            error=(
+                f"benchmark regression: current={current} baseline={baseline} "
+                f"ratio={ratio:.3f} exceeds threshold={limit:.2f}"
+            ),
+        )
+    return _in_process_check(
+        "benchmark-regression",
+        ok=True,
+        detail=(
+            f"operations={current} baseline={baseline} ratio={ratio:.3f} "
+            f"threshold={limit:.2f}"
+        ),
+    )
+
+
+def ci_verify_release_metadata(
+    *,
+    root: Path | str,
+    runner: CommandRunner | None = None,
+    python_executable: str | None = None,
+) -> CheckResult:
+    """Assert that packaging include lists cover every registry module.
+
+    The check is fully in-process: it reads ``pyproject.toml``, confirms that
+    each module referenced by :data:`framework_functions.FUNCTIONS` is covered
+    by ``py-modules`` or ``packages.find.include`` (a pattern may match any
+    package prefix), and verifies that ``tools.build_ci`` is exported by the
+    wheel/sdist configuration.
+    """
+    del runner, python_executable
+    from framework_functions import FUNCTIONS
+
+    root_path = _resolve_root(root)
+    pyproject = root_path / "pyproject.toml"
+    if not pyproject.is_file():
+        return _in_process_check(
+            "release-metadata", ok=False, detail="", error="pyproject.toml is missing"
+        )
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        return _in_process_check(
+            "release-metadata",
+            ok=False,
+            detail="",
+            error=f"cannot parse pyproject.toml: {error}",
+        )
+
+    tool = data.get("tool")
+    setuptools = tool.get("setuptools", {}) if isinstance(tool, Mapping) else {}
+    if not isinstance(setuptools, Mapping):
+        setuptools = {}
+    raw_modules = setuptools.get("py-modules", ())
+    packages = setuptools.get("packages", {})
+    find = packages.get("find", {}) if isinstance(packages, Mapping) else {}
+    raw_includes = find.get("include", ()) if isinstance(find, Mapping) else ()
+    patterns = {
+        str(item)
+        for item in (
+            *(raw_modules if isinstance(raw_modules, (list, tuple)) else ()),
+            *(raw_includes if isinstance(raw_includes, (list, tuple)) else ()),
+        )
+    }
+
+    def covered(module: str) -> bool:
+        return any(fnmatch.fnmatchcase(module, pattern) for pattern in patterns)
+
+    def covered_registry_module(module: str) -> bool:
+        parts = module.split(".")
+        return any(
+            covered(".".join(parts[:length])) for length in range(len(parts), 0, -1)
+        )
+
+    registry_modules = {item.module for item in FUNCTIONS}
+    missing = sorted(
+        module for module in registry_modules if not covered_registry_module(module)
+    )
+    if not covered("tools.build_ci"):
+        missing.append("tools.build_ci")
+    try:
+        spec = importlib.util.find_spec("tools.build_ci.framework")
+    except ImportError, ValueError, TypeError:
+        spec = None
+    if spec is None:
+        missing.append("tools.build_ci.framework (not importable)")
+
+    if missing:
+        return _in_process_check(
+            "release-metadata",
+            ok=False,
+            detail="",
+            error="wheel/sdist include lists miss: " + ", ".join(missing),
+        )
+    return _in_process_check(
+        "release-metadata",
+        ok=True,
+        detail=(
+            f"include lists cover {len(registry_modules)} registry module(s) "
+            "and tools.build_ci"
+        ),
+    )
+
+
 def ci_generate_release_gate_report(
     *,
     checks: Mapping[str, Sequence[CheckResult] | bool],
@@ -769,7 +1185,13 @@ def ci_generate_release_gate_report(
 
 
 __all__ = [
+    "BENCHMARK_BASELINE_FILENAME",
+    "BENCHMARK_REPETITIONS",
+    "BENCHMARK_RUNS",
+    "BENCHMARK_SOURCE",
+    "DEFAULT_BENCHMARK_THRESHOLD",
     "DEFAULT_PYTEST_SUITES",
+    "TRACKED_DOC_NAMES",
     "CachePruneResult",
     "CheckResult",
     "CommandRunner",
@@ -780,9 +1202,14 @@ __all__ = [
     "ci_isolate_cargo_target_dir",
     "ci_isolate_python_venv_paths",
     "ci_prune_stale_cache_entries",
+    "ci_verify_benchmark_regression",
     "ci_verify_clean_git_worktree",
+    "ci_verify_dependency_audit",
+    "ci_verify_doc_links",
     "ci_verify_docs_sync_and_lint",
     "ci_verify_pytest_parity_suites",
+    "ci_verify_release_metadata",
     "ci_verify_ruff_format_and_lint",
     "ci_verify_rust_checks",
+    "ci_verify_rust_format_and_doc",
 ]

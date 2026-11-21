@@ -1,8 +1,9 @@
 """Unit tests for the ordered release gate runner.
 
 Only fake runners are used: no real pytest, cargo, ruff, git, or differential
-fuzz build is ever spawned.  The scaffold verifier is replaced in-process and
-the fuzz runner is injected, so these tests stay fast and deterministic.
+fuzz build is ever spawned.  The scaffold verifier and the in-process audit
+verifiers are replaced in-process, and the fuzz runner is injected, so these
+tests stay fast and deterministic.
 """
 
 from __future__ import annotations
@@ -10,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -17,7 +20,10 @@ from typing import Any
 import pytest
 
 from backends.rust.framework import ScaffoldVerification
+from framework_functions import FUNCTIONS
 from tools import release_gate
+from tools.build_ci import framework as ci_framework
+from tools.build_ci.framework import CheckResult
 from tools.release_gate import (
     FUZZ_CONFIG,
     GateOutcome,
@@ -34,6 +40,18 @@ CORE_SUITES = (
     "tests/test_generics.py",
     "tests/test_visualizer.py",
     "tests/test_cross_backend_parity.py",
+)
+HARD_FRAME_SUITES = (
+    "tests/test_jit_framework.py",
+    "tests/test_wasm_framework.py",
+    "tests/test_hard_frames.py",
+    "tests/test_three_way_parity.py",
+)
+RESEARCH_FRAME_SUITES = (
+    "tests/test_formal_frame.py",
+    "tests/test_termination_frame.py",
+    "tests/test_hard_state_frame.py",
+    "tests/test_adversarial_frame.py",
 )
 
 
@@ -69,6 +87,28 @@ class EnvCaptureRunner(EventRunner):
         return super().__call__(args, cwd)
 
 
+class ConcurrencyProbe:
+    """Fuzz runner that records pair coverage and maximum overlap."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int]] = []
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, seed: int, case_count: int) -> dict[str, Any]:
+        with self._lock:
+            self.calls.append((seed, case_count))
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            time.sleep(0.01)
+            return _fuzz_ok(seed, case_count)
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
 def _workspace(tmp_path: Path) -> tuple[Path, Path]:
     root = tmp_path / "repo"
     root.mkdir()
@@ -91,10 +131,59 @@ def _fuzz_ok(seed: int, cases: int) -> dict[str, Any]:
     }
 
 
+def _parity_ok(seed: int) -> dict[str, Any]:
+    return {
+        "seed": seed,
+        "cases": 12,
+        "passed": True,
+        "mismatches": [],
+        "skipped": {},
+        "artifacts": [],
+    }
+
+
+def _research_ok() -> dict[str, Any]:
+    return {"passed": True, "cases": 4, "failed_cases": []}
+
+
+def _pass_check(name: str) -> CheckResult:
+    return CheckResult(
+        name=name,
+        command=(f"in-process:{name}",),
+        returncode=0,
+        stdout="stubbed",
+    )
+
+
 @pytest.fixture(autouse=True)
 def _stub_scaffold_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         release_gate, "rs_verify_scaffold_matches_generator", _clean_scaffold
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_in_process_verifiers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep gate tests independent of real metadata, docs, and benchmarks."""
+    monkeypatch.setattr(
+        release_gate,
+        "ci_verify_dependency_audit",
+        lambda **kwargs: (_pass_check("pip-check"), _pass_check("metadata-audit")),
+    )
+    monkeypatch.setattr(
+        release_gate,
+        "ci_verify_doc_links",
+        lambda **kwargs: _pass_check("doc-links"),
+    )
+    monkeypatch.setattr(
+        release_gate,
+        "ci_verify_benchmark_regression",
+        lambda **kwargs: _pass_check("benchmark-regression"),
+    )
+    monkeypatch.setattr(
+        release_gate,
+        "ci_verify_release_metadata",
+        lambda **kwargs: _pass_check("release-metadata"),
     )
 
 
@@ -103,6 +192,8 @@ def _gate_kwargs(root: Path, cache: Path) -> dict[str, Any]:
         "root": root,
         "runner": EventRunner([]),
         "fuzz_runner": _fuzz_ok,
+        "parity_runner": _parity_ok,
+        "research_runner": _research_ok,
         "python": "python",
         "ruff": "ruff",
         "cargo": "cargo",
@@ -130,6 +221,14 @@ def test_gate_stage_order_is_exact(
         events.append(("fuzz", seed, cases))
         return _fuzz_ok(seed, cases)
 
+    def parity_stub(seed: int) -> dict[str, Any]:
+        events.append(("parity", seed))
+        return _parity_ok(seed)
+
+    def research_stub() -> dict[str, Any]:
+        events.append(("research",))
+        return _research_ok()
+
     monkeypatch.setattr(
         release_gate, "rs_verify_scaffold_matches_generator", scaffold_stub
     )
@@ -138,6 +237,8 @@ def test_gate_stage_order_is_exact(
             **_gate_kwargs(root, cache),
             "runner": EventRunner(events),
             "fuzz_runner": fuzz_stub,
+            "parity_runner": parity_stub,
+            "research_runner": research_stub,
         }
     )
     assert report.passed
@@ -158,9 +259,18 @@ def test_gate_stage_order_is_exact(
             if suite == "tests/test_cross_backend_parity.py"
             else ("python", "-m", "pytest", "-q", suite)
         )
-        for suite in CORE_SUITES
+        for suite in (*CORE_SUITES, *HARD_FRAME_SUITES, *RESEARCH_FRAME_SUITES)
     ]
 
+    parity_positions = [
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, tuple) and event[0] == "parity"
+    ]
+    assert parity_positions == [
+        next(index for index, other in enumerate(events) if other == ("parity", seed))
+        for seed in release_gate.HARD_FRAME_PARITY_SEEDS
+    ]
     fuzz_positions = [
         index
         for index, event in enumerate(events)
@@ -185,6 +295,8 @@ def test_gate_stage_order_is_exact(
             "-D",
             "warnings",
         ),
+        ("cargo", "fmt", "--all", "--", "--check"),
+        ("cargo", "doc", "--no-deps", "--workspace"),
     ]
     assert docs_commands == [
         ("python", "tools/check_docs_sync.py"),
@@ -195,10 +307,31 @@ def test_gate_stage_order_is_exact(
     def first(predicate: Any) -> int:
         return next(index for index, event in enumerate(events) if predicate(event))
 
-    assert first(lambda event: event in pytest_commands) < min(fuzz_positions)
-    assert max(
-        index for index, event in enumerate(events) if event in pytest_commands
-    ) < min(fuzz_positions)
+    core_pytest_commands = pytest_commands[: len(CORE_SUITES)]
+    hard_pytest_commands = pytest_commands[
+        len(CORE_SUITES) : len(CORE_SUITES) + len(HARD_FRAME_SUITES)
+    ]
+    research_pytest_commands = pytest_commands[
+        len(CORE_SUITES) + len(HARD_FRAME_SUITES) :
+    ]
+
+    def command_positions(commands: Sequence[Command]) -> list[int]:
+        return [index for index, event in enumerate(events) if event in commands]
+
+    core_positions = command_positions(core_pytest_commands)
+    hard_positions = command_positions(hard_pytest_commands)
+    research_pytest_positions = command_positions(research_pytest_commands)
+    research_positions = [
+        index for index, event in enumerate(events) if event == ("research",)
+    ]
+    assert research_positions == [
+        next(index for index, other in enumerate(events) if other == ("research",))
+    ]
+    assert max(core_positions) < min(hard_positions)
+    assert max(hard_positions) < min(parity_positions)
+    assert max(parity_positions) < min(research_pytest_positions)
+    assert max(research_pytest_positions) < research_positions[0]
+    assert research_positions[0] < min(fuzz_positions)
     assert max(fuzz_positions) < first(lambda event: event in cargo_commands)
     assert first(lambda event: event in cargo_commands) < first(
         lambda event: event in docs_commands
@@ -206,6 +339,102 @@ def test_gate_stage_order_is_exact(
     assert max(
         index for index, event in enumerate(events) if event in docs_commands
     ) < first(lambda event: event == git_command)
+    assert first(lambda event: event == git_command) < first(
+        lambda event: event == cargo_commands[2]
+    )
+
+    for gate_name in release_gate.GATE_ORDER[7:]:
+        assert any(check.name.startswith(f"{gate_name}:") for check in report.checks), (
+            gate_name
+        )
+    assert any(
+        check.name == "hard-frames-parity:pytest:tests/test_jit_framework.py"
+        for check in report.checks
+    )
+    assert any(
+        check.name == "research-frames:pytest:tests/test_formal_frame.py"
+        for check in report.checks
+    )
+    assert any(
+        check.name == "research-frames:adversarial-oracle" for check in report.checks
+    )
+    assert [
+        check.name for check in report.checks if ":three-way-parity:seed-" in check.name
+    ] == [
+        f"hard-frames-parity:three-way-parity:seed-{seed}"
+        for seed in release_gate.HARD_FRAME_PARITY_SEEDS
+    ]
+
+
+def test_hard_frame_parity_mismatch_blocks_gate(tmp_path: Path) -> None:
+    root, cache = _workspace(tmp_path)
+
+    def bad_parity(seed: int) -> dict[str, Any]:
+        return {
+            "seed": seed,
+            "cases": 12,
+            "passed": False,
+            "mismatches": [{"case": "scalar-add", "backends": ["python", "wasm"]}],
+            "skipped": {},
+            "artifacts": [],
+        }
+
+    report = run_gate(**{**_gate_kwargs(root, cache), "parity_runner": bad_parity})
+    assert not report.passed
+    status = next(
+        item
+        for item in report.checks
+        if item.name == "hard-frames-parity:three-way-parity:seed-2026"
+    )
+    assert status.ok is False
+    assert "mismatches=1" in status.detail
+
+
+def test_failed_research_oracle_blocks_gate(tmp_path: Path) -> None:
+    root, cache = _workspace(tmp_path)
+
+    def bad_research() -> dict[str, Any]:
+        return {
+            "passed": False,
+            "cases": 4,
+            "failed_cases": ["hard-state-migration"],
+        }
+
+    report = run_gate(**{**_gate_kwargs(root, cache), "research_runner": bad_research})
+    assert not report.passed
+    status = next(
+        item
+        for item in report.checks
+        if item.name == "research-frames:adversarial-oracle"
+    )
+    assert status.ok is False
+    assert "hard-state-migration" in status.detail
+    assert any("adversarial-oracle" in blocker for blocker in report.blockers)
+
+
+def test_malformed_research_report_is_a_harness_error(tmp_path: Path) -> None:
+    root, cache = _workspace(tmp_path)
+    report = run_gate(
+        **{**_gate_kwargs(root, cache), "research_runner": lambda: "not-a-dict"}
+    )
+    assert not report.passed
+    status = next(
+        item
+        for item in report.checks
+        if item.name == "research-frames:adversarial-oracle"
+    )
+    assert status.ok is False
+    assert "expected dict" in status.detail
+
+
+def test_default_research_runner_evaluates_real_frames() -> None:
+    report = release_gate._default_research_runner()
+
+    assert report["passed"]
+    assert report["cases"] == 4
+    assert report["failed_cases"] == []
+    assert report["diagnostics"] == []
+    assert any("bounded oracle set" in item for item in report["caveats"])
 
 
 def test_quick_full_and_default_fuzz_budgets(tmp_path: Path) -> None:
@@ -353,16 +582,17 @@ def test_cargo_commands_use_isolated_target_dir_and_restore_env(
     report = run_gate(**{**_gate_kwargs(root, cache), "runner": runner})
     assert report.passed
 
-    expected_check = cache / "cargo" / "test-scope" / "check"
-    expected_clippy = cache / "cargo" / "test-scope" / "clippy"
-    assert runner.cargo_env == [str(expected_check), str(expected_clippy)]
+    base = cache / "cargo" / "test-scope"
+    expected = [str(base / profile) for profile in ("check", "clippy", "fmt", "doc")]
+    assert runner.cargo_env == expected
     assert all(
         env is None
         for command, env in runner.env_values
         if not command or command[0] != "cargo"
     )
     assert "CARGO_TARGET_DIR" not in os.environ
-    assert expected_check.is_dir() and expected_clippy.is_dir()
+    for profile in ("check", "clippy", "fmt", "doc"):
+        assert (base / profile).is_dir()
 
 
 def test_allow_dirty_skips_worktree_with_explicit_status(tmp_path: Path) -> None:
@@ -396,3 +626,245 @@ def test_missing_fuzzer_script_is_a_clear_blocker(tmp_path: Path) -> None:
         if item.name == "diff-fuzz:diff-fuzz:missing-script"
     )
     assert status.ok is False
+
+
+def test_parallel_jobs_preserve_order_and_fuzz_pairs(tmp_path: Path) -> None:
+    root, cache = _workspace(tmp_path)
+    results: dict[int, tuple[Any, Any]] = {}
+    calls_by_jobs: dict[int, list[tuple[int, int]]] = {}
+    for jobs in (1, 3):
+        calls: list[tuple[int, int]] = []
+
+        def fuzz_stub(
+            seed: int, cases: int, calls: list[tuple[int, int]] = calls
+        ) -> dict[str, Any]:
+            calls.append((seed, cases))
+            return _fuzz_ok(seed, cases)
+
+        results[jobs] = _run_gate_detailed(
+            **{
+                **_gate_kwargs(root, cache),
+                "mode": "quick",
+                "jobs": jobs,
+                "fuzz_runner": fuzz_stub,
+            }
+        )
+        calls_by_jobs[jobs] = calls
+
+    serial_report, serial_outcomes = results[1]
+    parallel_report, parallel_outcomes = results[3]
+    assert parallel_report.as_dict() == serial_report.as_dict()
+    assert parallel_outcomes == serial_outcomes
+
+    cases = FUZZ_CONFIG["quick"][1]
+    expected = [
+        (release_gate.FUZZ_BASE_SEED + index * release_gate.FUZZ_SEED_STRIDE, cases)
+        for index in range(FUZZ_CONFIG["quick"][0])
+    ]
+    assert calls_by_jobs[1] == expected
+    assert sorted(calls_by_jobs[3]) == expected
+    assert [
+        outcome.name
+        for outcome in parallel_outcomes
+        if outcome.name.startswith("diff-fuzz:")
+    ] == [f"diff-fuzz:seed-{seed}" for seed, _ in expected]
+
+
+def test_no_parallel_overrides_jobs(tmp_path: Path) -> None:
+    root, cache = _workspace(tmp_path)
+    parallel = ConcurrencyProbe()
+    serial = ConcurrencyProbe()
+    assert run_gate(
+        **{
+            **_gate_kwargs(root, cache),
+            "mode": "quick",
+            "jobs": 3,
+            "fuzz_runner": parallel,
+        }
+    ).passed
+    assert run_gate(
+        **{
+            **_gate_kwargs(root, cache),
+            "mode": "quick",
+            "jobs": 3,
+            "no_parallel": True,
+            "fuzz_runner": serial,
+        }
+    ).passed
+    assert parallel.max_active > 1
+    assert serial.max_active == 1
+    assert sorted(parallel.calls) == sorted(serial.calls)
+
+
+def test_cli_jobs_and_no_parallel_flags(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_detailed(**kwargs: Any) -> tuple[Any, tuple[GateOutcome, ...]]:
+        captured.update(kwargs)
+        return ci_framework.ci_generate_release_gate_report(checks={}), ()
+
+    monkeypatch.setattr(release_gate, "_run_gate_detailed", fake_detailed)
+    assert main(["--jobs", "3", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["passed"] is True
+    assert captured["jobs"] == 3
+    assert captured["no_parallel"] is False
+
+    assert main(["--jobs", "3", "--no-parallel"]) == 0
+    capsys.readouterr()
+    assert captured["jobs"] == 3
+    assert captured["no_parallel"] is True
+
+
+def test_ci_verify_rust_format_and_doc_pass_and_fail(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    crate = root / "native_pillars"
+    crate.mkdir()
+    (crate / "Cargo.toml").write_text("[package]\nname='probe'\n", encoding="utf-8")
+    seen: list[tuple[Command, Path]] = []
+
+    def fake(args: Command, cwd: Path) -> subprocess.CompletedProcess[str]:
+        seen.append((args, cwd))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    checks = ci_framework.ci_verify_rust_format_and_doc(root=root, runner=fake)
+    assert [check.name for check in checks] == ["cargo-fmt", "cargo-doc"]
+    assert [check.command for check in checks] == [
+        ("cargo", "fmt", "--all", "--", "--check"),
+        ("cargo", "doc", "--no-deps", "--workspace"),
+    ]
+    assert all(cwd == crate for _, cwd in seen)
+
+    (crate / "Cargo.toml").unlink()
+    seen.clear()
+    ci_framework.ci_verify_rust_format_and_doc(root=root, runner=fake)
+    assert all(cwd == root for _, cwd in seen)
+
+    def failing(args: Command, cwd: Path) -> subprocess.CompletedProcess[str]:
+        del cwd
+        return subprocess.CompletedProcess(args, 1, "", "rust check failed")
+
+    failed = ci_framework.ci_verify_rust_format_and_doc(root=root, runner=failing)
+    assert all(not check.ok for check in failed)
+
+
+def test_ci_verify_dependency_audit_pass_and_fail(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        '[project]\nname="probe"\nlicense="MIT"\nrequires-python=">=3.14"\n'
+        '[project.scripts]\nprobe="framework_functions:get_function"\n',
+        encoding="utf-8",
+    )
+
+    def fake(args: Command, cwd: Path) -> subprocess.CompletedProcess[str]:
+        del cwd
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    checks = ci_framework.ci_verify_dependency_audit(
+        root=root, runner=fake, python_executable="python"
+    )
+    assert [check.name for check in checks] == ["pip-check", "metadata-audit"]
+    assert all(check.ok for check in checks)
+    assert checks[0].command == ("python", "-m", "pip", "check")
+
+    (root / "pyproject.toml").write_text('[project]\nname="probe"\n', encoding="utf-8")
+    failed = ci_framework.ci_verify_dependency_audit(
+        root=root, runner=fake, python_executable="python"
+    )
+    assert failed[1].returncode == 1
+    assert "license" in failed[1].stderr
+    assert "requires-python" in failed[1].stderr
+
+
+def test_ci_verify_doc_links_pass_and_fail(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    docs = root / "docs"
+    docs.mkdir()
+    (root / "GUIDE.md").write_text("# Guide\n", encoding="utf-8")
+    (docs / "overview.md").write_text("# Overview\n", encoding="utf-8")
+    (root / "README.md").write_text(
+        "[guide](GUIDE.md)\n"
+        "[overview](docs/overview.md#intro)\n"
+        "[external](https://example.com)\n"
+        "[placeholder](<path/to/doc>)\n"
+        "```\n[fenced](missing-fenced.md)\n```\n",
+        encoding="utf-8",
+    )
+    passed = ci_framework.ci_verify_doc_links(root=root)
+    assert passed.name == "doc-links"
+    assert passed.ok
+
+    (root / "NOTES.md").write_text(
+        "[bad](missing.md)\n[bad2](docs/also-missing.md)\n", encoding="utf-8"
+    )
+    failed = ci_framework.ci_verify_doc_links(root=root)
+    assert not failed.ok
+    assert "2 broken relative link(s)" in failed.stderr
+    assert "missing.md" in failed.stderr
+    assert "also-missing.md" in failed.stderr
+    assert "missing-fenced.md" not in failed.stderr
+
+    (root / "NOTES.md").unlink()
+    (root / "CHANGELOG.md").write_text(
+        "\n".join(f"[x](missing-{index}.md)" for index in range(12)), encoding="utf-8"
+    )
+    limited = ci_framework.ci_verify_doc_links(root=root)
+    assert "12 broken relative link(s)" in limited.stderr
+    assert limited.stderr.count("missing-") == 10
+
+
+def test_ci_verify_benchmark_regression_pass_and_fail(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cache = tmp_path / "cache"
+    first = ci_framework.ci_verify_benchmark_regression(root=root, cache_root=cache)
+    assert first.name == "benchmark-regression"
+    assert first.ok
+    assert "baseline recorded" in first.stdout
+    baseline = json.loads(
+        (cache / ci_framework.BENCHMARK_BASELINE_FILENAME).read_text(encoding="utf-8")
+    )
+    assert baseline["operations"] > 0
+
+    second = ci_framework.ci_verify_benchmark_regression(root=root, cache_root=cache)
+    assert second.ok
+    assert "ratio=1.000" in second.stdout
+
+    failed = ci_framework.ci_verify_benchmark_regression(
+        root=root, cache_root=cache, threshold=0.5
+    )
+    assert not failed.ok
+    assert "benchmark regression" in failed.stderr
+
+
+def test_ci_verify_release_metadata_pass_and_fail(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    modules = sorted({item.module for item in FUNCTIONS})
+    includes = sorted(
+        "tools.build_ci*" if module.startswith("tools.") else f"{module}*"
+        for module in modules
+    )
+
+    def write_pyproject(patterns: Sequence[str]) -> None:
+        rendered = ", ".join(json.dumps(pattern) for pattern in patterns)
+        (root / "pyproject.toml").write_text(
+            "[tool.setuptools]\npy-modules=[]\n"
+            f"[tool.setuptools.packages.find]\ninclude=[{rendered}]\n",
+            encoding="utf-8",
+        )
+
+    write_pyproject(includes)
+    passed = ci_framework.ci_verify_release_metadata(root=root)
+    assert passed.name == "release-metadata"
+    assert passed.ok
+
+    includes.remove("compiler.frontend.framework*")
+    write_pyproject(includes)
+    failed = ci_framework.ci_verify_release_metadata(root=root)
+    assert not failed.ok
+    assert "compiler" in failed.stderr

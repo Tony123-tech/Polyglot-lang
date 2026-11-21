@@ -1,23 +1,40 @@
 """Single ordered release gate for the polyglot-lang repository.
 
-The gate executes seven stages in a fixed order:
+The gate executes fourteen stages in a fixed order:
 
 1. ruff format check + ruff lint;
 2. in-process scaffold drift verification;
 3. core pytest parity suites (plus a full ``pytest -q`` in ``--full`` mode);
-4. bounded, deterministic differential-fuzz runs;
-5. cargo check + clippy with an isolated ``CARGO_TARGET_DIR``;
-6. docs sync + docs lint;
-7. git worktree cleanliness.
+4. hard compiler/runtime frame suites plus deterministic three-backend parity;
+5. research frame suites (H-K) plus the in-process adversarial spec oracle;
+6. bounded, deterministic differential-fuzz runs;
+7. cargo check + clippy with an isolated ``CARGO_TARGET_DIR``;
+8. docs sync + docs lint;
+9. git worktree cleanliness;
+10. cargo format check + cargo doc (isolated target directory);
+11. dependency and ``pyproject.toml`` metadata audit;
+12. tracked-doc relative link check;
+13. deterministic benchmark regression guard;
+14. wheel/sdist release metadata coverage.
 
 Every command-running stage accepts an injected runner so unit tests never
 spawn real pytest/cargo/ruff/git processes.  Fuzzing is injected separately as
-``fuzz_runner(seed, case_count) -> dict``; the real helper only shells out when
-``tools/diff_fuzz.py`` is present.  A missing fuzzer is a hard blocker, while
+``fuzz_runner(seed, case_count) -> dict``, and three-way parity as
+``parity_runner(seed) -> dict``, and research-frame adversarial verification as
+``research_runner() -> dict``; the real fuzzer only shells out when
+``tools/diff_fuzz.py`` is present, while the default research runner evaluates
+the spec oracle in-process.  A missing fuzzer is a hard blocker, while
 cargo may be reported as SKIP only with the explicit ``--allow-missing-cargo``
 flag.  Artifacts default to the gitignored ``.artifacts/release_gate`` path and
 are created only when the real fuzzer runs; build caches live under the system
 temp directory, never inside the repository.
+
+With ``--jobs N`` the independent seed checks run concurrently in a thread
+pool while results are collected in seed order, so reports stay deterministic.
+Each seed still gets a deterministic isolated scope from the fuzz harness; a
+shared warm dependency cache is achieved by keeping the same ``cache_root``
+across seeds (the native backend seeds new scopes from existing targets).
+Workers never mutate ``os.environ``.
 """
 
 from __future__ import annotations
@@ -32,6 +49,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -52,16 +70,25 @@ from tools.build_ci.framework import (
     ci_compute_cache_scope_key,
     ci_generate_release_gate_report,
     ci_isolate_cargo_target_dir,
+    ci_verify_benchmark_regression,
     ci_verify_clean_git_worktree,
+    ci_verify_dependency_audit,
+    ci_verify_doc_links,
     ci_verify_docs_sync_and_lint,
     ci_verify_pytest_parity_suites,
+    ci_verify_release_metadata,
     ci_verify_ruff_format_and_lint,
     ci_verify_rust_checks,
+    ci_verify_rust_format_and_doc,
 )
 
 FuzzReport = dict[str, Any]
 FuzzRunner = Callable[[int, int], FuzzReport]
 FuzzPayload = FuzzReport | object
+ParityReport = dict[str, Any]
+ParityRunner = Callable[[int], ParityReport]
+ResearchReport = dict[str, Any]
+ResearchRunner = Callable[..., ResearchReport]
 Mode = Literal["default", "quick", "full"]
 Status = Literal["PASS", "FAIL", "SKIP"]
 
@@ -74,6 +101,24 @@ FUZZ_CONFIG: dict[str, tuple[int, int]] = {
 }
 FUZZ_BASE_SEED = 20261120
 FUZZ_SEED_STRIDE = 7919
+HARD_FRAME_SUITES: tuple[str, ...] = (
+    "tests/test_jit_framework.py",
+    "tests/test_wasm_framework.py",
+    "tests/test_hard_frames.py",
+    "tests/test_three_way_parity.py",
+)
+HARD_FRAME_PARITY_SEEDS: tuple[int, ...] = (1, 42, 9999, 2026)
+HARD_FRAME_PARITY_COMMAND: tuple[str, ...] = ("in-process:three_way_parity",)
+RESEARCH_FRAME_SUITES: tuple[str, ...] = (
+    "tests/test_formal_frame.py",
+    "tests/test_termination_frame.py",
+    "tests/test_hard_state_frame.py",
+    "tests/test_adversarial_frame.py",
+)
+RESEARCH_ADVERSARIAL_CHECK_NAME = "adversarial-oracle"
+RESEARCH_ADVERSARIAL_COMMAND: tuple[str, ...] = (
+    "in-process:research_adversarial_verification",
+)
 _SAFE_COMPONENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 SCAFFOLD_CHECK_NAME = "scaffold-drift"
@@ -82,11 +127,20 @@ GATE_ORDER: tuple[str, ...] = (
     "ruff",
     "scaffold",
     "pytest-core",
+    "hard-frames-parity",
+    "research-frames",
     "diff-fuzz",
     "cargo",
     "docs",
     "git-worktree",
+    "rust-format-doc",
+    "dependency-audit",
+    "doc-links",
+    "benchmark-regression",
+    "release-metadata",
 )
+REQUIRED_CHECK: tuple[str, ...] = GATE_ORDER
+"""Gate keys that must be present in the aggregate report."""
 
 
 @dataclass(frozen=True)
@@ -273,6 +327,153 @@ def _fuzz_check(
     )
 
 
+def _parity_check(seed: int, payload: ParityReport | object) -> CheckResult:
+    """Synthesize a ``CheckResult`` from one three-way parity report."""
+    name = f"three-way-parity:seed-{seed}"
+    command = (*HARD_FRAME_PARITY_COMMAND, str(seed))
+    if not isinstance(payload, Mapping):
+        return CheckResult(
+            name=name,
+            command=command,
+            returncode=2,
+            stderr=f"parity runner returned {type(payload).__name__}, expected dict",
+        )
+    report: ParityReport = dict(payload)
+    harness_error = report.get("harness_error") or report.get("error")
+    if harness_error:
+        return CheckResult(
+            name=name,
+            command=command,
+            returncode=2,
+            stderr=str(harness_error),
+        )
+    mismatches = report.get("mismatches") or ()
+    cases = report.get("cases", 0)
+    skipped = report.get("skipped", 0)
+    if not report.get("passed") or mismatches:
+        return CheckResult(
+            name=name,
+            command=command,
+            returncode=1,
+            stderr=(
+                f"seed={seed} cases={cases} skipped={skipped} "
+                f"mismatches={len(mismatches) if hasattr(mismatches, '__len__') else mismatches}"
+            ),
+        )
+    return CheckResult(
+        name=name,
+        command=command,
+        returncode=0,
+        stdout=f"seed={seed} cases={cases} skipped={skipped}",
+    )
+
+
+def _make_parity_runner(*, cache: Path) -> ParityRunner:
+    """Real per-seed runner using isolated caches below the gate cache root."""
+
+    def runner(seed: int) -> ParityReport:
+        from tools.three_way_parity import run_three_way_parity
+
+        seed_cache = cache / "hard-frames-parity" / str(seed)
+        report = run_three_way_parity(seed, cache_root=seed_cache)
+        return report.as_dict()
+
+    return runner
+
+
+def _research_check(payload: ResearchReport | object) -> CheckResult:
+    """Translate an in-process adversarial research report into a ``CheckResult``."""
+    name = RESEARCH_ADVERSARIAL_CHECK_NAME
+    command = RESEARCH_ADVERSARIAL_COMMAND
+    if not isinstance(payload, Mapping):
+        return CheckResult(
+            name=name,
+            command=command,
+            returncode=2,
+            stderr=f"research runner returned {type(payload).__name__}, expected dict",
+        )
+    report: ResearchReport = dict(payload)
+    error = report.get("error") or report.get("harness_error")
+    if error:
+        return CheckResult(name=name, command=command, returncode=2, stderr=str(error))
+    cases = report.get("cases", 0)
+    failed = report.get("failed_cases") or ()
+    if not report.get("passed") or failed:
+        return CheckResult(
+            name=name,
+            command=command,
+            returncode=1,
+            stderr=(
+                f"cases={cases} failed={len(failed)}; "
+                f"{', '.join(str(item) for item in failed) or 'oracle check failed'}"
+            ),
+        )
+    return CheckResult(
+        name=name,
+        command=command,
+        returncode=0,
+        stdout=f"cases={cases} spec-oracle=passed",
+    )
+
+
+def _default_research_runner() -> ResearchReport:
+    """Evaluate the H-K spec oracle in-process without spawning subprocesses.
+
+    The oracle records bounded, deterministic behavior of each research frame
+    (complete bounded proof, variant discharge, safe migration, and stable
+    adversarial digest).  Full verification and mutation scoring are covered by
+    the four research frame suites in the same gate stage, so this runner stays
+    fast and free of native/JIT side effects.
+    """
+    from compiler.formal import formal_sym_exec_bounded_paths
+    from compiler.termination import (
+        term_check_structural_and_lexicographic_variants,
+    )
+    from runtime.hard_state import (
+        FieldSpec,
+        Schema,
+        hard_plan_live_state_schema_migration,
+    )
+    from tools.adversarial import (
+        adv_mutate_ast_and_type_constraints,
+        adv_verify_spec_oracle_and_report,
+    )
+
+    bounded = formal_sym_exec_bounded_paths(
+        "fn main(x: i64) -> i64 { if x > 0 { return 1; } else { return 0; } }"
+    )
+    tree = (
+        "fn size(t: Tree) -> i64 { "
+        "if is_empty(t) { return 0; } return 1 + size(t.left); }"
+    )
+    variants = term_check_structural_and_lexicographic_variants(
+        tree, specs={"size": {"kind": "structural", "parameters": ("t",)}}
+    )
+    migration = hard_plan_live_state_schema_migration(
+        Schema(1, "struct", (FieldSpec("x", "i32"),)),
+        Schema(2, "struct", (FieldSpec("x", "i64"),)),
+    )
+    generated = adv_mutate_ast_and_type_constraints(seed=0, count=5)
+
+    oracle = {
+        "formal-bounded-proof": (True, bounded.proved),
+        "termination-variant-discharge": (True, variants.proved),
+        "hard-state-migration": (True, migration.safe),
+        "adversarial-digest-stable": (
+            generated.digest(),
+            adv_mutate_ast_and_type_constraints(seed=0, count=5).digest(),
+        ),
+    }
+    report = adv_verify_spec_oracle_and_report(oracle, run_verification=False)
+    return {
+        "passed": report.passed,
+        "cases": len(report.cases),
+        "failed_cases": [case.name for case in report.cases if not case.passed],
+        "caveats": list(report.caveats),
+        "diagnostics": [dict(item) for item in report.diagnostics],
+    }
+
+
 def _run_fuzz_subprocess(
     seed: int,
     case_count: int,
@@ -355,40 +556,47 @@ def _run_fuzz_stage(
     python: str,
     artifacts: Path,
     fuzz_runner: FuzzRunner | None,
+    jobs: int = 1,
 ) -> tuple[tuple[CheckResult, ...], tuple[str, ...]]:
-    checks: list[CheckResult] = []
+    """Run one check per seed, optionally in parallel, always in seed order."""
+    if jobs < 1:
+        raise ValueError("jobs must be at least 1")
     blockers: list[str] = []
     effective_runner = fuzz_runner
     if effective_runner is None:
         script = root / FUZZ_SCRIPT
         if not script.is_file():
             command = _fuzz_command(python, seeds[0], case_count, artifacts)
-            checks.append(
-                CheckResult(
-                    name="diff-fuzz:missing-script",
-                    command=command,
-                    returncode=2,
-                    stderr=f"fuzzer script not found: {script}",
-                )
+            missing = CheckResult(
+                name="diff-fuzz:missing-script",
+                command=command,
+                returncode=2,
+                stderr=f"fuzzer script not found: {script}",
             )
             blockers.append(f"diff-fuzz: fuzzer script not found: {script}")
-            return tuple(checks), tuple(blockers)
+            return (missing,), tuple(blockers)
         effective_runner = _make_fuzz_runner(
             root=root, python=python, artifacts=artifacts
         )
-    for seed in seeds:
+
+    def run_seed(seed: int) -> CheckResult:
+        # Workers never touch os.environ; the fuzz harness manages its own env.
         command = _fuzz_command(python, seed, case_count, artifacts)
         payload = effective_runner(seed, case_count)
-        checks.append(
-            _fuzz_check(
-                f"diff-fuzz:seed-{seed}",
-                command,
-                seed,
-                case_count,
-                payload,
-            )
+        return _fuzz_check(
+            f"diff-fuzz:seed-{seed}",
+            command,
+            seed,
+            case_count,
+            payload,
         )
-    return tuple(checks), tuple(blockers)
+
+    if jobs == 1:
+        return tuple(run_seed(seed) for seed in seeds), tuple(blockers)
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        # ``map`` yields in input order, keeping the report deterministic.
+        checks = tuple(pool.map(run_seed, seeds))
+    return checks, tuple(blockers)
 
 
 def _cargo_env_runner(
@@ -397,7 +605,8 @@ def _cargo_env_runner(
     """Set ``CARGO_TARGET_DIR`` only around cargo invocations, then restore it."""
 
     def wrapped(args: tuple[str, ...], cwd: Path) -> subprocess.CompletedProcess[str]:
-        profile = "clippy" if len(args) > 1 and args[1] == "clippy" else "check"
+        subcommand = args[1] if len(args) > 1 else "check"
+        profile = subcommand if subcommand in target_dirs else "check"
         target = target_dirs[profile]
         saved = dict(os.environ)
         try:
@@ -427,6 +636,8 @@ def _run_gate_detailed(
     mode: str = "quick",
     runner: CommandRunner | None = None,
     fuzz_runner: FuzzRunner | None = None,
+    parity_runner: ParityRunner | None = None,
+    research_runner: ResearchRunner | None = None,
     python: str | None = None,
     ruff: str | None = None,
     cargo: str | None = None,
@@ -436,12 +647,17 @@ def _run_gate_detailed(
     cache_root: str | Path | None = None,
     allow_missing_cargo: bool = False,
     cargo_available: bool | None = None,
+    jobs: int = 1,
+    no_parallel: bool = False,
 ) -> tuple[ReleaseGateReport, tuple[GateOutcome, ...]]:
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
         raise ValueError(f"root is not a directory: {root_path}")
     if mode not in FUZZ_CONFIG:
         raise ValueError(f"unknown gate mode: {mode!r}")
+    effective_jobs = 1 if no_parallel else jobs
+    if effective_jobs < 1:
+        raise ValueError("jobs must be at least 1")
 
     command_runner = runner if runner is not None else _default_runner
     python_exe = python or sys.executable
@@ -461,7 +677,7 @@ def _run_gate_detailed(
     checks: dict[str, Sequence[CheckResult] | bool] = {}
     blockers: list[str] = []
     outcomes: list[GateOutcome] = []
-    required: list[str] = list(GATE_ORDER)
+    required: list[str] = list(REQUIRED_CHECK)
 
     # Stage 1: ruff format check and lint.
     ruff_checks = ci_verify_ruff_format_and_lint(
@@ -502,7 +718,38 @@ def _run_gate_detailed(
         outcomes.append(_check_outcome(full_check))
         required.append("pytest-full")
 
-    # Stage 4: bounded deterministic differential fuzzing.
+    # Stage 4: hard compiler/runtime frames and deterministic three-way parity.
+    hard_frame_checks = ci_verify_pytest_parity_suites(
+        root=root_path,
+        runner=pytest_runner,
+        python_executable=python_exe,
+        suites=HARD_FRAME_SUITES,
+    )
+    hard_frame_all: list[CheckResult] = list(hard_frame_checks)
+    checks["hard-frames-parity"] = hard_frame_all
+    outcomes.extend(_check_outcome(check) for check in hard_frame_checks)
+    effective_parity_runner = parity_runner or _make_parity_runner(cache=cache)
+    for seed in HARD_FRAME_PARITY_SEEDS:
+        parity_check = _parity_check(seed, effective_parity_runner(seed))
+        hard_frame_all.append(parity_check)
+        outcomes.append(_check_outcome(parity_check))
+
+    # Stage 5: research frame suites (H-K) and the in-process spec oracle.
+    research_checks = ci_verify_pytest_parity_suites(
+        root=root_path,
+        runner=pytest_runner,
+        python_executable=python_exe,
+        suites=RESEARCH_FRAME_SUITES,
+    )
+    research_all: list[CheckResult] = list(research_checks)
+    checks["research-frames"] = research_all
+    outcomes.extend(_check_outcome(check) for check in research_checks)
+    effective_research_runner = research_runner or _default_research_runner
+    research_adversarial = _research_check(effective_research_runner())
+    research_all.append(research_adversarial)
+    outcomes.append(_check_outcome(research_adversarial))
+
+    # Stage 6: bounded deterministic differential fuzzing.
     seeds, case_count = _fuzz_plan(mode)
     fuzz_checks, fuzz_blockers = _run_fuzz_stage(
         root=root_path,
@@ -511,12 +758,21 @@ def _run_gate_detailed(
         python=python_exe,
         artifacts=artifacts,
         fuzz_runner=fuzz_runner,
+        jobs=effective_jobs,
     )
     checks["diff-fuzz"] = fuzz_checks
     outcomes.extend(_check_outcome(check) for check in fuzz_checks)
     blockers.extend(fuzz_blockers)
 
-    # Stage 5: cargo check + clippy with an isolated target directory.
+    # Stage 7: cargo check + clippy with an isolated target directory.
+    target_dirs: dict[str, Path] = {}
+    if cargo_available is not False:
+        target_dirs = {
+            profile: ci_isolate_cargo_target_dir(
+                profile, cache_root=cache, scope_key=scope
+            )
+            for profile in ("check", "clippy", "fmt", "doc")
+        }
     if cargo_available is False:
         cargo_command: tuple[str, ...] = (cargo_exe, "--version")
         if allow_missing_cargo:
@@ -544,12 +800,6 @@ def _run_gate_detailed(
                 "unless --allow-missing-cargo is supplied"
             )
     else:
-        target_dirs = {
-            profile: ci_isolate_cargo_target_dir(
-                profile, cache_root=cache, scope_key=scope
-            )
-            for profile in ("check", "clippy")
-        }
         # Cargo manifests live in the native_pillars crate, not at the repo
         # root; running there also keeps generated artifacts out of the source
         # tree because CARGO_TARGET_DIR is redirected to the isolated cache.
@@ -564,14 +814,14 @@ def _run_gate_detailed(
         checks["cargo"] = cargo_checks
         outcomes.extend(_check_outcome(check) for check in cargo_checks)
 
-    # Stage 6: docs sync and docs lint.
+    # Stage 8: docs sync and docs lint.
     docs_checks = ci_verify_docs_sync_and_lint(
         root=root_path, runner=command_runner, python_executable=python_exe
     )
     checks["docs"] = docs_checks
     outcomes.extend(_check_outcome(check) for check in docs_checks)
 
-    # Stage 7: git worktree cleanliness (explicit SKIP with --allow-dirty).
+    # Stage 9: git worktree cleanliness (explicit SKIP with --allow-dirty).
     git_command: tuple[str, ...] = ("git", "status", "--short")
     if allow_dirty:
         checks["git-worktree-clean [SKIP: --allow-dirty]"] = True
@@ -594,6 +844,68 @@ def _run_gate_detailed(
         checks["git-worktree"] = (git_check,)
         outcomes.append(_check_outcome(git_check))
 
+    # Stage 10: cargo fmt --check + cargo doc with an isolated target directory.
+    fmt_command: tuple[str, ...] = (cargo_exe, "fmt", "--all", "--", "--check")
+    if cargo_available is False:
+        if allow_missing_cargo:
+            checks["rust-format-doc [SKIP: executable unavailable]"] = True
+            outcomes.append(
+                GateOutcome(
+                    "rust-format-doc",
+                    "SKIP",
+                    fmt_command,
+                    "skipped: cargo executable unavailable (--allow-missing-cargo)",
+                )
+            )
+            required.remove("rust-format-doc")
+        else:
+            unavailable = CheckResult(
+                name="cargo-fmt:unavailable",
+                command=fmt_command,
+                returncode=127,
+                stderr=f"cargo executable not found: {cargo_exe}",
+            )
+            checks["rust-format-doc"] = (unavailable,)
+            outcomes.append(_check_outcome(unavailable))
+            blockers.append(
+                "rust-format-doc: executable not found; native checks are "
+                "mandatory unless --allow-missing-cargo is supplied"
+            )
+    else:
+        rust_doc_checks = ci_verify_rust_format_and_doc(
+            root=root_path,
+            runner=_cargo_env_runner(command_runner, target_dirs),
+            cargo_executable=cargo_exe,
+        )
+        checks["rust-format-doc"] = rust_doc_checks
+        outcomes.extend(_check_outcome(check) for check in rust_doc_checks)
+
+    # Stage 11: installed dependencies and minimal project metadata.
+    audit_checks = ci_verify_dependency_audit(
+        root=root_path, python_executable=python_exe
+    )
+    checks["dependency-audit"] = audit_checks
+    outcomes.extend(_check_outcome(check) for check in audit_checks)
+
+    # Stage 12: relative links in tracked Markdown docs.
+    doc_links_check = ci_verify_doc_links(root=root_path, python_executable=python_exe)
+    checks["doc-links"] = (doc_links_check,)
+    outcomes.append(_check_outcome(doc_links_check))
+
+    # Stage 13: deterministic benchmark regression guard.
+    benchmark_check = ci_verify_benchmark_regression(
+        root=root_path, python_executable=python_exe
+    )
+    checks["benchmark-regression"] = (benchmark_check,)
+    outcomes.append(_check_outcome(benchmark_check))
+
+    # Stage 14: wheel/sdist include-list coverage.
+    metadata_check = ci_verify_release_metadata(
+        root=root_path, python_executable=python_exe
+    )
+    checks["release-metadata"] = (metadata_check,)
+    outcomes.append(_check_outcome(metadata_check))
+
     report = ci_generate_release_gate_report(
         checks=checks,
         blockers=tuple(blockers),
@@ -608,6 +920,8 @@ def run_gate(
     mode: str = "quick",
     runner: CommandRunner | None = None,
     fuzz_runner: FuzzRunner | None = None,
+    parity_runner: ParityRunner | None = None,
+    research_runner: ResearchRunner | None = None,
     python: str | None = None,
     ruff: str | None = None,
     cargo: str | None = None,
@@ -617,13 +931,22 @@ def run_gate(
     cache_root: str | Path | None = None,
     allow_missing_cargo: bool = False,
     cargo_available: bool | None = None,
+    jobs: int = 1,
+    no_parallel: bool = False,
 ) -> ReleaseGateReport:
-    """Run the ordered release gate and return the aggregate report."""
+    """Run the ordered release gate and return the aggregate report.
+
+    ``jobs`` controls how many fuzz seeds run concurrently; ``no_parallel``
+    forces serial execution regardless of ``jobs``.  Seed order in the report
+    is always deterministic.
+    """
     return _run_gate_detailed(
         root=root,
         mode=mode,
         runner=runner,
         fuzz_runner=fuzz_runner,
+        parity_runner=parity_runner,
+        research_runner=research_runner,
         python=python,
         ruff=ruff,
         cargo=cargo,
@@ -633,6 +956,8 @@ def run_gate(
         cache_root=cache_root,
         allow_missing_cargo=allow_missing_cargo,
         cargo_available=cargo_available,
+        jobs=jobs,
+        no_parallel=no_parallel,
     )[0]
 
 
@@ -651,6 +976,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--ruff", default="ruff")
     parser.add_argument("--cargo", default="cargo")
     parser.add_argument("--artifacts", type=Path, default=None)
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="number of fuzz seeds to run concurrently (default: 1)",
+    )
+    parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="run fuzz seeds serially, overriding --jobs",
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--allow-dirty", action="store_true", help="skip the git worktree check"
@@ -675,6 +1011,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         allow_dirty=args.allow_dirty,
         allow_missing_cargo=args.allow_missing_cargo,
         cargo_available=shutil.which(args.cargo) is not None,
+        jobs=args.jobs,
+        no_parallel=args.no_parallel,
     )
     if args.json:
         print(json.dumps(report.as_dict(), indent=2, sort_keys=True))

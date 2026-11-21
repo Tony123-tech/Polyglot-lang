@@ -150,7 +150,16 @@ def test_build_hello_produces_extension(tmp_path: Path):
 
 
 def test_examples_directory_contains_seven_runnable_files():
-    examples = sorted((ROOT / "examples").glob("*.poly"))
+    # The opt-in Zig example uses Zig-only syntax and requires --backend zig;
+    # it is outside the default backend contract checked here.
+    examples = sorted(
+        path
+        for path in (ROOT / "examples").glob("*.poly")
+        if not any(
+            marker in path.read_text(encoding="utf-8")
+            for marker in ("+|", "-|", "*|", "SimdN<", "#[parallel]")
+        )
+    )
     assert len(examples) == 7
     for path in examples:
         result = _run_cli("check", str(path.relative_to(ROOT)))
