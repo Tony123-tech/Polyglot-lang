@@ -1,48 +1,150 @@
+"""Zig backend for polyglot-lang, supporting Zig-exclusive semantics.
+
+The emitter targets idiomatic Zig: ``comptime`` generic declarations, tagged
+unions, optionals, slices, error unions, explicit allocators, ``defer`` /
+``errdefer`` cleanup and C interop through ``@cImport`` / ``extern fn``.
+
+A compact C ABI shim is generated for functions whose parameters and result can
+cross ``ctypes`` safely.  Functions using slices, strings, optionals or error
+unions remain callable from Zig but are intentionally not exposed through the
+C ABI instead of being silently truncated.
+"""
+
 from __future__ import annotations
 
 import ctypes
-import hashlib
-import subprocess
+import json
+import re
 from pathlib import Path
 from typing import Any
 
 from ast_nodes import (
+    ArrayExpr,
     Assign,
+    Await,
     Binary,
     Block,
+    Break,
     Call,
     Cast,
+    Closure,
     CompoundAssign,
+    ConstDecl,
+    Continue,
+    DeferStmt,
+    EnumDecl,
+    ErrDeferStmt,
     ExprStmt,
+    Field,
     FnDecl,
     For,
     Ident,
+    IfExpr,
+    IfLet,
+    ImplBlock,
     Index,
+    ItemStmt,
     LetStmt,
     LitBool,
+    LitChar,
     LitFloat,
     LitInt,
+    LitStr,
+    Loop,
+    MacroCall,
+    MatchExpr,
+    MethodCall,
+    OptionNone,
+    OptionSome,
     Paren,
+    PatBinding,
+    PatConst,
+    PatEnum,
+    PatIdent,
+    PatLiteral,
+    PatOr,
+    PatPath,
+    PatRange,
+    PatRef,
+    PatRest,
+    PatSlice,
+    PatStruct,
+    PatTuple,
+    PatWildcard,
     Program,
     Range,
+    RepeatArray,
+    ResultErr,
+    ResultOk,
     Return,
+    StructDecl,
+    StructLiteral,
+    Try,
+    TupleExpr,
+    TypeAlias,
+    TypeArray,
+    TypeDynTrait,
+    TypeFn,
+    TypeImplTrait,
     TypeName,
     TypeRef,
     TypeSlice,
+    TypeTuple,
+    TypeUnit,
+    Unary,
+    UseDecl,
     While,
 )
 from ast_nodes import (
     Path as AstPath,
 )
 from backends.base import BackendBase
+from zig.build import (
+    ZigBuildError,
+    build_dynamic_library,
+    build_dynamic_library_direct,
+    normalize_optimize,
+    zig_available,
+)
 
 
 class ZigCompileError(RuntimeError):
     pass
 
 
+_VECTOR_RE = re.compile(r"^@Vector\((\d+), (f32|f64|[iu]\d+)\)$")
+_VECTOR_ABI_CACHE: dict[str, type[ctypes.Structure]] = {}
+_PILLAR_ERRORS = tuple(f"E{index:03d}" for index in range(1, 9))
+_INT_RE = re.compile(r"^[iu]\d+$")
+
+
+def _vector_shape(ztype: str) -> tuple[int, str] | None:
+    match = _VECTOR_RE.fullmatch(ztype)
+    if match is None:
+        return None
+    return int(match.group(1)), match.group(2)
+
+
+def _vector_struct_name(ztype: str) -> str:
+    count, scalar = _vector_shape(ztype) or (0, "")
+    return f"__cabi_vector_{count}_{scalar}".replace(".", "_")
+
+
 def _ctypes_for(ztype: str) -> Any:
-    if ztype.startswith("[*]"):
+    shape = _vector_shape(ztype)
+    if shape is not None:
+        count, scalar = shape
+        cached = _VECTOR_ABI_CACHE.get(ztype)
+        if cached is None:
+            element = _ctypes_for(scalar)
+            cached = type(
+                _vector_struct_name(ztype),
+                (ctypes.Structure,),
+                {"_fields_": [("v", element * count)]},
+            )
+            _VECTOR_ABI_CACHE[ztype] = cached
+        return cached
+    if ztype.startswith("[*]") or ztype in {"*anyopaque", "*const anyopaque"}:
         return ctypes.c_void_p
     if ztype == "f64":
         return ctypes.c_double
@@ -59,282 +161,1382 @@ def _ctypes_for(ztype: str) -> Any:
     )
 
 
-def _cabi_type(ztype: str) -> str:
-    if ztype.startswith("[*]") or ztype in {"f32", "f64", "bool", "void"}:
+def _cabi_type(ztype: str) -> str | None:
+    """Return the C-ABI spelling of *ztype*, or ``None`` when unsupported."""
+    if _vector_shape(ztype) is not None:
+        return _vector_struct_name(ztype)
+    if ztype.startswith("[*]") and "anyopaque" not in ztype:
         return ztype
-    return "u64" if ztype.startswith("u") else "i64"
+    if ztype in {"f32", "f64", "bool", "void"}:
+        return ztype
+    if ztype in {"usize", "isize"} or _INT_RE.fullmatch(ztype):
+        return "u64" if ztype.startswith("u") or ztype == "usize" else "i64"
+    return None
+
+
+def _cabi_arg(name: str, ztype: str) -> str:
+    if _vector_shape(ztype) is not None:
+        return f"@bitCast({name}.v)"
+    if ztype.startswith("[*]") or ztype in {"f32", "f64", "bool", "u64", "i64"}:
+        return name
+    if ztype in {"usize", "isize"}:
+        return f"@as({ztype}, @intCast({name}))"
+    return f"@as({ztype}, @truncate({name}))"
+
+
+def _cabi_return(ztype: str, cabi: str) -> str:
+    if _vector_shape(ztype) is not None:
+        return "return .{ .v = @bitCast(res) };"
+    if ztype in {"f32", "f64", "bool", "u64", "i64"}:
+        return "return res;"
+    if _INT_RE.fullmatch(ztype) or ztype in {"usize", "isize"}:
+        return f"return @as({cabi}, @intCast(res));"
+    return "return res;"
+
+
+def _quote(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _attr_arg(fn: FnDecl, *names: str) -> str | None:
+    for attr in fn.attributes:
+        if attr.name in names and attr.args:
+            return attr.args.strip().strip('"')
+    return None
+
+
+def _has_attr(fn: FnDecl, *names: str) -> bool:
+    return any(attr.name in names for attr in fn.attributes)
+
+
+def _error_expr(value: Any, emit: Any) -> str:
+    """Map an ``Err(n)`` payload to a structured ``PillarError`` member."""
+    if isinstance(value, LitInt) and 1 <= value.value <= 8:
+        return f"error.E{value.value:03d}"
+    return f"error.{_PILLAR_ERRORS[3]}"
 
 
 class ZigCodegen:
+    """Emit one deterministic Zig module from a Polyglot program."""
+
     def __init__(self, module_name: str = "polyglot_zig") -> None:
         self.module_name = module_name
         self.lines: list[str] = []
         self.indent = 0
-        self.exported_fns: list[tuple[str, list[tuple[str, str]], str]] = []
+        self.exported_fns: list[tuple[str, list[tuple[str, str]], str, bool]] = []
         self._helpers: list[str] = []
-        self._locals: list[tuple[str, str]] = []
+        self._locals: dict[str, str] = {}
+        self._vector_abi_types: dict[str, str] = {}
+        self._generic_fns: set[str] = set()
+        self._struct_names: set[str] = set()
+        self._enum_names: set[str] = set()
+        self._method_names: dict[tuple[str, str], str] = {}
+        self._method_self_pointer: dict[tuple[str, str], bool] = {}
+        self._fn_returns: dict[str, str] = {}
+        self._self_type: str | None = None
+        self._current_ret = "void"
+        self._label = 0
+        self._cimports: list[str] = []
+        self._extern_fns: list[FnDecl] = []
+        self._impl_fns: list[tuple[str, FnDecl]] = []
+        self._link_libs: list[str] = []
+        self._uses_defer = False
+        self._parallel_fallback = False
+        self._allocator_name: str | None = None
+
+    # ------------------------------------------------------------------
+    # Low-level emission
+    # ------------------------------------------------------------------
 
     def emit(self, text: str = "") -> None:
         self.lines.append("    " * self.indent + text)
 
+    def _next_label(self, prefix: str = "blk") -> str:
+        self._label += 1
+        return f"{prefix}_{self._label}"
+
+    def _capture(self) -> tuple[list[str], int]:
+        saved = self.lines
+        width = self.indent
+        self.lines = []
+        self.indent = 0
+        return saved, width
+
+    def _restore(self, saved: tuple[list[str], int]) -> list[str]:
+        body = self.lines
+        self.lines, self.indent = saved
+        return body
+
+    # ------------------------------------------------------------------
+    # Types
+    # ------------------------------------------------------------------
+
     def _zig_type(self, ty: Any) -> str:
         if ty is None:
             return "void"
+        if isinstance(ty, TypeUnit):
+            return "void"
         if isinstance(ty, TypeRef):
             if isinstance(ty.inner, TypeSlice):
-                return f"[*]{'' if ty.mutable else 'const '}{self._zig_type(ty.inner.inner)}"
-            return self._zig_type(ty.inner)
-        if isinstance(ty, TypeName):
-            if (
-                ty.name.startswith("Simd")
-                and ty.name[4:].isdigit()
-                and len(ty.args) == 1
-            ):
-                return f"@Vector({ty.name[4:]}, {self._zig_type(ty.args[0])})"
-            if ty.name in {"f32", "f64", "bool", "usize", "isize"} or (
-                ty.name[:1] in {"i", "u"} and ty.name[1:].isdigit()
-            ):
-                return ty.name
+                qualifier = "" if ty.mutable else "const "
+                return f"[*]{qualifier}{self._zig_type(ty.inner.inner)}"
+            if isinstance(ty.inner, TypeArray):
+                return f"*{self._zig_type(ty.inner)}"
+            return f"*{'const ' if not ty.mutable else ''}{self._zig_type(ty.inner)}"
+        if isinstance(ty, TypeSlice):
+            return f"[]{self._zig_type(ty.inner)}"
+        if isinstance(ty, TypeArray):
+            size = self._emit_expr(ty.size)
+            return f"[{size}]{self._zig_type(ty.inner)}"
+        if isinstance(ty, TypeTuple):
+            if not ty.elems:
+                return "void"
+            return "struct { " + ", ".join(self._zig_type(t) for t in ty.elems) + " }"
+        if isinstance(ty, TypeFn):
+            params = ", ".join(self._zig_type(t) for t in ty.params)
+            ret = self._zig_type(ty.ret)
+            return f"*const fn({params}) callconv(.c) {ret}"
+        if isinstance(ty, (TypeImplTrait, TypeDynTrait)):
+            return "*anyopaque"
+        if not isinstance(ty, TypeName):
+            return "i64"
+
+        name = ty.name
+        if name in {"f32", "f64", "bool", "usize", "isize", "void"}:
+            return name
+        if _INT_RE.fullmatch(name):
+            return name
+        if name == "String":
+            return "[]const u8"
+        if name == "Allocator":
+            return "std.mem.Allocator"
+        if name == "PillarError":
+            return "PillarError"
+        if name == "Self":
+            return self._self_type or "Self"
+        if name == "Simd" and ty.args:
+            return self._zig_type(ty.args[0])
+        if name.startswith("Simd") and name[4:].isdigit() and ty.args:
+            return f"@Vector({name[4:]}, {self._zig_type(ty.args[0])})"
+        if name == "Option" and ty.args:
+            return f"?{self._zig_type(ty.args[0])}"
+        if name == "Result" and ty.args:
+            return f"anyerror!{self._zig_type(ty.args[0])}"
+        if name == "Vec" and ty.args:
+            return f"[]{self._zig_type(ty.args[0])}"
+        if name in {"Box", "Rc", "Arc"} and ty.args:
+            return f"*{self._zig_type(ty.args[0])}"
+        if name == "HashMap" and len(ty.args) == 2:
+            return f"std.AutoHashMap({self._zig_type(ty.args[0])}, {self._zig_type(ty.args[1])})"
+        if ty.args:
+            args = ", ".join(self._zig_type(arg) for arg in ty.args)
+            return f"{name}({args})"
+        return name
+
+    def _params(self, fn: FnDecl) -> list[tuple[str, str]]:
+        rows: list[tuple[str, str]] = []
+        for index, param in enumerate(fn.params):
+            pattern = param.pattern
+            if isinstance(pattern, PatRef) and isinstance(pattern.inner, PatIdent):
+                name = pattern.inner.name
+            elif isinstance(pattern, (PatIdent, PatBinding)):
+                name = pattern.name
+            else:
+                name = f"arg{index}"
+            if name == "self":
+                owner = self._self_type or "Self"
+                ztype = f"*{owner}" if isinstance(pattern, PatRef) else owner
+            else:
+                ztype = self._zig_type(param.ty) if param.ty else "anytype"
+            rows.append((name, ztype))
+        return rows
+
+    # ------------------------------------------------------------------
+    # Inference helpers
+    # ------------------------------------------------------------------
+
+    def _infer_type(self, expr: Any) -> str:
+        if isinstance(expr, Ident):
+            return self._locals.get(expr.name, "i64")
+        if isinstance(expr, Paren):
+            return self._infer_type(expr.inner)
+        if isinstance(expr, OptionSome):
+            return f"?{self._infer_type(expr.value)}"
+        if isinstance(expr, ResultOk):
+            return f"anyerror!{self._infer_type(expr.value)}"
+        if isinstance(expr, OptionNone):
+            return "?i64"
+        if isinstance(expr, LitInt):
+            return "i64"
+        if isinstance(expr, LitFloat):
+            return "f64"
+        if isinstance(expr, LitBool):
+            return "bool"
+        if isinstance(expr, LitStr):
+            return "[]const u8"
+        if isinstance(expr, Field):
+            return "usize" if expr.name == "len" else "i64"
+        if isinstance(expr, MethodCall) and expr.method == "len":
+            return "usize"
+        if isinstance(expr, (Call, AstPath)):
+            if isinstance(expr, AstPath):
+                name = expr.segments[-1]
+            elif isinstance(expr.func, (Ident, AstPath)):
+                name = (
+                    expr.func.name
+                    if isinstance(expr.func, Ident)
+                    else expr.func.segments[-1]
+                )
+            else:
+                return "i64"
+            return self._fn_returns.get(name, "i64")
+        if isinstance(expr, IfExpr) and expr.then_block.tail is not None:
+            return self._infer_type(expr.then_block.tail)
         return "i64"
 
+    # ------------------------------------------------------------------
+    # Module assembly
+    # ------------------------------------------------------------------
+
     def generate(self, program: Program) -> str:
-        self.lines, self.exported_fns, self._helpers = [], [], []
-        if any(
-            isinstance(i, FnDecl) and any(a.name == "parallel" for a in i.attributes)
-            for i in program.items
-        ):
-            self.emit('const std = @import("std");\n')
+        self.lines = []
+        self.exported_fns = []
+        self._helpers = []
+        self._locals = {}
+        self._vector_abi_types = {}
+        self._generic_fns = set()
+        self._struct_names = set()
+        self._enum_names = set()
+        self._method_names = {}
+        self._method_self_pointer = {}
+        self._fn_returns = {}
+        self._self_type = None
+        self._current_ret = "void"
+        self._label = 0
+        self._cimports = []
+        self._extern_fns = []
+        self._impl_fns = []
+        self._link_libs = []
+        self._uses_defer = False
+        self._parallel_fallback = False
+        self._allocator_name = None
+
+        self._scan(program)
+        self.emit("// Generated by polyglot-lang (Zig backend).")
+        self.emit('const std = @import("std");')
+        self.emit()
+        if self._cimports:
+            self.emit("const c = @cImport({")
+            self.indent += 1
+            for header in self._cimports:
+                self.emit(f"@cInclude({_quote(header)});")
+            self.indent -= 1
+            self.emit("});")
+            self.emit()
+        self.emit("pub const PillarError = error{ " + ", ".join(_PILLAR_ERRORS) + " };")
+        self.emit()
+        self._emit_zig_helpers()
+
+        for item in program.items:
+            if isinstance(item, StructDecl):
+                self._emit_struct(item)
+            elif isinstance(item, EnumDecl):
+                self._emit_enum(item)
+            elif isinstance(item, TypeAlias):
+                self._emit_type_alias(item)
+            elif isinstance(item, ConstDecl):
+                self._emit_const(item)
+        for owner, method in self._impl_fns:
+            self._emit_fn(method, owner=owner)
+        for fn in self._extern_fns:
+            self._emit_extern_fn(fn)
         for item in program.items:
             if isinstance(item, FnDecl):
                 self._emit_fn(item)
-        self.lines.extend(self._helpers)
-        for fname, params, ret_type in self.exported_fns:
-            c_params = ", ".join(f"{p}: {_cabi_type(t)}" for p, t in params)
-            c_ret = _cabi_type(ret_type)
-            self.emit(f"export fn __cabi_{fname}({c_params}) callconv(.c) {c_ret} {{")
-            self.indent += 1
-            args = [
-                p
-                if (t.startswith("[*]") or t in {"f32", "f64", "bool", "u64", "i64"})
-                else (
-                    f"@as({t}, @intCast({p}))"
-                    if t in {"usize", "isize"}
-                    else f"@as({t}, @truncate({p}))"
-                )
-                for p, t in params
-            ]
-            if ret_type == "void":
-                self.emit(f"{fname}({', '.join(args)});")
-            else:
-                self.emit(f"const res = {fname}({', '.join(args)});")
-                self.emit(
-                    "return res;"
-                    if ret_type in {"f32", "f64", "bool", "u64", "i64"}
-                    else f"return @as({c_ret}, @intCast(res));"
-                )
-            self.indent -= 1
-            self.emit("}\n")
+
+        for ztype, name in sorted(self._vector_abi_types.items()):
+            count, scalar = _vector_shape(ztype) or (0, "f64")
+            self.emit(f"const {name} = extern struct {{ v: [{count}]{scalar} }};\n")
+
+        self._emit_cabi_shims()
         return "\n".join(self.lines)
 
-    def _emit_fn(self, fn: FnDecl) -> None:
-        self._locals = []
-        is_par = any(a.name == "parallel" for a in fn.attributes)
-        meta = [
-            (getattr(p.pattern, "name", "arg"), self._zig_type(p.ty)) for p in fn.params
-        ]
-        ret = self._zig_type(fn.ret)
-        self.exported_fns.append((fn.name, meta, ret))
-        self.emit(f"fn {fn.name}({', '.join(f'{n}: {t}' for n, t in meta)}) {ret} {{")
+    def _scan(self, program: Program) -> None:
+        for item in program.items:
+            if isinstance(item, FnDecl):
+                if item.generics:
+                    self._generic_fns.add(item.name)
+                self._fn_returns[item.name] = self._zig_type(item.ret)
+                for param in item.params:
+                    ztype = self._zig_type(param.ty) if param.ty else ""
+                    if _vector_shape(ztype) is not None:
+                        self._vector_abi_types.setdefault(
+                            ztype, _vector_struct_name(ztype)
+                        )
+                ret_type = self._zig_type(item.ret)
+                if _vector_shape(ret_type) is not None:
+                    self._vector_abi_types.setdefault(
+                        ret_type, _vector_struct_name(ret_type)
+                    )
+                if _has_attr(item, "extern", "c_extern", "external"):
+                    self._extern_fns.append(item)
+                header = _attr_arg(item, "cinclude", "cImport", "c_import")
+                if header and header not in self._cimports:
+                    self._cimports.append(header)
+                for attr in item.attributes:
+                    if attr.name in {"link", "link_lib"} and attr.args:
+                        self._link_libs.append(attr.args.strip().strip('"'))
+            elif isinstance(item, StructDecl):
+                self._struct_names.add(item.name)
+            elif isinstance(item, EnumDecl):
+                self._enum_names.add(item.name)
+            elif isinstance(item, ImplBlock):
+                owner = (
+                    item.ty.name
+                    if isinstance(item.ty, TypeName)
+                    else self._zig_type(item.ty)
+                )
+                for member in item.items:
+                    if isinstance(member, FnDecl):
+                        name = f"{owner}_{member.name}"
+                        self._method_names[(owner, member.name)] = name
+                        self._method_self_pointer[(owner, member.name)] = bool(
+                            member.params
+                        ) and isinstance(member.params[0].pattern, PatRef)
+                        self._fn_returns[member.name] = self._zig_type(member.ret)
+                        self._impl_fns.append((owner, member))
+            elif isinstance(item, UseDecl):
+                # `use std::mem;` is already covered by the std import.
+                continue
+            elif isinstance(item, (TypeAlias, ConstDecl)):
+                continue
+            else:
+                path = getattr(item, "path", None)
+                if (
+                    isinstance(path, str)
+                    and path.endswith((".h", ".hpp"))
+                    and path not in self._cimports
+                ):
+                    self._cimports.append(path)
+
+    def _emit_zig_helpers(self) -> None:
+        helper = """fn _zig_sat_add(a: anytype, b: anytype) @TypeOf(a) {
+    const res = @addWithOverflow(a, b);
+    if (res[1] != 0) {
+        return if (a > 0) std.math.maxInt(@TypeOf(a)) else std.math.minInt(@TypeOf(a));
+    }
+    return res[0];
+}
+
+fn _zig_sat_sub(a: anytype, b: anytype) @TypeOf(a) {
+    const res = @subWithOverflow(a, b);
+    if (res[1] != 0) {
+        return if (a > 0) std.math.minInt(@TypeOf(a)) else std.math.maxInt(@TypeOf(a));
+    }
+    return res[0];
+}
+
+fn _zig_sat_mul(a: anytype, b: anytype) @TypeOf(a) {
+    const res = @mulWithOverflow(a, b);
+    if (res[1] != 0) {
+        return if ((a > 0) == (b > 0)) std.math.maxInt(@TypeOf(a)) else std.math.minInt(@TypeOf(a));
+    }
+    return res[0];
+}
+
+fn _zig_optional(value: anytype) ?@TypeOf(value) {
+    return value;
+}
+"""
+        self.lines.append(helper)
+
+    # ------------------------------------------------------------------
+    # Declarations
+    # ------------------------------------------------------------------
+
+    def _emit_generic_head(self, name: str, generics: list[Any]) -> None:
+        params = ", ".join(f"comptime {generic.name}: type" for generic in generics)
+        self.emit(f"fn {name}({params}) type {{")
         self.indent += 1
-        if fn.body:
-            self._emit_block(fn.body, True, is_par, meta)
+        self.emit("return struct {")
+        self.indent += 1
+
+    def _emit_struct(self, decl: StructDecl) -> None:
+        name = decl.name
+        if decl.generics:
+            params = ", ".join(
+                f"comptime {generic.name}: type" for generic in decl.generics
+            )
+            self.emit(f"fn {name}({params}) type {{")
+            self.indent += 1
+            self.emit("return struct {")
+            self.indent += 1
+            for field_name, field_type, _ in decl.fields:
+                self.emit(f"{field_name}: {self._zig_type(field_type)},")
+            self.indent -= 1
+            self.emit("};")
+            self.indent -= 1
+            self.emit("}\n")
+            return
+        public = "pub " if decl.is_pub else ""
+        self.emit(f"{public}const {name} = struct {{")
+        self.indent += 1
+        for field_name, field_type, _ in decl.fields:
+            self.emit(f"{field_name}: {self._zig_type(field_type)},")
+        self.indent -= 1
+        self.emit("};\n")
+
+    def _emit_enum(self, decl: EnumDecl) -> None:
+        name = decl.name
+        payload = any(variant.fields for variant in decl.variants)
+        rows: list[str] = []
+        if payload:
+            for variant in decl.variants:
+                if not variant.fields:
+                    rows.append(f"{variant.name},")
+                elif len(variant.fields) == 1:
+                    rows.append(f"{variant.name}: {self._zig_type(variant.fields[0])},")
+                else:
+                    fields = ", ".join(
+                        self._zig_type(field) for field in variant.fields
+                    )
+                    rows.append(f"{variant.name}: struct {{ {fields} }},")
+            kind = "union(enum)"
+        else:
+            rows = [f"{variant.name}," for variant in decl.variants]
+            kind = "enum"
+        if decl.generics:
+            params = ", ".join(
+                f"comptime {generic.name}: type" for generic in decl.generics
+            )
+            self.emit(f"fn {name}({params}) type {{")
+            self.indent += 1
+            self.emit(f"return {kind} {{")
+            self.indent += 1
+            for row in rows:
+                self.emit(row)
+            self.indent -= 1
+            self.emit("};")
+            self.indent -= 1
+            self.emit("}\n")
+            return
+        public = "pub " if decl.is_pub else ""
+        self.emit(f"{public}const {name} = {kind} {{")
+        self.indent += 1
+        for row in rows:
+            self.emit(row)
+        self.indent -= 1
+        self.emit("};\n")
+
+    def _emit_type_alias(self, decl: TypeAlias) -> None:
+        if decl.generics:
+            params = ", ".join(
+                f"comptime {generic.name}: type" for generic in decl.generics
+            )
+            self.emit(f"fn {decl.name}({params}) type {{")
+            self.indent += 1
+            self.emit(f"return {self._zig_type(decl.ty)};")
+            self.indent -= 1
+            self.emit("}\n")
+            return
+        public = "pub " if decl.is_pub else ""
+        self.emit(f"{public}const {decl.name} = {self._zig_type(decl.ty)};\n")
+
+    def _emit_const(self, decl: ConstDecl) -> None:
+        public = "pub " if decl.is_pub else ""
+        self.emit(f"{public}const {decl.name} = {self._emit_expr(decl.value)};\n")
+
+    # ------------------------------------------------------------------
+    # Functions
+    # ------------------------------------------------------------------
+
+    def _emit_extern_fn(self, fn: FnDecl) -> None:
+        params = ", ".join(f"{name}: {ztype}" for name, ztype in self._params(fn))
+        ret = self._zig_type(fn.ret)
+        self.emit(f"extern fn {fn.name}({params}) callconv(.c) {ret};")
+
+    def _emit_fn(self, fn: FnDecl, *, owner: str | None = None) -> None:
+        if _has_attr(fn, "extern", "c_extern", "external"):
+            return
+        self._self_type = owner
+        params = self._params(fn)
+        ret = self._zig_type(fn.ret)
+        self._current_ret = ret
+        self._locals = {
+            name: ztype for name, ztype in params if ztype not in {"anytype"}
+        }
+        self._allocator_name = next(
+            (name for name, ztype in params if ztype == "std.mem.Allocator"),
+            None,
+        )
+        generic_prefix = ""
+        if fn.generics:
+            generic_prefix = (
+                ", ".join(f"comptime {generic.name}: type" for generic in fn.generics)
+                + ", "
+            )
+        param_text = generic_prefix + ", ".join(
+            f"{name}: {ztype}" for name, ztype in params
+        )
+        public = "pub " if fn.is_pub else ""
+        self.emit(f"{public}fn {fn.name}({param_text}) {ret} {{")
+        self.indent += 1
+        parallel = _has_attr(fn, "parallel") and self._emit_parallel_body(fn, params)
+        if not parallel:
+            if _has_attr(fn, "parallel"):
+                self._parallel_fallback = True
+            if fn.body:
+                self._emit_block(fn.body, is_fn=True)
         self.indent -= 1
         self.emit("}\n")
+        self.exported_fns.append((fn.name, params, ret, owner is not None))
 
     def _emit_block(
         self,
         block: Block,
+        *,
         is_fn: bool = False,
-        is_par: bool = False,
-        params: list[tuple[str, str]] | None = None,
+        as_expr: bool = False,
+        label: str | None = None,
     ) -> None:
-        for s in block.stmts:
-            if isinstance(s, LetStmt):
-                z_ty = self._zig_type(s.ty) if s.ty else ""
-                if is_fn and z_ty:
-                    self._locals.append((getattr(s.pattern, "name", "_"), z_ty))
-                self.emit(
-                    f"{'var' if s.mutable else 'const'} {getattr(s.pattern, 'name', '_')}{f': {z_ty}' if z_ty else ''} = {self._emit_expr(s.value) if s.value else 'undefined'};"
-                )
-            elif isinstance(s, ExprStmt):
-                e = s.expr
-                if isinstance(e, For) and isinstance(e.iter, Range):
-                    v = getattr(e.pattern, "name", "i")
-                    st = self._emit_expr(e.iter.start) if e.iter.start else "0"
-                    en = self._emit_expr(e.iter.end) if e.iter.end else "0"
-                    if is_par:
-                        cid = len(self._helpers)
-                        fields = "\n".join(
-                            f"    {n}: {t}," for n, t in ((params or []) + self._locals)
-                        )
-                        unpack = "\n".join(
-                            f"    const {n} = ctx.{n}; _ = &{n};"
-                            for n, _ in ((params or []) + self._locals)
-                        )
-                        saved, self.lines, self.indent = self.lines, [], 2
-                        self._emit_block(e.body)
-                        body_str = "\n".join(self.lines)
-                        self.lines, self.indent = saved, self.indent
-                        self._helpers.append(
-                            f"const Ctx_{cid} = struct {{\n{fields}\n}};\nfn worker_{cid}(ctx: Ctx_{cid}, s: usize, e: usize) void {{\n{unpack}\n    var {v}: usize = s;\n    while ({v} < e) : ({v} += 1) {{\n{body_str}\n    }}\n}}\n"
-                        )
-                        inits = ", ".join(
-                            f".{n} = {n}" for n, _ in ((params or []) + self._locals)
-                        )
-                        self.emit(
-                            f"const __end: usize = {en}{' + 1' if e.iter.inclusive else ''};\n    if (__end > {st}) {{\n        const __tot = __end - {st};\n        const __w = @min(__tot, @min(16, std.Thread.getCpuCount() catch 4));\n        var __threads: [16]std.Thread = undefined;\n        var __spawned: usize = 0;\n        const __ctx = Ctx_{cid}{{ {inits} }};\n        const __chk = (__tot + __w - 1) / __w;\n        var __i: usize = 0;\n        while (__i < __w) : (__i += 1) {{\n            const __cs = {st} + __i * __chk;\n            if (__cs >= __end) break;\n            __threads[__spawned] = std.Thread.spawn(.{{}}, worker_{cid}, .{{ __ctx, __cs, @min(__cs + __chk, __end) }}) catch unreachable;\n            __spawned += 1;\n        }}\n        var __j: usize = 0;\n        while (__j < __spawned) : (__j += 1) {{ __threads[__j].join(); }}\n    }}"
-                        )
-                    else:
-                        self.emit(
-                            f"var {v}: usize = {st}; while ({v} {'<=' if e.iter.inclusive else '<'} {en}) : ({v} += 1) {{"
-                        )
-                        self.indent += 1
-                        self._emit_block(e.body)
-                        self.indent -= 1
-                        self.emit("}")
-                elif isinstance(e, Return):
-                    self.emit(
-                        f"return {self._emit_expr(e.value)};" if e.value else "return;"
-                    )
-                elif isinstance(e, While):
-                    self.emit(f"while ({self._emit_expr(e.cond)}) {{")
-                    self.indent += 1
-                    self._emit_block(e.body)
-                    self.indent -= 1
-                    self.emit("}")
-                else:
-                    self.emit(f"{self._emit_expr(e)};")
+        saved_locals = dict(self._locals)
+        for statement in block.stmts:
+            self._emit_stmt(statement)
         if block.tail is not None:
-            self.emit(f"{'return ' if is_fn else ''}{self._emit_expr(block.tail)};")
+            value = self._emit_expr(block.tail)
+            if as_expr and label is not None:
+                self.emit(f"break :{label} {value};")
+            elif is_fn:
+                self.emit(f"return {value};")
+            else:
+                self.emit(f"_ = {value};")
+        elif as_expr and label is not None:
+            self.emit(f"break :{label} {{}};")
+        self._locals = saved_locals
 
-    def _emit_expr(self, e: Any) -> str:
-        if isinstance(e, Paren):
-            return f"({self._emit_expr(e.inner)})"
-        if isinstance(e, Cast):
-            return f"@as({self._zig_type(e.ty)}, @intCast({self._emit_expr(e.expr)}))"
-        if isinstance(e, (LitInt, LitFloat)):
-            return str(e.value)
-        if isinstance(e, LitBool):
-            return "true" if e.value else "false"
-        if isinstance(e, Ident):
-            return e.name
-        if isinstance(e, Index):
-            return f"{self._emit_expr(e.receiver)}[{self._emit_expr(e.index)}]"
-        if isinstance(e, Assign):
-            return f"{self._emit_expr(e.target)} = {self._emit_expr(e.value)}"
-        if isinstance(e, CompoundAssign):
-            return f"{self._emit_expr(e.target)} {e.op} {self._emit_expr(e.value)}"
-        if isinstance(e, Binary):
-            return f"({self._emit_expr(e.left)} {e.op} {self._emit_expr(e.right)})"
-        if (
-            isinstance(e, Call)
-            and isinstance(e.func, AstPath)
-            and e.func.segments[:1] == ["Simd"]
-        ):
-            m, a = e.func.segments[-1], e.args
-            if m == "splat" and len(a) == 1:
-                return f"@splat({self._emit_expr(a[0])})"
-            if m == "load" and len(a) == 3:
-                return f"{self._emit_expr(a[0])}[{self._emit_expr(a[1])}..][0..{self._emit_expr(a[2])}].*"
-            if m == "store" and len(a) == 4:
-                return f"{self._emit_expr(a[0])}[{self._emit_expr(a[1])}..][0..{self._emit_expr(a[2])}].* = {self._emit_expr(a[3])}"
-            if (
-                m in {"reduce_add", "reduce_mul", "reduce_min", "reduce_max"}
-                and len(a) == 1
+    def _emit_stmt(self, statement: Any) -> None:
+        if isinstance(statement, LetStmt):
+            self._emit_let(statement)
+        elif isinstance(statement, ExprStmt):
+            self._emit_expr_stmt(statement.expr)
+        elif isinstance(statement, (DeferStmt, ErrDeferStmt)):
+            keyword = "defer" if isinstance(statement, DeferStmt) else "errdefer"
+            self._uses_defer = True
+            if isinstance(statement.body, Block):
+                self.emit(f"{keyword} {{")
+                self.indent += 1
+                self._emit_block(statement.body)
+                self.indent -= 1
+                self.emit("}")
+            else:
+                self.emit(f"{keyword} {self._emit_expr(statement.body)};")
+        elif isinstance(statement, ItemStmt):
+            item = statement.item
+            if isinstance(item, ConstDecl):
+                self._emit_const(item)
+            elif isinstance(item, (FnDecl, StructDecl, EnumDecl)):
+                self.emit(f"// nested item `{getattr(item, 'name', '_')}` omitted")
+            else:
+                self.emit("// unsupported nested item")
+        else:
+            self.emit("// unsupported statement")
+
+    def _emit_let(self, statement: LetStmt) -> None:
+        pattern = statement.pattern
+        name = (
+            pattern.name
+            if isinstance(pattern, (PatIdent, PatBinding))
+            else self._next_label("tmp")
+        )
+        keyword = "var" if statement.mutable else "const"
+        annotation = (
+            f": {self._zig_type(statement.ty)}" if statement.ty is not None else ""
+        )
+        value = self._emit_expr(statement.value) if statement.value else "undefined"
+        if isinstance(pattern, (PatTuple, PatStruct)):
+            tuple_pattern = self._emit_pattern(pattern, binding=True)
+            self.emit(f"{keyword} {tuple_pattern}{annotation} = {value};")
+        else:
+            self.emit(f"{keyword} {name}{annotation} = {value};")
+        inferred = (
+            self._zig_type(statement.ty)
+            if statement.ty is not None
+            else self._infer_type(statement.value)
+        )
+        self._locals[name] = inferred
+
+    def _emit_expr_stmt(self, expr: Any) -> None:
+        if isinstance(expr, For):
+            self._emit_for(expr)
+            return
+        if isinstance(expr, While):
+            self.emit(f"while ({self._emit_expr(expr.cond)}) {{")
+            self.indent += 1
+            self._emit_block(expr.body)
+            self.indent -= 1
+            self.emit("}")
+            return
+        if isinstance(expr, Loop):
+            self.emit("while (true) {")
+            self.indent += 1
+            self._emit_block(expr.body)
+            self.indent -= 1
+            self.emit("}")
+            return
+        if isinstance(expr, Return):
+            if expr.value is None:
+                self.emit("return;")
+            else:
+                self.emit(f"return {self._emit_expr(expr.value)};")
+            return
+        if isinstance(expr, Break):
+            label = f" :{expr.label}" if expr.label else ""
+            value = f" {self._emit_expr(expr.value)}" if expr.value else ""
+            self.emit(f"break{label}{value};")
+            return
+        if isinstance(expr, Continue):
+            label = f" :{expr.label}" if expr.label else ""
+            self.emit(f"continue{label};")
+            return
+        if isinstance(expr, (IfExpr, IfLet, MatchExpr)):
+            self.emit(self._emit_expr(expr))
+            return
+        self.emit(f"{self._emit_expr(expr)};")
+
+    def _emit_for(self, node: For) -> None:
+        pattern = node.pattern
+        name = pattern.name if isinstance(pattern, PatIdent) else "item"
+        if isinstance(node.iter, Range):
+            start = self._emit_expr(node.iter.start) if node.iter.start else "0"
+            end = self._emit_expr(node.iter.end) if node.iter.end else "0"
+            bound = "<=" if node.iter.inclusive else "<"
+            self._locals[name] = "usize"
+            self.emit(f"var {name}: usize = {start};")
+            self.emit(f"while ({name} {bound} {end}) : ({name} += 1) {{")
+            self.indent += 1
+            self._emit_block(node.body)
+            self.indent -= 1
+            self.emit("}")
+            return
+        iterable = self._emit_expr(node.iter)
+        capture = name if isinstance(pattern, PatIdent) else self._emit_pattern(pattern)
+        self.emit(f"for ({iterable}) |{capture}| {{")
+        self.indent += 1
+        self._emit_block(node.body)
+        self.indent -= 1
+        self.emit("}")
+
+    # ------------------------------------------------------------------
+    # Parallel range lowering
+    # ------------------------------------------------------------------
+
+    def _parallel_loop(self, fn: FnDecl) -> tuple[For, Range] | None:
+        if fn.body is None or fn.body.tail is not None:
+            return None
+        loops = [
+            statement.expr
+            for statement in fn.body.stmts
+            if isinstance(statement, ExprStmt)
+            and isinstance(statement.expr, For)
+            and isinstance(statement.expr.iter, Range)
+        ]
+        if len(loops) != 1 or len(fn.body.stmts) != 1:
+            return None
+        loop = loops[0]
+        if isinstance(loop.pattern, (PatTuple, PatStruct, PatSlice)):
+            return None
+        if self._contains_flow(loop.body):
+            return None
+        return loop, loop.iter
+
+    def _contains_flow(self, block: Block) -> bool:
+        for statement in block.stmts:
+            if isinstance(statement, ExprStmt) and isinstance(
+                statement.expr, (Return, Break, Continue)
             ):
-                op = {
-                    "reduce_add": ".Add",
-                    "reduce_mul": ".Mul",
-                    "reduce_min": ".Min",
-                    "reduce_max": ".Max",
-                }[m]
-                return f"@reduce({op}, {self._emit_expr(a[0])})"
+                return True
+            if isinstance(statement, ExprStmt) and isinstance(
+                statement.expr, (For, While, Loop)
+            ):
+                return True
+        return False
+
+    def _emit_parallel_body(self, fn: FnDecl, params: list[tuple[str, str]]) -> bool:
+        found = self._parallel_loop(fn)
+        if found is None:
+            return False
+        loop, range_expr = found
+        name = loop.pattern.name if isinstance(loop.pattern, PatIdent) else "index"
+        start = self._emit_expr(range_expr.start) if range_expr.start else "0"
+        end = self._emit_expr(range_expr.end) if range_expr.end else "0"
+        if range_expr.inclusive:
+            end = f"({end}) + 1"
+        initializers = ", ".join(f".{param} = {param}" for param, _ in params)
+        self.emit("const Ctx = struct {")
+        self.indent += 1
+        for param, ztype in params:
+            self.emit(f"{param}: {ztype},")
+        self.emit("start: usize,")
+        self.emit("end: usize,")
+        self.emit("next: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),")
+        self.indent -= 1
+        self.emit("};")
+        self.emit(
+            f"var ctx = Ctx{{ {initializers}, .start = {start}, .end = {end}, "
+            f".next = std.atomic.Value(usize).init({start}) }};"
+        )
+        self.emit("const Worker = struct {")
+        self.indent += 1
+        self.emit("fn work(c: *Ctx) void {")
+        self.indent += 1
+        for param, _ in params:
+            self.emit(f"const {param} = c.{param};")
+        self.emit("while (true) {")
+        self.indent += 1
+        self.emit("const index = c.next.fetchAdd(1, .monotonic);")
+        self.emit("if (index >= c.end) break;")
+        self.emit(f"const {name} = index;")
+        self._emit_block(loop.body)
+        self.indent -= 1
+        self.emit("}")
+        self.indent -= 1
+        self.emit("}")
+        self.indent -= 1
+        self.emit("};")
+        self.emit("const count = @min(std.Thread.getCpuCount() catch 1, 64);")
+        self.emit("var threads: [64]std.Thread = undefined;")
+        self.emit("var spawned: usize = 0;")
+        self.emit("while (spawned < count) : (spawned += 1) {")
+        self.indent += 1
+        self.emit(
+            "threads[spawned] = std.Thread.spawn(.{}, Worker.work, .{&ctx}) "
+            "catch break;"
+        )
+        self.indent -= 1
+        self.emit("}")
+        self.emit("for (threads[0..spawned]) |thread| thread.join();")
+        self.emit("Worker.work(&ctx);")
+        return True
+
+    # ------------------------------------------------------------------
+    # Patterns and expressions
+    # ------------------------------------------------------------------
+
+    def _emit_pattern(self, pattern: Any, *, binding: bool = False) -> str:
+        if isinstance(pattern, PatWildcard):
+            return "_"
+        if isinstance(pattern, PatIdent):
+            return pattern.name if binding else "else"
+        if isinstance(pattern, PatLiteral):
+            return self._emit_expr(pattern.value)
+        if isinstance(pattern, PatPath):
+            return self._emit_path_text(pattern.path, switch_pattern=True)
+        if isinstance(pattern, PatEnum):
+            return self._emit_path_text(pattern.path, switch_pattern=True)
+        if isinstance(pattern, PatTuple):
+            items = ", ".join(self._emit_pattern(item) for item in pattern.elems)
+            return f".{{ {items} }}"
+        if isinstance(pattern, PatStruct):
+            fields = ", ".join(
+                f".{name} = {self._emit_pattern(value)}"
+                for name, value in pattern.fields
+            )
+            if pattern.rest:
+                fields = f"{fields}, .." if fields else ".."
+            return f".{{ {fields} }}"
+        if isinstance(pattern, PatOr):
+            return ", ".join(self._emit_pattern(alt) for alt in pattern.alts)
+        if isinstance(pattern, PatRange):
+            start = self._emit_expr(pattern.start) if pattern.start else ""
+            end = self._emit_expr(pattern.end) if pattern.end else ""
+            operator = "..." if pattern.inclusive else ".."
+            return f"{start}{operator}{end}"
+        if isinstance(pattern, PatBinding):
+            return f"{pattern.name} @ {self._emit_pattern(pattern.inner)}"
+        if isinstance(pattern, PatRef):
+            return self._emit_pattern(pattern.inner)
+        if isinstance(pattern, PatRest):
+            return ".."
+        if isinstance(pattern, PatSlice):
+            return (
+                ".{ "
+                + ", ".join(self._emit_pattern(item) for item in pattern.elems)
+                + " }"
+            )
+        if isinstance(pattern, PatConst):
+            return self._emit_path_text(pattern.path)
+        return "_"
+
+    def _emit_path_text(self, path: str, *, switch_pattern: bool = False) -> str:
+        parts = path.split("::")
+        if parts[-1] == "None":
+            return "null"
+        if (
+            switch_pattern
+            and len(parts) >= 2
+            and parts[0] in (self._struct_names | self._enum_names)
+        ):
+            return "." + ".".join(parts[1:])
+        return ".".join(parts)
+
+    def _emit_capture(self, pattern: Any) -> str:
+        if isinstance(pattern, PatEnum) and pattern.args:
+            inner = ", ".join(
+                self._emit_pattern(arg, binding=True) for arg in pattern.args
+            )
+            return f" |{inner}|"
+        if isinstance(pattern, PatIdent):
+            return f" |{pattern.name}|"
+        return ""
+
+    def _emit_expr(self, expr: Any) -> str:
+        if isinstance(expr, Paren):
+            return f"({self._emit_expr(expr.inner)})"
+        if isinstance(expr, Cast):
+            return self._emit_cast(expr)
+        if isinstance(expr, LitInt):
+            return str(expr.value)
+        if isinstance(expr, LitFloat):
+            return str(expr.value)
+        if isinstance(expr, LitStr):
+            return _quote(expr.value)
+        if isinstance(expr, LitChar):
+            return f"'{expr.value}'"
+        if isinstance(expr, LitBool):
+            return "true" if expr.value else "false"
+        if isinstance(expr, Ident):
+            return "null" if expr.name == "None" else expr.name
+        if isinstance(expr, AstPath):
+            return self._emit_path_text("::".join(expr.segments))
+        if isinstance(expr, Index):
+            return f"{self._emit_expr(expr.receiver)}[{self._emit_expr(expr.index)}]"
+        if isinstance(expr, Field):
+            return f"{self._emit_expr(expr.receiver)}.{expr.name}"
+        if isinstance(expr, Assign):
+            return f"{self._emit_expr(expr.target)} = {self._emit_expr(expr.value)}"
+        if isinstance(expr, CompoundAssign):
+            target = self._emit_expr(expr.target)
+            value = self._emit_expr(expr.value)
+            if expr.op in {"+|", "-|", "*|"}:
+                helper = {
+                    "+|": "_zig_sat_add",
+                    "-|": "_zig_sat_sub",
+                    "*|": "_zig_sat_mul",
+                }[expr.op]
+                return f"{target} = {helper}({target}, {value})"
+            return f"{target} {expr.op} {value}"
+        if isinstance(expr, Unary):
+            operator = "&" if expr.op in {"&", "&mut"} else expr.op
+            return f"{operator}{self._emit_expr(expr.operand)}"
+        if isinstance(expr, Binary):
+            return self._emit_binary(expr)
+        if isinstance(expr, Call):
+            return self._emit_call(expr)
+        if isinstance(expr, MethodCall):
+            return self._emit_method(expr)
+        if isinstance(expr, TupleExpr):
+            items = ", ".join(self._emit_expr(item) for item in expr.elems)
+            return f".{{ {items} }}"
+        if isinstance(expr, ArrayExpr):
+            items = ", ".join(self._emit_expr(item) for item in expr.elems)
+            return f".{{ {items} }}"
+        if isinstance(expr, RepeatArray):
+            return f"[_]{self._emit_expr(expr.elem)} ** {self._emit_expr(expr.count)}"
+        if isinstance(expr, StructLiteral):
+            name = self._emit_path_text(expr.path)
+            if expr.generic_args:
+                args = ", ".join(self._zig_type(arg) for arg in expr.generic_args)
+                name = f"{name}({args})"
+            fields = ", ".join(
+                f".{key} = {self._emit_expr(value)}" for key, value in expr.fields
+            )
+            if expr.rest is not None:
+                fields = f"{fields}, ..{self._emit_expr(expr.rest)}"
+            return f"{name}{{ {fields} }}"
+        if isinstance(expr, IfExpr):
+            return self._emit_if(expr)
+        if isinstance(expr, IfLet):
+            return self._emit_if_let(expr)
+        if isinstance(expr, MatchExpr):
+            return self._emit_match(expr)
+        if isinstance(expr, Block):
+            return self._render_block_expr(expr)
+        if isinstance(expr, Range):
+            start = self._emit_expr(expr.start) if expr.start else ""
+            end = self._emit_expr(expr.end) if expr.end else ""
+            return f"{start}{'..=' if expr.inclusive else '..'}{end}"
+        if isinstance(expr, Return):
+            return (
+                "return;"
+                if expr.value is None
+                else f"return {self._emit_expr(expr.value)}"
+            )
+        if isinstance(expr, Break):
+            return "break"
+        if isinstance(expr, Continue):
+            return "continue"
+        if isinstance(expr, Try):
+            return f"try {self._emit_expr(expr.expr)}"
+        if isinstance(expr, Await):
+            return self._emit_expr(expr.expr)
+        if isinstance(expr, OptionSome):
+            return self._emit_expr(expr.value)
+        if isinstance(expr, OptionNone):
+            return "null"
+        if isinstance(expr, ResultOk):
+            return self._emit_expr(expr.value)
+        if isinstance(expr, ResultErr):
+            return _error_expr(expr.value, self._emit_expr)
+        if isinstance(expr, MacroCall):
+            return self._emit_macro(expr)
+        if isinstance(expr, Closure):
+            return '@compileError("closures are not supported by the Zig backend")'
         return "0"
+
+    def _emit_cast(self, expr: Cast) -> str:
+        target = self._zig_type(expr.ty)
+        inner = self._emit_expr(expr.expr)
+        if target in {"f32", "f64"}:
+            if isinstance(expr.expr, LitFloat):
+                return f"@as({target}, {inner})"
+            return f"@as({target}, @floatFromInt({inner}))"
+        if target in {"i64", "i32", "u64", "u32", "u16", "u8"} and isinstance(
+            expr.expr, LitFloat
+        ):
+            return f"@as({target}, @intFromFloat({inner}))"
+        return f"@as({target}, @intCast({inner}))"
+
+    def _emit_binary(self, expr: Binary) -> str:
+        left = self._emit_expr(expr.left)
+        right = self._emit_expr(expr.right)
+        if expr.op in {"+|", "-|", "*|"}:
+            helper = {
+                "+|": "_zig_sat_add",
+                "-|": "_zig_sat_sub",
+                "*|": "_zig_sat_mul",
+            }[expr.op]
+            return f"{helper}({left}, {right})"
+        operator = {"&&": "and", "||": "or"}.get(expr.op, expr.op)
+        return f"({left} {operator} {right})"
+
+    def _emit_call(self, expr: Call) -> str:
+        args = ", ".join(self._emit_expr(arg) for arg in expr.args)
+        func = expr.func
+        if isinstance(func, AstPath):
+            segments = func.segments
+            name = segments[-1]
+            if name in {"Some", "Ok"} and len(expr.args) == 1:
+                return self._emit_expr(expr.args[0])
+            if name in {"None"}:
+                return "null"
+            if name == "Err" and len(expr.args) == 1:
+                return _error_expr(expr.args[0], self._emit_expr)
+            if segments[:1] == ["Simd"]:
+                return self._emit_simd(name, expr.args)
+            if segments[:1] == ["Vec"] and name in {"new", "with_capacity"}:
+                return "&.{}"
+            if segments[:1] == ["String"] and name == "from" and expr.args:
+                return self._emit_expr(expr.args[0])
+            if name in {"print", "println", "eprintln"}:
+                return f"std.debug.print({args})"
+            if name == "panic":
+                return f"@panic({args})"
+            base = ".".join(segments)
+            if func.generic_args:
+                type_args = ", ".join(self._zig_type(arg) for arg in func.generic_args)
+                if segments[-1] in self._generic_fns:
+                    return f"{base}({type_args}{', ' if args else ''}{args})"
+            return f"{base}({args})"
+        if isinstance(func, Ident):
+            name = func.name
+            if name in {"Some", "Ok"} and len(expr.args) == 1:
+                return self._emit_expr(expr.args[0])
+            if name == "None":
+                return "null"
+            if name == "Err" and len(expr.args) == 1:
+                return _error_expr(expr.args[0], self._emit_expr)
+            if name in {"print", "println", "eprintln"}:
+                return f"std.debug.print({args})"
+            if name == "panic":
+                return f"@panic({args})"
+            if name in {"assert"}:
+                return f"std.debug.assert({args})"
+            return f"{name}({args})"
+        if isinstance(func, Field):
+            receiver = self._emit_expr(func.receiver)
+            return f"{receiver}.{func.name}({args})"
+        return f"{self._emit_expr(func)}({args})"
+
+    def _emit_simd(self, method: str, args: list[Any]) -> str:
+        if method == "splat" and len(args) == 1:
+            return f"@splat({self._emit_expr(args[0])})"
+        if method == "load" and len(args) == 3:
+            return (
+                f"{self._emit_expr(args[0])}[{self._emit_expr(args[1])}..]"
+                f"[0..{self._emit_expr(args[2])}].*"
+            )
+        if method == "store" and len(args) == 4:
+            return (
+                f"{self._emit_expr(args[0])}[{self._emit_expr(args[1])}..]"
+                f"[0..{self._emit_expr(args[2])}].* = {self._emit_expr(args[3])}"
+            )
+        if method in {"reduce_add", "reduce_mul", "reduce_min", "reduce_max"}:
+            op = {
+                "reduce_add": ".Add",
+                "reduce_mul": ".Mul",
+                "reduce_min": ".Min",
+                "reduce_max": ".Max",
+            }[method]
+            return f"@reduce({op}, {self._emit_expr(args[0])})"
+        return f"Simd.{method}()"
+
+    def _emit_method(self, expr: MethodCall) -> str:
+        receiver = self._emit_expr(expr.receiver)
+        args = ", ".join(self._emit_expr(arg) for arg in expr.args)
+        receiver_type = self._infer_type(expr.receiver)
+        method = expr.method
+        owner = receiver_type.lstrip("*").strip()
+        method_fn = self._method_names.get((owner, method))
+        if method_fn is not None:
+            receiver_arg = (
+                f"&{receiver}"
+                if self._method_self_pointer.get((owner, method))
+                else receiver
+            )
+            return f"{method_fn}({receiver_arg}{', ' if args else ''}{args})"
+        if method == "len":
+            return f"({receiver}).len"
+        if method in {"to_string", "clone", "as_str", "as_bytes"}:
+            return receiver
+        if method == "unwrap":
+            if "!" in receiver_type and not receiver_type.startswith("?"):
+                return f"({receiver}) catch unreachable"
+            return f"({receiver}).?"
+        if method == "unwrap_or":
+            if receiver_type.startswith("?"):
+                return f"(({receiver}) orelse ({args}))"
+            return f"(({receiver}) catch ({args}))"
+        if method == "expect":
+            if receiver_type.startswith("?"):
+                return f"(({receiver}) orelse unreachable)"
+            return f"(({receiver}) catch unreachable)"
+        if method == "is_some":
+            return f"(({receiver}) != null)"
+        if method == "is_none":
+            return f"(({receiver}) == null)"
+        if method == "is_ok":
+            return f"if ({receiver}) |_| true else |_| false"
+        if method == "is_err":
+            return f"!(if ({receiver}) |_| true else |_| false)"
+        if method == "split":
+            sep = expr.args[0] if expr.args else None
+            helper = (
+                "splitScalar"
+                if isinstance(sep, LitStr) and len(sep.value) == 1
+                else "splitSequence"
+            )
+            return f"std.mem.{helper}(u8, {receiver}, {args})"
+        if method == "join" and self._allocator_name:
+            return f"std.mem.join({self._allocator_name}, {args}, {receiver})"
+        if method == "replace" and self._allocator_name:
+            return (
+                f"std.mem.replaceOwned(u8, {self._allocator_name}, {receiver}, {args})"
+            )
+        if method == "alloc" and expr.generic_args:
+            types = ", ".join(self._zig_type(arg) for arg in expr.generic_args)
+            return f"{receiver}.alloc({types}{', ' if args else ''}{args})"
+        if method == "free":
+            return f"{receiver}.free({args})"
+        if method in {"push", "append"}:
+            allocator = self._allocator_name or "allocator"
+            return f"{receiver}.append({allocator}, {args})"
+        if method == "pop":
+            return f"{receiver}.pop()"
+        if expr.generic_args:
+            types = ", ".join(self._zig_type(arg) for arg in expr.generic_args)
+            return f"{receiver}.{method}({types}{', ' if args else ''}{args})"
+        return f"{receiver}.{method}({args})"
+
+    def _emit_macro(self, expr: MacroCall) -> str:
+        if isinstance(expr.args, str):
+            return f"@{expr.path}({expr.args})"
+        args = ", ".join(self._emit_expr(arg) for arg in expr.args)
+        if expr.path in {"println", "print"}:
+            return f"std.debug.print({args})"
+        if expr.path == "vec":
+            return f".{{ {args} }}"
+        return f"@{expr.path}({args})"
+
+    # ------------------------------------------------------------------
+    # Control-flow expressions
+    # ------------------------------------------------------------------
+
+    def _render_block_expr(self, block: Block) -> str:
+        if block.tail is not None and not block.stmts:
+            return self._emit_expr(block.tail)
+        label = self._next_label()
+        saved = self._capture()
+        self._emit_block(block, as_expr=True, label=label)
+        body = self._restore(saved)
+        text = "\n".join(f"    {line}" for line in body)
+        return f"{label}: {{\n{text}\n}}"
+
+    def _emit_if(self, expr: IfExpr) -> str:
+        condition = self._emit_expr(expr.cond)
+        then_value = self._render_block_expr(expr.then_block)
+        if expr.else_branch is None:
+            return f"if ({condition}) {then_value}"
+        if isinstance(expr.else_branch, Block):
+            else_value = self._render_block_expr(expr.else_branch)
+        elif isinstance(expr.else_branch, (IfExpr, IfLet)):
+            else_value = self._emit_expr(expr.else_branch)
+        else:
+            else_value = self._emit_expr(expr.else_branch)
+        return f"if ({condition}) {then_value} else {else_value}"
+
+    def _emit_if_let(self, expr: IfLet) -> str:
+        value = self._emit_expr(expr.value)
+        pattern = expr.pattern
+        then_value = self._render_block_expr(expr.then_block)
+        else_value = (
+            self._render_block_expr(expr.else_branch)
+            if isinstance(expr.else_branch, Block)
+            else self._emit_expr(expr.else_branch)
+            if expr.else_branch is not None
+            else "{}"
+        )
+        if isinstance(pattern, PatEnum) and pattern.path.endswith(("Ok", "Some")):
+            capture = (
+                self._emit_pattern(pattern.args[0], binding=True)
+                if pattern.args
+                else "_"
+            )
+            if pattern.path.endswith("Some"):
+                return f"if ({value}) |{capture}| {then_value} else {else_value}"
+            return f"if ({value}) |{capture}| {then_value} else |_| {else_value}"
+        if isinstance(pattern, PatIdent):
+            return f"if ({value}) |{pattern.name}| {then_value} else {else_value}"
+        if isinstance(pattern, PatPath) and pattern.path.endswith("None"):
+            return f"if ({value} == null) {then_value} else {else_value}"
+        return f"if ({value}) {then_value} else {else_value}"
+
+    def _emit_match(self, expr: MatchExpr) -> str:
+        subject = self._emit_expr(expr.scrutinee)
+        subject_type = self._infer_type(expr.scrutinee)
+        if subject_type.startswith("?") or "!" in subject_type:
+            return self._emit_option_match(subject, subject_type, expr)
+        lines = [f"switch ({subject}) {{"]
+        has_else = False
+        for arm in expr.arms:
+            pattern = self._emit_pattern(arm.pattern)
+            capture = self._emit_capture(arm.pattern)
+            if pattern in {"_", "else"}:
+                pattern = "else"
+                has_else = True
+            guard = f" if {self._emit_expr(arm.guard)}" if arm.guard else ""
+            body = (
+                self._render_block_expr(arm.body)
+                if isinstance(arm.body, Block)
+                else self._emit_expr(arm.body)
+            )
+            lines.append(f"    {pattern}{capture}{guard} => {body},")
+        if not has_else:
+            lines.append("    else => unreachable,")
+        lines.append("}")
+        return "\n".join(lines)
+
+    def _emit_option_match(
+        self, subject: str, subject_type: str, expr: MatchExpr
+    ) -> str:
+        some_arm = None
+        none_arm = None
+        for arm in expr.arms:
+            pattern = arm.pattern
+            text = pattern.path if isinstance(pattern, (PatEnum, PatPath)) else ""
+            if text.endswith("None"):
+                none_arm = arm
+            elif text.endswith(("Some", "Ok")):
+                some_arm = arm
+            elif isinstance(pattern, PatWildcard):
+                none_arm = none_arm or arm
+        if some_arm is None:
+            return "unreachable"
+        capture = "_"
+        pattern = some_arm.pattern
+        if isinstance(pattern, PatEnum) and pattern.args:
+            capture = self._emit_pattern(pattern.args[0], binding=True)
+        then_value = (
+            self._render_block_expr(some_arm.body)
+            if isinstance(some_arm.body, Block)
+            else self._emit_expr(some_arm.body)
+        )
+        else_value = (
+            self._render_block_expr(none_arm.body)
+            if none_arm is not None and isinstance(none_arm.body, Block)
+            else self._emit_expr(none_arm.body)
+            if none_arm is not None
+            else "unreachable"
+        )
+        if subject_type.startswith("?"):
+            return f"if ({subject}) |{capture}| {then_value} else {else_value}"
+        return f"if ({subject}) |{capture}| {then_value} else |_| {else_value}"
+
+    # ------------------------------------------------------------------
+    # C ABI shims
+    # ------------------------------------------------------------------
+
+    def _emit_cabi_shims(self) -> None:
+        for fname, params, ret, skip in self.exported_fns:
+            if skip:
+                continue
+            abi_params: list[tuple[str, str, str]] = []
+            supported = True
+            for name, ztype in params:
+                cabi = _cabi_type(ztype)
+                if cabi is None:
+                    supported = False
+                    break
+                abi_params.append((name, ztype, cabi))
+            abi_ret = _cabi_type(ret)
+            if not supported or abi_ret is None:
+                continue
+            for ztype in [ztype for _, ztype, _ in abi_params] + [ret]:
+                if _vector_shape(ztype) is not None:
+                    self._vector_abi_types.setdefault(ztype, _vector_struct_name(ztype))
+            c_params = ", ".join(f"{name}: {cabi}" for name, _, cabi in abi_params)
+            self.emit(f"export fn __cabi_{fname}({c_params}) callconv(.c) {abi_ret} {{")
+            self.indent += 1
+            args = [_cabi_arg(name, ztype) for name, ztype, _ in abi_params]
+            if ret == "void":
+                self.emit(f"{fname}({', '.join(args)});")
+            else:
+                self.emit(f"const res = {fname}({', '.join(args)});")
+                self.emit(_cabi_return(ret, abi_ret))
+            self.indent -= 1
+            self.emit("}\n")
 
 
 class ZigBackend(BackendBase):
     name = "zig"
 
     def __init__(
-        self, cache_dir: str | Path | None = None, *, trusted: bool = True
+        self,
+        cache_dir: str | Path | None = None,
+        *,
+        trusted: bool = True,
+        scope: str | None = None,
+        optimize: str = "ReleaseFast",
+        incremental: bool = False,
+        use_build_graph: bool = False,
     ) -> None:
         super().__init__(trusted=trusted)
         self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "polyglot-zig")
         self.cache_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.scope = scope or "default"
+        self.optimize = normalize_optimize(optimize)
+        self.incremental = incremental
+        self.use_build_graph = use_build_graph
+        self.last_build: Any = None
+        self.last_codegen: ZigCodegen | None = None
+
+    def _ensure_library(
+        self,
+        zig_src: str,
+        module_name: str,
+        *,
+        optimize: str | None = None,
+        incremental: bool | None = None,
+        scope: str | None = None,
+        use_build_graph: bool | None = None,
+        link_libs: list[str] | None = None,
+    ) -> Path:
+        """Build ``zig_src`` once and return the dynamic library path."""
+        mode = normalize_optimize(optimize or self.optimize)
+        want_incremental = self.incremental if incremental is None else incremental
+        graph = self.use_build_graph if use_build_graph is None else use_build_graph
+        build_scope = scope or self.scope
+        try:
+            if graph:
+                result = build_dynamic_library(
+                    zig_src,
+                    module_name,
+                    cache_root=self.cache_dir,
+                    scope=build_scope,
+                    optimize=mode,
+                    incremental=want_incremental,
+                    link_libs=tuple(link_libs or ()),
+                )
+            else:
+                result = build_dynamic_library_direct(
+                    zig_src,
+                    module_name,
+                    cache_root=self.cache_dir,
+                    scope=build_scope,
+                    optimize=mode,
+                )
+        except ZigBuildError as error:
+            raise ZigCompileError(str(error)) from error
+        self.last_build = result
+        return result.artifact
 
     def build(
-        self, program: Program, module_name: str = "polyglot_zig", **_: Any
+        self,
+        program: Program,
+        module_name: str = "polyglot_zig",
+        *,
+        incremental: bool = False,
+        cache_scope: str | None = None,
+        optimize: str | None = None,
+        use_build_graph: bool | None = None,
+        **_: Any,
     ) -> Path:
         self._check_trust()
-        cg = ZigCodegen(module_name=module_name)
-        zig_src = cg.generate(program)
-        build_dir = self.cache_dir / hashlib.sha256(zig_src.encode()).hexdigest()[:16]
-        build_dir.mkdir(parents=True, exist_ok=True)
-        dylib = build_dir / f"lib{module_name}.dylib"
-        if not dylib.exists():
-            src = build_dir / f"{module_name}.zig"
-            src.write_text(zig_src, encoding="utf-8")
-            res = subprocess.run(
-                [
-                    "zig",
-                    "build-lib",
-                    str(src),
-                    "-dynamic",
-                    "-O",
-                    "ReleaseFast",
-                    f"-femit-bin={dylib}",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if res.returncode != 0:
-                raise ZigCompileError(f"Zig compilation failed:\n{res.stderr}")
-        return dylib
+        codegen = ZigCodegen(module_name=module_name)
+        zig_src = codegen.generate(program)
+        self.last_codegen = codegen
+        return self._ensure_library(
+            zig_src,
+            module_name,
+            optimize=optimize,
+            incremental=incremental,
+            scope=cache_scope,
+            use_build_graph=use_build_graph,
+            link_libs=codegen._link_libs,
+        )
 
     def compile(
         self, program: Program, module_name: str = "polyglot_zig"
     ) -> dict[str, Any]:
         self._check_trust()
-        cg = ZigCodegen(module_name=module_name)
-        zig_src = cg.generate(program)
-        build_dir = self.cache_dir / hashlib.sha256(zig_src.encode()).hexdigest()[:16]
-        build_dir.mkdir(parents=True, exist_ok=True)
-        dylib = build_dir / f"lib{module_name}.dylib"
-        if not dylib.exists():
-            src = build_dir / f"{module_name}.zig"
-            src.write_text(zig_src, encoding="utf-8")
-            res = subprocess.run(
-                [
-                    "zig",
-                    "build-lib",
-                    str(src),
-                    "-dynamic",
-                    "-O",
-                    "ReleaseFast",
-                    f"-femit-bin={dylib}",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if res.returncode != 0:
-                raise ZigCompileError(f"Zig compilation failed:\n{res.stderr}")
+        codegen = ZigCodegen(module_name=module_name)
+        zig_src = codegen.generate(program)
+        self.last_codegen = codegen
+        dylib = self._ensure_library(
+            zig_src,
+            module_name,
+            link_libs=codegen._link_libs,
+        )
         lib = ctypes.CDLL(str(dylib))
-        ns: dict[str, Any] = {"_zig_lib": lib}
-        for fname, params, ret in cg.exported_fns:
-            fn = getattr(lib, f"__cabi_{fname}")
-            fn.argtypes = [_ctypes_for(t) for _, t in params]
+        namespace: dict[str, Any] = {"_zig_lib": lib}
+        for name, params, ret, skip in codegen.exported_fns:
+            if skip:
+                continue
+            if any(_cabi_type(ztype) is None for _, ztype in params):
+                continue
+            if _cabi_type(ret) is None:
+                continue
+            fn = getattr(lib, f"__cabi_{name}")
+            fn.argtypes = [_ctypes_for(ztype) for _, ztype in params]
             fn.restype = _ctypes_for(ret)
-            ns[fname] = fn
-        return ns
+            namespace[name] = fn
+        if self.last_build is not None:
+            namespace["__zig_build__"] = self.last_build.as_dict()
+        return namespace
+
+
+__all__ = [
+    "ZigBackend",
+    "ZigCodegen",
+    "ZigCompileError",
+    "zig_available",
+]

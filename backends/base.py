@@ -108,6 +108,14 @@ def get_backend(
         from backends.jit.backend import JITBackend
 
         return JITBackend(trusted=trusted)
+
+    if name == "auto":
+        if target_width is not None:
+            raise ValueError("target_width is supported only by the Python backend")
+        from backends.auto import AutoBackend
+
+        return AutoBackend(trusted=trusted)
+
     if name == "zig":
         if target_width is not None:
             raise ValueError("target_width is supported only by the Python backend")
