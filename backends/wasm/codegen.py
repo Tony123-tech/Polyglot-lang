@@ -38,6 +38,8 @@ from ast_nodes import (
     While,
 )
 from backends.base import BackendBase
+from backends.wasm.aggregates import lower_wasm_aggregates
+from backends.wasm.validation import wasm_preflight_validate
 
 I64 = "i64"
 BOOL = "i32"
@@ -121,6 +123,16 @@ class WasmCodegen:
     # ---- public ------------------------------------------------------------
 
     def generate(self, program: Program) -> str:
+        # Diagnostics are a frontend concern and must match the Python/native
+        # E-code + normalized message before any backend-specific lowering.
+        wasm_preflight_validate(program)
+
+        # Generic containers are instantiated once, then aggregate shapes are
+        # specialized into the scalar expressions the WAT emitter understands.
+        from monomorph import monomorphize
+
+        program = lower_wasm_aggregates(monomorphize(program))
+
         self._signatures = {}
         self.exported_fns = []
         self._collect_signatures(program)
