@@ -10,14 +10,18 @@ boundaries come verbatim from :mod:`runtime.hotpatch`.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import json
 import math
 import os
 import re
+import tempfile
 import threading
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from diagnostics.framework import (
@@ -27,6 +31,7 @@ from diagnostics.framework import (
     diag_redact_sensitive_paths,
 )
 from runtime.hotpatch import CAPABILITIES, platform_support
+from runtime.hotpatch.events import subscribe
 
 _SCHEMA = "polyglot-telemetry/v1"
 _EMPTY_NOTE = "no telemetry recorded in this session"
@@ -65,6 +70,24 @@ _RESIDUAL_PATH_PATTERNS = (
     re.compile(r"~[/\\][^\s\"']+"),
     re.compile(r"(?<![\w<])(?:/Users|/home)[/\\][^\s\"']+", re.IGNORECASE),
 )
+_BASELINE_DIRNAME = "polyglot-telemetry-baselines"
+_BASELINE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+# Names emitted by runtime/hotpatch/events.py.  Diagnostics describe the
+# observation only; they deliberately make no MAP_JIT/PEP 667/TOCTOU claim.
+_HOTPATCH_CAPABILITIES = {
+    "rollback": "hotpatch_rollback_journal_commit",
+    "epoch": "hotpatch_rcu_ast_epoch",
+    "migration": "hotpatch_rcu_ast_epoch",
+    "frame_patch": "hotpatch_cpython_frame_eval",
+    "frame_rollback": "hotpatch_cpython_frame_eval",
+}
+_HOTPATCH_DIAGNOSTICS = {
+    "rollback": "journal rollback observation",
+    "epoch": "AST epoch publication observation",
+    "migration": "RCU reclamation observation",
+    "frame_patch": "frame safe-point patch observation",
+    "frame_rollback": "frame patch rollback observation",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +207,59 @@ def _payload_of(raw: Mapping[str, Any]) -> Mapping[str, Any]:
     return payload if isinstance(payload, Mapping) else raw
 
 
+def _hotpatch_detail(payload: Mapping[str, Any]) -> str:
+    """Render a runtime event as a short, path-free detail string."""
+    redacted = _scrub_residual_paths(_jsonable(payload))
+    if not isinstance(redacted, Mapping):
+        return str(redacted)[:512]
+    parts: list[str] = []
+    for key, value in sorted(redacted.items(), key=lambda pair: str(pair[0])):
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            parts.append(f"{key}={value}")
+    return ", ".join(parts)[:512]
+
+
+def _hotpatch_bridge(event: str, payload: dict[str, Any]) -> None:
+    """Translate a runtime hotpatch event into an explicit observation."""
+    try:
+        name = str(event)
+        collector().record_hotpatch(
+            name,
+            capability=_HOTPATCH_CAPABILITIES.get(name),
+            epoch=_optional_int(payload.get("epoch")),
+            diagnostic=_HOTPATCH_DIAGNOSTICS.get(name),
+            detail=_hotpatch_detail(payload),
+        )
+    except Exception:  # noqa: S110 - telemetry must never break runtime
+        pass
+
+
+_hotpatch_unsubscribe: Callable[[], None] | None = None
+
+
+def _ensure_hotpatch_bridge() -> None:
+    """Subscribe the process-wide bridge exactly once."""
+    global _hotpatch_unsubscribe
+    if _hotpatch_unsubscribe is not None:
+        return
+    try:
+        _hotpatch_unsubscribe = subscribe(_hotpatch_bridge)
+    except Exception:  # pragma: no cover - runtime bus is optional
+        _hotpatch_unsubscribe = None
+
+
+def _resubscribe_hotpatch_bridge() -> None:
+    """Drop and restore the bridge so a reset cannot leave duplicates."""
+    global _hotpatch_unsubscribe
+    unsubscribe, _hotpatch_unsubscribe = _hotpatch_unsubscribe, None
+    if unsubscribe is not None:
+        try:
+            unsubscribe()
+        except Exception:  # noqa: S110 - defensive
+            pass
+    _ensure_hotpatch_bridge()
+
+
 def _merged_bucket() -> dict[str, Any]:
     return {"hits": 0, "misses": 0, "rebuild_reasons": {}}
 
@@ -258,6 +334,9 @@ class TelemetryCollector:
         self._lock = threading.RLock()
         self._events: deque[TelemetryEvent] = deque(maxlen=limit)
         self._sequence = 0
+        # Runtime events are captured automatically through the dependency-free
+        # bus; subscribing here (idempotently) also covers early collector use.
+        _ensure_hotpatch_bridge()
 
     @property
     def capacity(self) -> int:
@@ -281,6 +360,7 @@ class TelemetryCollector:
         samples: Mapping[str, float | Mapping[str, Any]],
         source_length: int | None = None,
         monomorph: Mapping[str, Any] | None = None,
+        fragments: int | None = None,
     ) -> None:
         """Store raw compile samples; phase formatting happens in ``snapshot``."""
         self._record(
@@ -290,6 +370,7 @@ class TelemetryCollector:
                 "samples": samples,
                 "source_length": source_length,
                 "monomorph": monomorph,
+                "fragments": fragments,
             },
         )
 
@@ -302,6 +383,7 @@ class TelemetryCollector:
         misses: int | None = None,
         rebuild_reasons: Mapping[str, int] | Sequence[str] | None = None,
         scope: str | None = None,
+        pruned_entries: int | None = None,
     ) -> None:
         """Store one raw cache observation (or set of observations)."""
         self._record(
@@ -314,6 +396,7 @@ class TelemetryCollector:
                 "misses": misses,
                 "rebuild_reasons": rebuild_reasons,
                 "scope": scope,
+                "pruned_entries": pruned_entries,
             },
         )
 
@@ -416,6 +499,11 @@ class TelemetryCollector:
         with self._lock:
             self._events.clear()
             self._sequence = 0
+        # Only the process-wide collector owns the bridge.  Re-subscribing (after
+        # a safe unsubscribe) keeps capture alive across resets and repairs a
+        # bus that another caller cleared with ``reset_subscribers()``.
+        if self is _collector:
+            _resubscribe_hotpatch_bridge()
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +528,7 @@ def _split_compile_samples(
 def _build_timings(events: Sequence[TelemetryEvent]) -> dict[str, Any]:
     merged_seconds: dict[str, float] = {}
     samples = 0
+    fragments = 0
     benchmark_payload: Mapping[str, Any] | None = None
     for event in events:
         payload = _payload_of(event.to_dict())
@@ -447,6 +536,7 @@ def _build_timings(events: Sequence[TelemetryEvent]) -> dict[str, Any]:
             benchmark_payload = payload
             continue
         samples += 1
+        fragments += _count(payload.get("fragments"))
         raw_samples = payload.get("samples")
         timing_samples, benchmarks = _split_compile_samples(
             raw_samples if isinstance(raw_samples, Mapping) else {}
@@ -474,6 +564,7 @@ def _build_timings(events: Sequence[TelemetryEvent]) -> dict[str, Any]:
             "total_ms": report["total_ms"],
             "critical_phase": report["critical_phase"],
             "samples": samples,
+            "codegen_fragments": fragments,
         }
     else:
         timings = {
@@ -482,6 +573,7 @@ def _build_timings(events: Sequence[TelemetryEvent]) -> dict[str, Any]:
             "total_ms": None,
             "critical_phase": None,
             "samples": samples,
+            "codegen_fragments": fragments,
         }
 
     if benchmark_payload is not None:
@@ -502,9 +594,11 @@ def _build_cache(events: Sequence[TelemetryEvent]) -> dict[str, Any]:
     backends: dict[str, dict[str, Any]] = {}
     scopes: dict[str, dict[str, Any]] = {}
     reasons: dict[str, int] = {}
+    pruned_entries = 0
     for event in events:
         raw = event.to_dict()
         payload = _payload_of(raw)
+        pruned_entries += _count(payload.get("pruned_entries"))
         report = diag_record_cache_hit_metrics(
             samples=payload.get("samples"),
             backend=str(payload.get("backend") or "python"),
@@ -549,6 +643,7 @@ def _build_cache(events: Sequence[TelemetryEvent]) -> dict[str, Any]:
         "total_hits": total_hits,
         "total_misses": total_misses,
         "hit_rate": round(total_hits / total, 4) if total else 0.0,
+        "pruned_entries": pruned_entries,
         "rebuild_reasons": {str(reason): reasons[reason] for reason in sorted(reasons)},
         "scopes": scope_view,
     }
@@ -805,6 +900,188 @@ def snapshot(*, redact: bool = True) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Baseline persistence and comparison
+#
+# Baselines live outside the workspace so they survive source-tree checkouts.
+# Only redacted, path-free snapshots are written, and every write is atomic.
+# ---------------------------------------------------------------------------
+
+
+def _baseline_dir() -> Path:
+    return Path(tempfile.gettempdir()) / _BASELINE_DIRNAME
+
+
+def _baseline_path(name: str) -> Path:
+    if not isinstance(name, str) or not _BASELINE_NAME_PATTERN.fullmatch(name):
+        raise ValueError(
+            "baseline name must be 1-64 characters of letters, digits, '_', "
+            "'.' or '-', starting with a letter or digit"
+        )
+    return _baseline_dir() / f"{name}.json"
+
+
+def save_baseline(name: str) -> dict[str, Any]:
+    """Persist a redacted snapshot under ``name`` and return the saved payload."""
+    path = _baseline_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {
+        "schema": _SCHEMA,
+        "name": name,
+        "snapshot": snapshot(),
+    }
+    safe = dict(_scrub_residual_paths(diag_redact_sensitive_paths(_jsonable(payload))))
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=f".{name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        delete=False,
+    ) as handle:
+        temporary = Path(handle.name)
+        try:
+            json.dump(safe, handle, sort_keys=True, indent=2, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        except BaseException:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+            raise
+    try:
+        os.replace(temporary, path)
+    finally:
+        with contextlib.suppress(OSError):
+            temporary.unlink()
+    return safe
+
+
+def load_baseline(name: str) -> dict[str, Any] | None:
+    """Return a validated, redacted baseline payload or ``None`` if unavailable."""
+    path = _baseline_path(name)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, UnicodeDecodeError, json.JSONDecodeError:
+        return None
+    if (
+        not isinstance(raw, dict)
+        or raw.get("schema") != _SCHEMA
+        or not isinstance(raw.get("snapshot"), Mapping)
+    ):
+        return None
+    safe = diag_redact_sensitive_paths(raw)
+    return dict(_scrub_residual_paths(safe))
+
+
+def list_baselines() -> list[str]:
+    """Return the sorted names of all readable baselines."""
+    try:
+        entries = tuple(_baseline_dir().glob("*.json"))
+    except OSError:  # pragma: no cover - unreadable temp directory
+        return []
+    return sorted(
+        {
+            entry.stem
+            for entry in entries
+            if _BASELINE_NAME_PATTERN.fullmatch(entry.stem)
+        }
+    )
+
+
+def _nested_value(source: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    value: Any = source
+    for key in keys:
+        if not isinstance(value, Mapping) or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def _numeric_delta(baseline: Any, current: Any) -> dict[str, Any]:
+    before = _optional_float(baseline)
+    after = _optional_float(current)
+    if before is None or after is None:
+        return {"baseline": before, "current": after, "delta": None}
+    return {
+        "baseline": round(before, 4),
+        "current": round(after, 4),
+        "delta": round(after - before, 4),
+    }
+
+
+def _format_number(value: Any) -> str:
+    number = _optional_float(value)
+    if number is None:
+        return "-"
+    if number == int(number):
+        return str(int(number))
+    return f"{number:.4f}".rstrip("0")
+
+
+def compare_with(name: str) -> dict[str, Any]:
+    """Compare the current snapshot with a saved baseline (JSON-safe output)."""
+    baseline = load_baseline(name)
+    current = snapshot()
+    if baseline is None:
+        return {
+            "schema": _SCHEMA,
+            "baseline": name,
+            "found": False,
+            "deltas": {},
+            "differences": [f"baseline '{name}' not found; save it with --save-as"],
+        }
+
+    before = baseline["snapshot"]
+    fields: dict[str, Sequence[str]] = {
+        "timings.total_ms": ("timings", "total_ms"),
+        "timings.codegen_fragments": ("timings", "codegen_fragments"),
+        "cache.hit_rate": ("cache", "hit_rate"),
+        "cache.hits": ("cache", "total_hits"),
+        "cache.misses": ("cache", "total_misses"),
+        "cache.pruned_entries": ("cache", "pruned_entries"),
+        "monomorph.total_specializations": ("monomorph", "total_specializations"),
+        "hotpatch.epoch": ("hotpatch", "epoch"),
+        "hotpatch.rollbacks": ("hotpatch", "rollbacks"),
+    }
+    deltas: dict[str, dict[str, Any]] = {}
+    for label, keys in fields.items():
+        deltas[label] = _numeric_delta(
+            _nested_value(before, keys), _nested_value(current, keys)
+        )
+    old_phases = _nested_value(before, ("timings", "phase_ms"))
+    new_phases = _nested_value(current, ("timings", "phase_ms"))
+    if isinstance(old_phases, Mapping) or isinstance(new_phases, Mapping):
+        old_phases = old_phases if isinstance(old_phases, Mapping) else {}
+        new_phases = new_phases if isinstance(new_phases, Mapping) else {}
+        for phase in sorted(
+            {str(key) for key in old_phases} | {str(key) for key in new_phases}
+        ):
+            deltas[f"timings.phases.{phase}"] = _numeric_delta(
+                old_phases.get(phase), new_phases.get(phase)
+            )
+
+    differences: list[str] = []
+    for label, delta in sorted(deltas.items()):
+        change = delta["delta"]
+        if change is None or not change:
+            continue
+        direction = "+" if change > 0 else ""
+        differences.append(
+            f"{label}: {_format_number(delta['baseline'])} -> "
+            f"{_format_number(delta['current'])} ({direction}{_format_number(change)})"
+        )
+    if not differences:
+        differences.append(f"no metric differences from baseline '{name}'")
+    return {
+        "schema": _SCHEMA,
+        "baseline": name,
+        "found": True,
+        "deltas": deltas,
+        "differences": differences,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Terminal formatting
 # ---------------------------------------------------------------------------
 
@@ -868,6 +1145,9 @@ def _format_telemetry_section(payload: Mapping[str, Any], color: bool) -> list[s
     lines.append(_row("total", "-" if total is None else f"{total:.3f}", color))
     lines.append(_row("critical phase", timings.get("critical_phase"), color))
     lines.append(_row("samples", _count(timings.get("samples")), color))
+    lines.append(
+        _row("codegen fragments", _count(timings.get("codegen_fragments")), color)
+    )
     benchmarks = timings.get("benchmarks")
     if isinstance(benchmarks, Mapping) and "error" not in benchmarks:
         workloads = benchmarks.get("workloads") or {}
@@ -931,6 +1211,7 @@ def _format_cache_section(payload: Mapping[str, Any], color: bool) -> list[str]:
             color,
         )
     )
+    lines.append(_row("pruned entries", _count(cache.get("pruned_entries")), color))
 
     lines.append("")
     lines.append(_heading("Hits/misses by scope", color))
@@ -1017,6 +1298,18 @@ def _format_hotpatch_section(payload: Mapping[str, Any], color: bool) -> list[st
     return lines
 
 
+def format_comparison(payload: Mapping[str, Any], *, color: bool = False) -> str:
+    """Render a ``compare_with`` payload as aligned terminal text."""
+    name = str(payload.get("baseline", "-"))
+    lines = [_heading(f"Comparison vs baseline '{name}'", color)]
+    differences = payload.get("differences")
+    if isinstance(differences, Sequence) and not isinstance(differences, str):
+        lines.extend(f"  {item!s}" for item in differences)
+    if not payload.get("found"):
+        lines.append(_warn("  baseline was not found", color))
+    return "\n".join(lines)
+
+
 def format_terminal(
     payload: dict[str, Any], *, section: str = "all", color: bool = False
 ) -> str:
@@ -1045,7 +1338,12 @@ __all__ = [
     "TelemetryCollector",
     "TelemetryEvent",
     "collector",
+    "compare_with",
+    "format_comparison",
     "format_terminal",
     "hotpatch_status",
+    "list_baselines",
+    "load_baseline",
+    "save_baseline",
     "snapshot",
 ]

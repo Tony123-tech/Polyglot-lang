@@ -492,6 +492,21 @@
   .telemetry-key { color: var(--dim); }
   .telemetry-value { color: #cbd5e1; font-weight: 600; text-align: right; word-break: break-word; }
   .telemetry-note { margin-top: 8px; color: var(--amber); font: 10.5px var(--mono); }
+  .telemetry-compare-control { display: flex; align-items: center; gap: 6px; }
+  .telemetry-compare-select {
+    max-width: 190px; padding: 4px 6px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: #0b1220; color: #cbd5e1; font: 11px var(--mono);
+  }
+  .telemetry-compare {
+    margin: 0 14px 14px; padding: 8px 10px;
+    max-height: 170px; overflow: auto;
+    border: 1px solid var(--border); border-radius: 9px;
+    background: rgba(2, 6, 23, .4);
+    color: #cbd5e1; font: 11px var(--mono); white-space: pre-wrap; word-break: break-word;
+  }
+  .telemetry-compare-title { color: #a5f3fc; margin-bottom: 5px; }
+  .telemetry-compare-row { padding: 2px 0; }
   @media (prefers-reduced-motion: reduce) {
     .telemetry-panel *, .telemetry-panel *::before, .telemetry-panel *::after {
       animation: none !important;
@@ -694,6 +709,12 @@
     <summary>Telemetry</summary>
     <div class="telemetry-head">
       <span class="telemetry-status" id="telemetry-status" aria-live="polite">not loaded</span>
+      <div class="telemetry-compare-control">
+        <select class="telemetry-compare-select" id="telemetry-compare-select" aria-label="Telemetry baseline">
+          <option value="">No baselines saved</option>
+        </select>
+        <button class="btn ghost telemetry-refresh" id="telemetry-compare-btn" type="button">Compare</button>
+      </div>
       <button class="btn ghost telemetry-refresh" id="telemetry-refresh" type="button">Refresh</button>
     </div>
     <div class="telemetry-grid">
@@ -715,6 +736,9 @@
           <div class="empty">No telemetry recorded yet in this session.</div>
         </div>
       </section>
+    </div>
+    <div class="telemetry-compare" id="telemetry-compare">
+      <div class="empty">No telemetry baselines saved yet.</div>
     </div>
   </details>
 </main>
@@ -785,6 +809,9 @@ const els = {
   telemetryHotpatch: document.getElementById("telemetry-hotpatch"),
   telemetryRefresh: document.getElementById("telemetry-refresh"),
   telemetryStatus: document.getElementById("telemetry-status"),
+  telemetryCompareSelect: document.getElementById("telemetry-compare-select"),
+  telemetryCompareBtn: document.getElementById("telemetry-compare-btn"),
+  telemetryCompare: document.getElementById("telemetry-compare"),
   panels: {
     python: document.getElementById("panel-python"),
     native: document.getElementById("panel-native"),
@@ -1800,6 +1827,10 @@ function renderTelemetryTimings(element, timings, monomorph) {
   body.append(totalRow);
   table.append(head, body);
   element.append(table);
+  const fragments = telemetryCount(source, ["codegen_fragments", "fragments"]);
+  if (fragments !== null) {
+    element.append(make("div", "telemetry-note", "codegen fragments: " + fragments));
+  }
   if (specializations !== null) {
     const note = "specializations: " + specializations +
       (familyCount !== null ? " · families: " + familyCount : "");
@@ -1823,6 +1854,8 @@ function renderTelemetryCache(element, cache) {
   const rate = telemetryCount(source, ["hit_rate", "hitRate"]);
   if (hits !== null) rows.push(["Hits", String(hits)]);
   if (misses !== null) rows.push(["Misses", String(misses)]);
+  const pruned = telemetryCount(source, ["pruned_entries", "pruned"]);
+  if (pruned !== null) rows.push(["Pruned entries", String(pruned)]);
   if (rate !== null) {
     rows.push(["Hit rate", (rate <= 1 ? rate * 100 : rate).toFixed(1) + "%"]);
   } else if (hits !== null && misses !== null && hits + misses > 0) {
@@ -1942,6 +1975,102 @@ async function loadTelemetry() {
   }
 }
 
+function telemetryCompareEmpty(message) {
+  els.telemetryCompare.replaceChildren(make("div", "empty", message));
+}
+
+function renderTelemetryComparison(comparison) {
+  if (!comparison || typeof comparison !== "object") {
+    telemetryCompareEmpty("Comparison unavailable.");
+    return;
+  }
+  const element = els.telemetryCompare;
+  element.replaceChildren();
+  element.append(make(
+    "div",
+    "telemetry-compare-title",
+    "Comparison vs baseline '" + String(comparison.baseline || "-") + "'"
+  ));
+  const differences = Array.isArray(comparison.differences)
+    ? comparison.differences
+    : [];
+  if (!differences.length) {
+    telemetryCompareEmpty("No comparison available.");
+    return;
+  }
+  for (const line of differences) {
+    element.append(make("div", "telemetry-compare-row", String(line)));
+  }
+}
+
+async function loadTelemetryBaselines() {
+  const select = els.telemetryCompareSelect;
+  try {
+    const response = await fetch("/api/telemetry/baselines", { cache: "no-store" });
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    if (!response.ok || !data || !Array.isArray(data.baselines)) {
+      throw new Error("baselines unavailable");
+    }
+    const previous = select.value;
+    select.replaceChildren();
+    if (!data.baselines.length) {
+      select.append(make("option", "", "No baselines saved"));
+      select.value = "";
+      select.disabled = true;
+      els.telemetryCompareBtn.disabled = true;
+      telemetryCompareEmpty("No telemetry baselines saved yet.");
+      return;
+    }
+    select.disabled = false;
+    els.telemetryCompareBtn.disabled = false;
+    for (const name of data.baselines) {
+      const option = make("option", "", String(name));
+      option.value = String(name);
+      select.append(option);
+    }
+    if (data.baselines.includes(previous)) select.value = previous;
+  } catch {
+    select.replaceChildren(make("option", "", "Baselines unavailable"));
+    select.disabled = true;
+    els.telemetryCompareBtn.disabled = true;
+    telemetryCompareEmpty("Baseline list unavailable.");
+  }
+}
+
+async function compareTelemetry() {
+  const name = els.telemetryCompareSelect.value;
+  if (!name) {
+    telemetryCompareEmpty("No telemetry baselines saved yet.");
+    return;
+  }
+  els.telemetryCompareBtn.disabled = true;
+  try {
+    const response = await fetch(
+      "/api/telemetry?compare=" + encodeURIComponent(name),
+      { cache: "no-store" }
+    );
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    if (!response.ok || !data || typeof data !== "object") {
+      throw new Error("comparison unavailable");
+    }
+    renderTelemetryComparison(data.comparison);
+  } catch {
+    telemetryCompareEmpty("Comparison unavailable.");
+  } finally {
+    els.telemetryCompareBtn.disabled = false;
+  }
+}
+
 function onSourceChanged() {
   updateCursor();
   state.focusSpan = null;
@@ -1983,6 +2112,7 @@ function bindEvents() {
   els.analyzeBtn.addEventListener("click", runAnalyze);
   els.runBtn.addEventListener("click", runBoth);
   els.telemetryRefresh.addEventListener("click", loadTelemetry);
+  els.telemetryCompareBtn.addEventListener("click", compareTelemetry);
   window.addEventListener("resize", () => {
     els.highlight.scrollTop = els.source.scrollTop;
     els.highlight.scrollLeft = els.source.scrollLeft;
@@ -1996,6 +2126,7 @@ function init() {
   bindEvents();
   loadHealth();
   loadTelemetry();
+  loadTelemetryBaselines();
   runAnalyze();
 }
 

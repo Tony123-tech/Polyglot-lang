@@ -7,7 +7,9 @@ The server is intentionally small and local-only:
 * ``POST /api/run`` shells out to ``python -m api.cli exec`` so user programs
   never execute inside the HTTP server.
 * ``GET /api/health`` reports toolchain availability for the UI.
-* ``GET /api/telemetry`` exposes a redacted, session-local telemetry snapshot.
+* ``GET /api/telemetry`` exposes a redacted, session-local telemetry snapshot
+  (optionally with ``?compare=<baseline>`` deltas).
+* ``GET /api/telemetry/baselines`` lists saved comparison baselines.
 
 Only the standard library is used, and the default bind address is
 ``127.0.0.1``. Code executed through ``/api/run`` is trusted local code: the
@@ -28,14 +30,15 @@ import tempfile
 import threading
 import time
 import webbrowser
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from api.telemetry import collector, snapshot
+from api.telemetry import collector, compare_with, list_baselines, snapshot
 from api.visualizer import analyze
 from lexer import lex
 
@@ -354,6 +357,29 @@ def _finite_ms(value: Any) -> float | None:
     return float(value)
 
 
+def _finite_count(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not 0 <= value < 1e9:
+        return None
+    return int(value)
+
+
+def _fragment_count(result: Mapping[str, Any]) -> int | None:
+    """Read a real fragment count when the backend result exposes one.
+
+    Backend results currently do not include codegen fragment counts.  Rather
+    than fabricate a number, we leave the collector's ``0`` default in place
+    when the field is absent; forwarding it here keeps the metric real once a
+    backend starts reporting it.
+    """
+    for key in ("codegen_fragments", "fragments"):
+        count = _finite_count(result.get(key))
+        if count is not None:
+            return count
+    return None
+
+
 def _monomorph_telemetry_summary(result: dict[str, Any]) -> dict[str, Any]:
     concrete = result.get("monomorphized")
     concrete = concrete if isinstance(concrete, dict) else {}
@@ -397,6 +423,7 @@ def _record_analyze_telemetry(source: str, result: dict[str, Any]) -> None:
         samples=samples,
         source_length=len(source),
         monomorph=summary,
+        fragments=_fragment_count(result),
     )
 
 
@@ -476,8 +503,13 @@ def _record_run_telemetry(source: str, results: list[dict[str, Any]]) -> None:
                 if duration is not None:
                     samples[key] = {"ms": duration}
             if samples:
+                # No backend currently reports fragments; leave 0 unless one
+                # starts returning a real count (see ``_fragment_count``).
                 collector().record_compile(
-                    backend=backend, samples=samples, source_length=len(source)
+                    backend=backend,
+                    samples=samples,
+                    source_length=len(source),
+                    fragments=_fragment_count(result),
                 )
             hits, misses, reasons, scope = _cache_telemetry(result)
             collector().record_cache(
@@ -549,14 +581,29 @@ class VisualizerHandler(BaseHTTPRequestHandler):
 
     # -- routing ------------------------------------------------------------
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path in ("/", "/index.html", "/visualizer.html"):
             self._serve_index()
             return
         if path == "/api/health":
             self._send_json(HTTPStatus.OK, health_payload())
             return
+        if path == "/api/telemetry/baselines":
+            self._send_json(HTTPStatus.OK, {"ok": True, "baselines": list_baselines()})
+            return
         if path == "/api/telemetry":
+            names = parse_qs(parsed.query, keep_blank_values=True).get("compare") or []
+            if names:
+                try:
+                    comparison = compare_with(names[-1])
+                except ValueError as error:
+                    self._send_error_json(HTTPStatus.BAD_REQUEST, str(error))
+                    return
+                payload = dict(snapshot())
+                payload["comparison"] = comparison
+                self._send_json(HTTPStatus.OK, payload)
+                return
             self._send_json(HTTPStatus.OK, snapshot())
             return
         if path == "/favicon.ico":

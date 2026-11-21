@@ -281,6 +281,65 @@ an integration surprise. Platform-sensitive functions (GIL, MAP_JIT, PEP 667,
 raw-address TOCTOU) return structured models and report their boundaries
 instead of claiming privileged behaviour.
 
+## Hard frames and three-way parity — specialization without silent drift
+
+**Symptom:** WASM supported only scalar `i64`/`bool` programs, so nine of the
+twelve deterministic parity cases were honest skips. Diagnostic wording also
+risked drifting between backends, and scalar locals were briefly substituted
+with their initializer constants during aggregate lowering, which broke loops.
+
+**Cause:** The WAT emitter is a scalar stack machine, while the parity corpus
+uses structs, recursive enums, nested vectors, bounded generics and shared
+diagnostics. Lowering aggregates at runtime would have required a second linear
+memory compiler; lowering every scalar binding as a constant would have erased
+mutation. Diagnostics needed to reuse the existing typed error classes rather
+than be reworded in the WASM backend.
+
+**Fix:** `wasm_preflight_validate` runs the shared typed checks before lowering;
+`lower_wasm_aggregates` monomorphizes generics and specializes only compile-time
+aggregate shapes, keeping scalar bindings as real WASM locals. Genuine dynamic
+aggregate ABIs raise structured `E003` and become explicit boundary skips. The
+parity harness now runs all 12 cases on all three backends for seeds `1`, `42`,
+`9999`, and `2026` with zero skips; a synthetic unsupported case still verifies
+the skip path. The `hard-frames-parity` gate stage wires the frame suites and
+per-seed checks with an injectable runner, so unit tests never compile native
+code.
+
+**Lesson:** Deterministic parity is strongest when boundary narrowing is
+explicit and shared diagnostics are reused. Compile-time specialization can
+widen a backend's surface without duplicating its runtime, but scalar mutation
+must stay in the emitted program.
+
+## Expansion batch — close the loop, then widen it
+
+**Symptom:** The first verification layer proved the tools worked but left
+honest gaps: one diagnostic template was skipped natively, mismatch artifacts
+were full generated programs rather than minimal reproducers, hot-patch
+telemetry depended on callers remembering to emit events, the gate did not cover
+formatting/docs/metadata/links/benchmarks, and distribution and third-party
+surfaces were only described in conversation.
+
+**Cause:** Each gap sat at a different seam. Native E003 needed a diagnostic
+both backends already share, so the unknown-macro template was replaced with a
+host-call arity error. Shrinking needed a bounded compare function under the
+existing artifact writer. Hot-patch events needed a dependency-free bus in
+`runtime/hotpatch` so `api.telemetry` could subscribe without an import cycle.
+Gate breadth needed the same injected-runner pattern as the original stages.
+CI and native packaging needed configuration that stays honest about what is
+executed locally versus on GitHub Actions.
+
+**Fix:** Expanded the fuzzer corpus and added bounded shrinking; subscribed
+telemetry to real RCU/journal/frame events; added baseline save/compare and two
+new counters; appended five gate stages and optional parallel seeds; added
+release-gate and maturin wheel workflows with SBOM and release-only signing;
+and documented the third-party audit scope. All new state stays in temp/cache
+roots or the gitignored `.artifacts/` directory.
+
+**Lesson:** A verification system matures when it stops relying on manual
+discipline: events are captured at the source, reproducers are minimized, gates
+cover the whole release surface, and external scope decisions are written down
+rather than implied.
+
 ## Verification, telemetry, and release readiness — isolated by construction
 
 **Symptom:** Comparing the two backends by hand only found mismatches that a
@@ -1707,3 +1766,17 @@ M5 is complete. Commit 1 also removed the thread-affinity limitation; commit 3 a
 **Packaging and tests:** `stdlib` is included in `[tool.setuptools.packages.find]`, and `stdlib/*.poly` is declared as package data. `tests/test_std_include.py` covers resolution, traversal, cycles, and deduplication. `tests/test_stdlib.py` compiles every module on the Python and native backends, checks the math invariants (`A.matmul(&A.inv()?) ≈ I` within `1e-9` and exact `solve` roots), verifies the reference RNG sequence, and covers `E006` and wheel metadata.
 
 **Lesson:** A textual include mechanism needs an explicit namespace and an explicit dedup policy once it starts shipping shared definitions. Keeping dedup limited to `std:` preserves the documented behaviour of ordinary includes while making a prelude safe to include anywhere.
+
+## Frames H–K: sound bounded approximations, never universal proofs
+
+**Symptom:** Termination, aliasing, schema migration, and refinement are undecidable or environment-dependent in general. A naive "verifier" either overclaims or silently drops the hard cases, which is worse than refusing them.
+
+**Cause:** The interesting facts are not in the program alone. A structural variant must be declared and checked at each recursive call; a points-to set is only sound as a declared over-approximation; a total field map and a rollback plan are properties of the caller's schema pair; a mutation score measures test sensitivity, not correctness.
+
+**Fix:** Each frame exposes an explicit finite model and reports its boundary instead of hiding it. Frame H uses a bounded symbolic IR with an interval solver: exhaustive step/unroll/path/timeout limits produce `E008`/`E004`, `Unknown` feasibility is never reported as proved, and infeasible-path witnesses preserve symbolic atoms so the conflict is genuinely minimized. Frame I accepts caller-declared variants, infers only counted/monotone loop bounds, and labels everything else `UnboundedOrUnknown`; fuel is charged through the sandbox's replayable meter. Frame J computes points-to sets with range-overlap and TOCTOU windows, rejects lossy or ambiguous migrations with `E008`, and writes capsules only under a caller-supplied temp root; `MAP_JIT`, raw FFI, and PEP 667 frames are recorded as hazards or explicit boundaries. Frame K generates deterministic parsed cases, isolates mutations in symlink workspaces, and records exact commands and outputs while stating that passing is bounded.
+
+Several defects were caught by the focused suites during construction: the parser wraps `return`, loops, and assignments in `ExprStmt`, so Frame H had to lower those wrappers; negating a guard needs the complement operator, not the swapped-operand form; nested branch/loop states had to propagate through a mutable child list or dead guards disappeared; rendered strings could not be re-minimized, so symbolic atoms are retained off the wire; `digest()` recursed through `as_dict()` in Frames I/J until it hashed a payload without the digest; and hazard detection needs two aliasing pointers to be meaningful.
+
+**Gate wiring:** The `research-frames` stage runs the four focused suites and an injectable in-process spec oracle between `hard-frames-parity` and `diff-fuzz`. The default oracle evaluates real frame functions without spawning native, JIT, or WASM code, and all caches stay under caller-supplied roots so `git status --short` remains clean.
+
+**Lesson:** A verifier earns trust by naming exactly what it did not prove. Bounded results with explicit `Unknown`, bound, and timeout diagnostics compose into a release gate; unconditional claims about undecidable properties do not.

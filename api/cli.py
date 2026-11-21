@@ -392,13 +392,36 @@ def cmd_compile(args: argparse.Namespace) -> int:
 
 def cmd_telemetry(args: argparse.Namespace) -> int:
     """Print the session telemetry snapshot as JSON or aligned text."""
-    from api.telemetry import format_terminal, snapshot
+    from api.telemetry import (
+        compare_with,
+        format_comparison,
+        format_terminal,
+        save_baseline,
+        snapshot,
+    )
 
     payload = snapshot()
+    saved_as = getattr(args, "save_as", None)
+    compare_name = getattr(args, "compare", None)
+    if saved_as:
+        save_baseline(saved_as)
+    comparison = compare_with(compare_name) if compare_name else None
+
     if args.json:
-        print(json.dumps(payload, sort_keys=True))
+        output = dict(payload)
+        if saved_as:
+            output["baseline_saved_as"] = saved_as
+        if comparison is not None:
+            output["comparison"] = comparison
+        print(json.dumps(output, sort_keys=True))
     else:
         print(format_terminal(payload, section=args.section, color=args.color))
+        if comparison is not None:
+            print()
+            print(format_comparison(comparison, color=args.color))
+        elif saved_as:
+            print()
+            print(f"Saved telemetry baseline '{saved_as}'.")
     return 0
 
 
@@ -661,6 +684,20 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command_parser.add_argument(
             "--color", action="store_true", help="Use ANSI colors in text output"
+        )
+        command_parser.add_argument(
+            "--save-as",
+            dest="save_as",
+            metavar="NAME",
+            default=None,
+            help="Save the current snapshot as a named baseline",
+        )
+        command_parser.add_argument(
+            "--compare",
+            dest="compare",
+            metavar="NAME",
+            default=None,
+            help="Compare the current snapshot with a saved baseline",
         )
         command_parser.set_defaults(func=cmd_telemetry, section=section)
 

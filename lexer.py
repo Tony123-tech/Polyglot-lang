@@ -45,6 +45,7 @@ class TokenType(Enum):
     # keywords
     IF = auto()
     ERRDEFER = auto()
+    DEFER = auto()
     ELSE = auto()
     WHILE = auto()
     FOR = auto()
@@ -209,6 +210,7 @@ KEYWORDS: dict[str, TokenType] = {
     "await": TokenType.AWAIT,
     "dyn": TokenType.DYN,
     "errdefer": TokenType.ERRDEFER,
+    "defer": TokenType.DEFER,
 }
 
 

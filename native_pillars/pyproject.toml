@@ -1,0 +1,23 @@
+# Maturin-only build configuration for the opt-in polyglot_pillars crate.
+# This is intentionally separate from the root setuptools build of
+# polyglot-lang; the root wheel stays pure Python.
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "polyglot-pillars"
+version = "0.1.0"
+description = "PyO3 extension backend for the polyglot-lang compiler"
+license = "MIT"
+requires-python = ">=3.14"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "polyglot_pillars"
+bindings = "pyo3"
+strip = true
+
+# Linux `manylinux` compatibility is passed as `maturin build --compatibility
+# linux` in .github/workflows/native-wheels.yml. It is deliberately not set
+# here: the flag is Linux-only and would break macOS/Windows builds.

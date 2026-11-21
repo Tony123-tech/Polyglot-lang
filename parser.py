@@ -52,6 +52,7 @@ from ast_nodes import (
     CompoundAssign,
     ConstDecl,
     Continue,
+    DeferStmt,
     EnumDecl,
     EnumVariant,
     ErrDeferStmt,
@@ -983,6 +984,10 @@ class Parser:
                 stmts.append(self.parse_errdefer())
                 continue
 
+            if self.check(TokenType.DEFER):
+                stmts.append(self.parse_defer())
+                continue
+
             e = self.parse_expr()
             if (
                 self.eat(TokenType.SEMI)
@@ -1031,6 +1036,15 @@ class Parser:
             body = self.parse_expr()
             self.expect(TokenType.SEMI)
         return ErrDeferStmt(tok.line, tok.col, body)
+
+    def parse_defer(self) -> DeferStmt:
+        tok = self.expect(TokenType.DEFER)
+        if self.check(TokenType.LBRACE):
+            body: Block | Expr = self.parse_block()
+        else:
+            body = self.parse_expr()
+            self.expect(TokenType.SEMI)
+        return DeferStmt(tok.line, tok.col, body)
 
     def parse_let(self) -> LetStmt:
         tok = self.expect(TokenType.LET)

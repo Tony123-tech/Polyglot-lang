@@ -26,6 +26,7 @@ __all__ = [
     "CompoundAssign",
     "ConstDecl",
     "Continue",
+    "DeferStmt",
     "EnumDecl",
     "EnumVariant",
     "ErrDeferStmt",
@@ -716,7 +717,14 @@ class ErrDeferStmt(Node):
     body: Block | Expr
 
 
-Stmt = LetStmt | ExprStmt | ItemStmt | ErrDeferStmt
+@dataclass
+class DeferStmt(Node):
+    """Zig-style defer: runs cleanup when the enclosing scope exits."""
+
+    body: Block | Expr
+
+
+Stmt = LetStmt | ExprStmt | ItemStmt | ErrDeferStmt | DeferStmt
 
 
 # ---------------------------------------------------------------------------

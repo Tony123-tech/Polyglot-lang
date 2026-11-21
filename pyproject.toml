@@ -63,6 +63,7 @@ include = [
     "security*",
     "stdlib*",
     "swarm*",
+    "tools.adversarial*",
     "tools.build_ci*",
     "zig*",
 ]
