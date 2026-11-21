@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any, Self
 
 from runtime.hotpatch.errors import HotpatchError, abi_error
+from runtime.hotpatch.events import emit
 
 _GENERATOR_FLAGS = (
     inspect.CO_GENERATOR | inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR
@@ -373,6 +374,18 @@ class FrameEvalMigrator:
                 self._patches.append(patch)
                 self.migrated_frames += migrated
                 self.pinned_frames += pinned
+                # Counts and generation only: code objects and source are never
+                # published through the telemetry bus.
+                try:
+                    emit(
+                        "frame_patch",
+                        generation=patch.generation,
+                        snapshots=len(patch.snapshots),
+                        pinned_frames=patch.pinned_frames,
+                        migrated_locals=patch.migrated_locals,
+                    )
+                except Exception:  # noqa: S110 - telemetry is diagnostic-only
+                    pass
                 return patch
         except BaseException:
             # A failure anywhere in the migration must not leave a half-patched
@@ -440,7 +453,17 @@ class FrameEvalMigrator:
 
     def rollback(self, patch: FramePatch) -> int:
         with self._lock:
-            return patch.rollback()
+            restored = patch.rollback()
+            try:
+                emit(
+                    "frame_rollback",
+                    generation=patch.generation,
+                    restored=restored,
+                    already_rolled_back=patch.rolled_back and restored == 0,
+                )
+            except Exception:  # noqa: S110 - telemetry is diagnostic-only
+                pass
+            return restored
 
     @property
     def patches(self) -> tuple[FramePatch, ...]:

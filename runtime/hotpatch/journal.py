@@ -29,6 +29,7 @@ from typing import Any
 
 import ast_nodes as ast
 from runtime.hotpatch.errors import HotpatchError
+from runtime.hotpatch.events import emit
 
 
 def _buffer_address(target: Any) -> tuple[int, int, Any]:
@@ -270,8 +271,22 @@ class RollbackJournal:
             if target is not None and target in self._snapshots:
                 self._snapshots.remove(target)
             self.commits += 1
+            generation = target.generation if target is not None else 0
+            commits = self.commits
+            pending = len(self._snapshots)
         self.last_commit_ns = time.perf_counter_ns() - started
-        return target.generation if target is not None else 0
+        # Sequence ids and counts only: never objects, labels, spans or paths.
+        try:
+            emit(
+                "rollback",
+                operation="commit",
+                generation=generation,
+                commits=commits,
+                pending=pending,
+            )
+        except Exception:  # noqa: S110 - telemetry must never break commit
+            pass
+        return generation
 
     def rollback(self, snapshot: Snapshot | None = None) -> int:
         started = time.perf_counter_ns()
@@ -280,11 +295,44 @@ class RollbackJournal:
             if target is not None and target in self._snapshots:
                 self._snapshots.remove(target)
             self.rollbacks += 1
+            generation = target.generation if target is not None else 0
+            pending = len(self._snapshots)
+            rollbacks = self.rollbacks
         if target is None:
             self.last_rollback_ns = time.perf_counter_ns() - started
+            try:
+                emit(
+                    "rollback",
+                    operation="rollback",
+                    generation=generation,
+                    rollbacks=rollbacks,
+                    pending=pending,
+                )
+            except Exception:  # noqa: S110 - telemetry is diagnostic-only
+                pass
             return 0
-        _, _, _, _, undo_errors = target.restore()
+        (
+            restored_objects,
+            restored_buffers,
+            restored_programs,
+            undo_calls,
+            undo_errors,
+        ) = target.restore()
         self.last_rollback_ns = time.perf_counter_ns() - started
+        try:
+            emit(
+                "rollback",
+                operation="rollback",
+                generation=generation,
+                rollbacks=rollbacks,
+                pending=pending,
+                restored_objects=restored_objects,
+                restored_buffers=restored_buffers,
+                restored_programs=restored_programs,
+                undo_calls=undo_calls,
+            )
+        except Exception:  # noqa: S110 - telemetry must never break rollback
+            pass
         if undo_errors:
             raise HotpatchError(
                 "rollback completed with failing undo callbacks",

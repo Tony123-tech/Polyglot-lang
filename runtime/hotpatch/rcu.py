@@ -23,6 +23,7 @@ from typing import Any
 
 import ast_nodes as ast
 from runtime.hotpatch.errors import HotpatchError
+from runtime.hotpatch.events import emit
 
 
 @dataclass
@@ -163,6 +164,17 @@ class RcuDomain:
                 reclaimed += 1
             with self._condition:
                 self._reclaimed += reclaimed
+            if reclaimed:
+                # Reclamation is the observable migration; ``drain`` delegates
+                # here, so it emits once per grace period without double counts.
+                try:
+                    emit(
+                        "migration",
+                        reclaimed=reclaimed,
+                        operation="synchronize",
+                    )
+                except Exception:  # noqa: S110 - telemetry is diagnostic-only
+                    pass
             return reclaimed
 
     def _readers_before(self, target: int) -> int:
@@ -241,6 +253,15 @@ class AstEpochManager:
             lambda retired: self._reclaim(retired, old_version),
             span=span,
         )
+        try:
+            emit(
+                "epoch",
+                epoch=version,
+                version=version,
+                publications=self.publications,
+            )
+        except Exception:  # noqa: S110 - telemetry must never break publish
+            pass
         return version
 
     def _reclaim(self, program: ast.Program, version: int) -> None:
