@@ -2,6 +2,8 @@
 Polyglot command-line interface.
 
 Subcommands:
+    new   Create a starter project directory.
+    explain  Explain an error code with a wrong/right example.
     run   Compile and execute a source file.
     build Compile only and produce an artifact when applicable.
     check Parse, translate, and run termination checks without executing.
@@ -231,6 +233,9 @@ def cmd_exec(args: argparse.Namespace) -> int:
     """Compile + execute with structured timing, memory, and diagnostics."""
     started = time.perf_counter()
     source = _read_stdin_source() if args.stdin else _read_source(args.file)
+    # `run` and `build` expand include! before compiling; exec must match them,
+    # otherwise any program using include! fails here with E003 IncludeDecl.
+    source_path = None if args.stdin else args.file
     payload: dict[str, Any] = {
         "ok": False,
         "backend": args.backend,
@@ -245,7 +250,7 @@ def cmd_exec(args: argparse.Namespace) -> int:
     compile_started: float | None = None
     run_started: float | None = None
     try:
-        program = _parse_program(source)
+        program = _parse_program(source, source_path)
         backend = get_backend(
             args.backend,
             trusted=True,
@@ -379,9 +384,11 @@ def cmd_compile(args: argparse.Namespace) -> int:
     """Compatibility command used by api.executor and existing tooling."""
     if args.stdin:
         source = _read_stdin_source()
+        source_path = None
     else:
         source = _read_source(args.file)
-    program = _parse_program(source)
+        source_path = args.file
+    program = _parse_program(source, source_path)
     backend = get_backend(args.backend, trusted=args.trusted)
     namespace = backend.compile(program)
     for name in sorted(namespace):
@@ -432,6 +439,172 @@ def _add_error_format(parser: argparse.ArgumentParser) -> None:
         default="text",
         help="Diagnostic format (default: text)",
     )
+
+
+_STARTER_MAIN = """// {name}: your first Polyglot program.
+//
+// Run it:
+//   polyglot run main.poly
+//
+// Compile it to a native Python extension later:
+//   polyglot build main.poly --backend native
+//
+// Edit the function below, then run again. Types are explicit and
+// bindings are immutable unless you write `let mut`.
+
+fn greet(name: String) -> String {
+    name
+}
+
+fn main() -> i64 {
+    println!("hello, {}", greet("world"));
+    0
+}
+"""
+
+_STARTER_README = """# {name}
+
+A Polyglot project created with `polyglot new`.
+
+## Run
+
+```sh
+polyglot run main.poly
+```
+
+## Next steps
+
+- Edit `main.poly`. Bindings are immutable unless declared with `let mut`.
+- Print values with `println!`; the value returned by `main()` is printed too.
+- Add code from another file with `include!("other.poly");` at the top level.
+- Read errors with `polyglot explain E001`.
+- Read `GUIDE.md` in the repository for a full beginner walkthrough.
+"""
+
+
+def cmd_new(args: argparse.Namespace) -> int:
+    """Create a starter project directory with a runnable main.poly."""
+    target = Path(args.name)
+    if target.exists() and any(target.iterdir()):
+        print(f"error: '{target}' already exists and is not empty", file=sys.stderr)
+        return 1
+    target.mkdir(parents=True, exist_ok=True)
+    name = target.resolve().name
+    (target / "main.poly").write_text(
+        _STARTER_MAIN.replace("{name}", name), encoding="utf-8"
+    )
+    (target / "README.md").write_text(
+        _STARTER_README.replace("{name}", name), encoding="utf-8"
+    )
+    print(f"Created {target}")
+    print("Next:")
+    print(f"  cd {target}")
+    print("  polyglot run main.poly")
+    return 0
+
+
+_ERROR_EXPLAINERS: dict[str, dict[str, str]] = {
+    "E001": {
+        "title": "type mismatch",
+        "meaning": (
+            "Two integer types met, such as usize and i64. Polyglot never "
+            "converts between integer types implicitly."
+        ),
+        "wrong": "xs.len()",
+        "right": "xs.len() as i64",
+        "tip": "The diagnostic already prints the cast to add after `as`.",
+    },
+    "E002": {
+        "title": "termination could not be proved",
+        "meaning": (
+            "A #[terminates] function calls itself with an argument that does "
+            "not decrease, so the checker cannot prove it stops."
+        ),
+        "wrong": "fn f(n: i64) -> i64 { if n > 0 { f(n + 1) } else { 0 } }",
+        "right": "fn f(n: i64) -> i64 { if n > 0 { f(n - 1) } else { 0 } }",
+        "tip": "Drop the attribute if the function is not meant to be proved.",
+    },
+    "E003": {
+        "title": "translation error (unsupported construct)",
+        "meaning": "The construct is valid Polyglot but has no lowering for this backend.",
+        "wrong": "a struct, match, Vec or Option used on the Zig backend",
+        "right": "run the same program with --backend python or --backend native",
+        "tip": "Zig lowering covers a small subset; see docs/advanced.md.",
+    },
+    "E004": {
+        "title": "generated Rust failed to compile",
+        "meaning": (
+            "The native backend produced Rust that rustc rejected. This is a "
+            "compiler bug, not a problem in your program."
+        ),
+        "wrong": "polyglot build broken.poly --backend native",
+        "right": "reduce the program to the smallest failing case and report it",
+        "tip": "Include the source and the rustc message when filing the issue.",
+    },
+    "E005": {
+        "title": "cyclic include",
+        "meaning": "A file includes itself through a chain of include! calls.",
+        "wrong": "a.poly includes b.poly, and b.poly includes a.poly",
+        "right": "keep the graph one-directional: move shared items to c.poly",
+        "tip": "Includes are spliced at item position and are not de-duplicated.",
+    },
+    "E006": {
+        "title": "missing include file",
+        "meaning": "The path in include! does not resolve from the including file.",
+        "wrong": 'include!("maths.poly");  // file is maths/ops.poly',
+        "right": 'include!("maths/ops.poly");',
+        "tip": "Paths are relative to the file that contains the include!.",
+    },
+    "E007": {
+        "title": "unsupported native pattern",
+        "meaning": (
+            "The native backend cannot lower this pattern, for example a Box "
+            "pattern in a match arm."
+        ),
+        "wrong": "match x { Box(v) => v, _ => 0 }",
+        "right": "match x { Some(v) => v, None => 0 }",
+        "tip": "Rewrite the pattern, or use the Python backend for that program.",
+    },
+    "E008": {
+        "title": "invalid integer literal",
+        "meaning": "The literal has a malformed digit, separator or suffix.",
+        "wrong": "let x = 1__000;",
+        "right": "let x = 1_000;",
+        "tip": "Separators go between digits, never next to each other.",
+    },
+}
+
+
+def cmd_explain(args: argparse.Namespace) -> int:
+    """Print a short fix-oriented explanation for an error code."""
+    code = args.code.upper() if args.code else None
+    if code is None:
+        print("Polyglot error codes:")
+        for key, entry in _ERROR_EXPLAINERS.items():
+            print(f"  {key}  {entry['title']}")
+        print()
+        print("Run `polyglot explain E001` for a wrong/right example.")
+        return 0
+    entry = _ERROR_EXPLAINERS.get(code)
+    if entry is None:
+        print(f"error: unknown code '{code}'", file=sys.stderr)
+        print(
+            "known codes: " + ", ".join(_ERROR_EXPLAINERS), file=sys.stderr
+        )
+        return 1
+    print(f"{code}: {entry['title']}")
+    print()
+    print(f"  Meaning: {entry['meaning']}")
+    print()
+    print("  Wrong:")
+    for line in entry["wrong"].splitlines():
+        print(f"    {line}")
+    print("  Right:")
+    for line in entry["right"].splitlines():
+        print(f"    {line}")
+    print()
+    print(f"  Tip: {entry['tip']}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -489,6 +662,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_error_format(run_p)
     run_p.set_defaults(func=cmd_run)
+
+    new_p = sub.add_parser(
+        "new",
+        help="Create a starter project",
+        description=(
+            "Create a directory with a runnable main.poly and a short README. "
+            "The generated project runs immediately with `polyglot run main.poly`."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  polyglot new myapp\n"
+            "  cd myapp && polyglot run main.poly"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    new_p.add_argument("name", help="Directory to create for the new project")
+    new_p.set_defaults(func=cmd_new)
+
+    explain_p = sub.add_parser(
+        "explain",
+        help="Explain an error code with a wrong/right example",
+        description=(
+            "Print what a stable error code means and how to fix it. "
+            "Omit the code to list every code."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  polyglot explain\n"
+            "  polyglot explain E001"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    explain_p.add_argument(
+        "code",
+        nargs="?",
+        default=None,
+        help="Error code such as E001 (omit to list all codes)",
+    )
+    explain_p.set_defaults(func=cmd_explain)
 
     build_p = sub.add_parser(
         "build",
