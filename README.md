@@ -1,10 +1,26 @@
 # polyglot-lang
 
+![Python](https://img.shields.io/badge/python-3.14.8%2B-blue)
+![Tests](https://img.shields.io/badge/tests-3511%20passing-brightgreen)
+![Backends](https://img.shields.io/badge/backends-4-informational)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 **Write Rust-style code in a single `.poly` file and run it with Python — no
 Rust toolchain, no `Cargo.toml`, no build step.**
 
+```rust
+fn fib(n: i64) -> i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+
+fn main() -> i64 {
+    let mut words: Vec<String> = vec![String::from("hello"), String::from("polyglot")];
+    println!("{} / {} words / fib(20) = {}", words[0].clone(), words.len(), fib(20));
+    0
+}
+```
+
 ```sh
 polyglot new myapp && cd myapp && polyglot run main.poly
+# hello / 2 words / fib(20) = 6765
 ```
 
 **Who this is for:** Python developers who want explicit types, `Option`/`Result`
@@ -16,14 +32,30 @@ The language is young, the standard library is small, and the native story is
 still settling. Use CPython, Numba or Polars when you need production maturity
 this month.
 
-What you actually get:
+## What makes it different
 
-- Types are checked at compile time; bindings are immutable unless you write `let mut`.
-- `Option` and `Result` make missing values and failures part of the signature.
-- One file runs in-process through the Python backend, or compiles to a PyO3
-  extension when a hot loop needs C-level speed.
-- Stable error codes (`E001`–`E009`) with fix hints, `polyglot explain E001`,
-  and an LSP that publishes the same diagnostics.
+- **Ownership that rejects, once.** `E009` catches use-after-move, double drop and
+  borrow-vs-move conflicts. The decision is made in one shared pass before either
+  backend runs, so the Python and native backends cannot disagree about it.
+- **Four backends, one CLI.** Python runs anywhere with no toolchain; native
+  compiles to a PyO3 extension; WASM and Zig are opt-in research modes whose
+  limits are written down rather than glossed over.
+- **Borrowed design, honestly labelled.** Gleam-style total ADTs, Elixir/OTP
+  actors and Mojo-style value semantics are modelled and tested in pure Python.
+  They do not invoke real Gleam, Mojo or MLIR toolchains, and the docs say so.
+- **A spec that admits what it hasn't done.** Section 13 is marked roadmap, the
+  WASM backend is called compute-only, and 10.58 states exactly where backend
+  parity stops.
+- Types are checked at compile time; bindings are immutable unless you write
+  `let mut`. Stable codes `E001`–`E009` carry fix hints (`polyglot explain E001`),
+  and the LSP publishes the same diagnostics.
+
+> **Honest limits, up front**
+> Python `3.14.8`+ only, because the front end needs PEP 649 deferred annotations ·
+> the Python backend runs recursive `fib` about 15× slower than CPython ·
+> WASM is `i64`/`bool` compute-only · Zig indexing is unchecked and an out-of-range
+> read is undefined behaviour · research surfaces sit outside the Tier 1 parity
+> contract.
 
 New here? Start with `polyglot new`, then read [GUIDE.md](GUIDE.md) and
 [examples/README.md](examples/README.md).
@@ -398,7 +430,10 @@ Select a backend with `get_backend("python")`, `get_backend("native")`,
   before either one generates code. The model is bounded: struct-field partial
   moves, moves through references and unmodelled method semantics are still left
   to the native backend, so a program can occasionally pass `--backend python`
-  and fail rustc. `polyglot explain E009` shows the fix.
+  and fail rustc. That gap is a backend capability gap, not an `E009` parity
+  violation: the shared pass decides `E009` once for both backends, while
+  `rustc` still makes its own decisions (SPEC 8.16.2, 10.58). `polyglot explain
+  E009` shows the fix.
 - **The Python backend is slow on call-heavy code.** Transpiled functions wrap
   their arguments, so recursive `fib` runs about 15x slower than CPython, while a
   tight typed `for` loop can beat CPython. Numbers and method:
