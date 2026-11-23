@@ -367,7 +367,7 @@ class Parser:
                 attributes=attrs,
             )
         if tok.type == TokenType.STRUCT:
-            return self.parse_struct(is_pub)
+            return self.parse_struct(is_pub, attributes=attrs)
         if tok.type == TokenType.ENUM:
             return self.parse_enum(is_pub)
         if tok.type == TokenType.IMPL:
@@ -485,7 +485,9 @@ class Parser:
 
     # ---- struct / enum -----------------------------------------------------
 
-    def parse_struct(self, is_pub: bool) -> StructDecl:
+    def parse_struct(
+        self, is_pub: bool, *, attributes: list[Attr] | None = None
+    ) -> StructDecl:
         tok = self.expect(TokenType.STRUCT)
         name = self.expect(TokenType.IDENT).value
         generics = self.parse_generics()
@@ -502,7 +504,15 @@ class Parser:
             self.expect(TokenType.RBRACE)
         else:
             self.expect(TokenType.SEMI)
-        return StructDecl(tok.line, tok.col, name, fields, generics, is_pub)
+        return StructDecl(
+            tok.line,
+            tok.col,
+            name,
+            fields,
+            generics,
+            is_pub,
+            attributes or [],
+        )
 
     def parse_enum(self, is_pub: bool) -> EnumDecl:
         tok = self.expect(TokenType.ENUM)

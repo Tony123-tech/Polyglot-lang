@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from zig.features import is_zig_only_source
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -150,15 +152,10 @@ def test_build_hello_produces_extension(tmp_path: Path):
 
 
 def test_examples_directory_runnable_files():
-    # The opt-in Zig example uses Zig-only syntax and requires --backend zig;
-    # it is outside the default backend contract checked here.
     examples = sorted(
         path
         for path in (ROOT / "examples").glob("*.poly")
-        if not any(
-            marker in path.read_text(encoding="utf-8")
-            for marker in ("+|", "-|", "*|", "SimdN<", "#[parallel]")
-        )
+        if not is_zig_only_source(path.read_text(encoding="utf-8"))
     )
     names = {path.name for path in examples}
     # Starter examples and the task-oriented ones must stay runnable.

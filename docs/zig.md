@@ -99,9 +99,13 @@ The current lowering covers:
 | Arbitrary-width integers | ✅ | `uN`/`iN`, `0 <= N <= 65535` |
 | `#[parallel]` range loops | ✅ | Direct loop in the annotated function |
 | `SimdN<T>` and SIMD builtins | ✅ | See below |
-| Structs, enums, `if`, `match` | ⬜ | Not lowered |
-| Strings, `Vec`, `Option`, `Result` | ⬜ | Not lowered |
-| Ordinary user-function calls | ⬜ | Only the SIMD builtins are special-cased |
+| User-function calls, `if`/`else` | ✅ | Top-level `fn` calls with scalar arguments |
+| Struct declarations and field access | ✅ | `#[packed]` gives a `packed struct` |
+| Zig intrinsics | ✅ | `popcount!`, `clz!`, `ctz!`, `bswap!`, `bitreverse!` |
+| `bitcast!`, `bitsizeof!`, `sizeof!` | ✅ | Bit-level reinterpretation and layout queries |
+| `#[unchecked]` functions | ✅ | `@setRuntimeSafety(false)` for that body |
+| Struct construction, enums, `match` | ⬜ | Not lowered |
+| Strings, `Vec`, `Option` | ⬜ | Not lowered |
 | Float casts | ⬜ | `as` lowering uses integer casts |
 
 Programs outside this subset are outside the Zig contract. Use the Python or
@@ -201,6 +205,94 @@ Zig stores the value at the declared width. For example, `u24` has the range
 At the Python boundary every integer becomes a 64-bit `ctypes` value (`u64` for
 unsigned types, `i64` otherwise). Widths above 64 bits are truncated. This is
 an ABI boundary, not a change to the Zig-side value.
+
+## Zig intrinsics
+
+Zig exposes hardware-level operations the other backends do not model. They are
+available as macro-style calls and lower 1:1 onto Zig builtins:
+
+| Call | Zig builtin | Result |
+|------|-------------|--------|
+| `popcount!(x)` | `@popCount` | `i64` number of set bits |
+| `clz!(x)` | `@clz` | `i64` leading zeros within the operand width |
+| `ctz!(x)` | `@ctz` | `i64` trailing zeros within the operand width |
+| `bswap!(x)` | `@byteSwap` | operand's own type, bytes reversed |
+| `bitreverse!(x)` | `@bitReverse` | operand's own type, bits reversed |
+| `bitcast!(x, T)` | `@bitCast` | `T`, same bit count required |
+| `bitsizeof!(T)` | `@bitSizeOf` | `i64` exact bit count |
+| `sizeof!(T)` | `@sizeOf` | `i64` byte count, alignment included |
+
+```polyglot
+fn density(x: u32) -> i64 { popcount!(x) }        // 0b1011 -> 3
+fn lz(x: u8) -> i64 { clz!(x) }                    // 0 -> 8
+fn swap32(x: u32) -> u32 { bswap!(x) }             // 0x12345678 -> 0x78563412
+fn rev8(x: u8) -> u8 { bitreverse!(x) }            // 1 -> 128
+fn float_bits(x: f32) -> u32 { bitcast!(x, u32) }  // 1.0 -> 0x3F800000
+```
+
+The operand width comes from the polyglot type, so `u8` and `u64` answers
+differ for `clz!`. An unannotated identifier is treated as `i64`; annotate it
+with `let` when the width matters. A float operand is rejected with `E001`
+(use `bitcast!`), and `bswap!` requires a byte-sized width. The counting
+intrinsics widen to `i64`; `bswap!` and `bitreverse!` keep the operand type so a
+`u64` result is not truncated.
+
+## Bit casts
+
+`bitcast!(value, T)` reinterprets the bit pattern and requires equal bit counts:
+
+```polyglot
+fn bits(x: f32) -> u32 { bitcast!(x, u32) }
+fn back(bits: u32) -> f32 { bitcast!(bits, f32) }
+```
+
+Mismatched widths (`u8` to `u32`), pointer or slice sources, and unknown types
+are `E001` before Zig runs. The backend emits a small generic helper
+(`_zig_bitcast`) so the cast has an explicit result type at the call site.
+
+## Packed structs
+
+`#[packed]` declares a Zig `packed struct`: no padding, declaration order
+preserved, size equal to the sum of field widths.
+
+```polyglot
+#[packed]
+struct FrameHeader { version: u3, flags: u5, compressed: bool }
+
+bitsizeof!(FrameHeader)  // 9 bits
+sizeof!(FrameHeader)     // 2 bytes
+```
+
+Rules:
+
+- every field must have a known bit width: integers (including arbitrary
+  widths like `u3`) and `bool`; floats are `E001`, because this backend will
+  not guess a layout for them;
+- pointers, slices, strings and tuples have no bit width and are `E001`;
+- `#[packed]` on a generic struct is `E003` — the bit width would depend on a
+  comptime parameter;
+- `bitsizeof!` is exact, while `sizeof!` rounds up to the backing integer's
+  ABI alignment (`u3+u5+bool` → 2 bytes, `u12+u12` → 4 bytes). Report the
+  exact number with `bitsizeof!`.
+
+The generated source carries a comment with the computed bit total, so a layout
+change shows up in the emitted Zig as well as in the tests.
+
+## `#[unchecked]` functions
+
+`#[unchecked]` opts a function body out of Zig's runtime safety checks:
+
+```polyglot
+#[unchecked]
+fn fast_sum(a: i64, b: i64) -> i64 { a + b }
+```
+
+The backend emits `@setRuntimeSafety(false);` as the first statement of that
+function only. Overflow and integer-range checks in that body become wrapping
+behaviour instead of a trap; everything else in the module stays checked, and
+the explicit `std.debug.assert` guards from `_zig_at` are unaffected. Do not use
+it to silence a real error — it is for hot loops where the bounds were already
+proven at the call site.
 
 ## `#[parallel]` range loops
 
@@ -316,10 +408,17 @@ polyglot run examples/zig_parallel_simd.poly --backend zig
 - labeled-block `break <value>` lowering;
 - `Result<T, PillarError>` → `PillarError!T` and `Err(E00n)` resolution.
 
-Run it directly with:
+`tests/test_zig_special.py` covers the Zig-exclusive surface: `popcount!`,
+`clz!`, `ctz!`, `bswap!`, `bitreverse!` (cross-checked against a Python
+mirror), `bitcast!` in both directions including width-mismatch rejection,
+`#[packed]` bit/byte sizes with field-type rejection, `bitsizeof!`/`sizeof!`,
+and `#[unchecked]`. The worked example is
+[examples/zig_intrinsics.poly](../examples/zig_intrinsics.poly).
+
+Run them directly with:
 
 ```sh
-pytest -q tests/test_zig_backend.py
+pytest -q tests/test_zig_backend.py tests/test_zig_special.py
 ```
 
 The rest of the Python and native test suites does not require a Zig
@@ -328,6 +427,9 @@ toolchain.
 ## Boundaries
 
 - Experimental and opt-in; not part of the Python/native parity contract.
+- The intrinsics model operand widths from the inferred polyglot type: an
+  unannotated identifier is `i64`, and `usize`/`isize` are 64-bit. A width the
+  backend cannot infer is reported (`E001`) rather than guessed.
 - Requires `zig` on `PATH`.
 - Narrow AST subset; unsupported constructs are not covered.
 - C-ABI artifact; not importable as a Python extension.

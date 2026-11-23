@@ -13,13 +13,13 @@
 - M10: Termination checking
 - M5: Async extensions (Send-aware PyFuture, async impl methods, cancellation, timeout)
 - F1: Deliverable CLI
-- Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries
+- Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries, intrinsics, `#[packed]`, `#[unchecked]`
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3340 passed, 6 skipped, 31 deselected (fast suite, after the expansion frontier batch).
+**Latest baseline:** 3359 passed, 6 skipped, 31 deselected (fast suite, after the Zig-exclusive intrinsics batch).
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -2086,3 +2086,71 @@ now pins the index case to `cannot move out of index of 'words'`.
   12 rejected ones that must raise the same `E009` headline and line pair.
 - Full fast suite: **3258 passed, 6 skipped, 31 deselected**; slow suite
   **31 passed**.
+
+## Zig-exclusive surface — intrinsics, packed layout, unchecked bodies
+
+The Zig backend is explicitly not one of the two parity backends (SPEC 8.12.1),
+which makes it the right place to carry capabilities the Python and native
+backends have no way to model: hardware bit operations, an exact bit layout, and
+a per-body safety switch. Eight named intrinsics and two attributes landed
+against real `zig 0.17.1` compilation rather than a mock.
+
+**Why a table instead of inline checks:** every intrinsic has four facts that
+must stay consistent — the Zig builtin it maps to, the operand widths it
+accepts, the result type it produces, and the diagnostic to raise when the
+operand is wrong. `zig/intrinsics.py` holds them once, and the backend, the
+tests and the Python mirror all read from it. The mirror (`mirror()`) computes
+the same answer in Python, so the tests compare Zig's result against an
+independent implementation instead of against a constant someone typed.
+
+**Deliberate choices:**
+
+- Counting intrinsics widen to `i64`; `bswap!`/`bitreverse!` keep the operand
+  type. Widening a `u64` byte swap would truncate the top half, and narrowing a
+  count would lose the meaning.
+- Widths come from the inferred polyglot type, with `usize`/`isize` modelled at
+  64 bits. An unannotated identifier is `i64` rather than "whatever the machine
+  is". Guessing would produce answers that change with the platform.
+- `#[packed]` refuses floats outright instead of inventing a layout. A packed
+  struct is a claim about bits; a byte-order-independent bit count for `f64`
+  would be a claim this backend cannot back up.
+- `#[unchecked]` sets `@setRuntimeSafety(false)` as the first statement of its
+  own body, so the blast radius is one function. The emitted `std.debug.assert`
+  bounds guards stay, because `#[unchecked]` is about arithmetic overflow, not
+  about removing checks the caller was promised.
+
+### Bug 1 — the `bswap` mirror reversed the wrong way
+
+**Symptom:** `mirror("bswap", 0x12345678, "u32")` returned `0x12345678`, i.e.
+its own input, so the cross-check agreed with any Zig result at all for
+palindromic-looking cases and silently passed.
+
+**Cause:** the mirror reversed the integer's *bits* over the declared width
+instead of reversing the byte order. For a 4-byte value that reverse-twice
+sequence is the identity, which is exactly why it looked plausible.
+
+**Fix:** split the value into `width // 8` bytes big-endian, reverse the byte
+sequence, and re-assemble big-endian. `0x12345678` now yields `0x78563412`, and
+the Zig test asserts that value rather than the input.
+
+**Lesson:** a mirror that can only return its input is not a check. The test had
+to be rewritten so the expected value differs from the argument.
+
+### Bug 2 — `sizeof!` returned 4 for a 24-bit struct
+
+**Symptom:** `sizeof!(Two)` for `struct Two { a: u12, b: u12 }` returned 4,
+while `bitsizeof!` said 24. The first test expected 3.
+
+**Cause:** `@sizeOf` reports the size of the *backing integer* after alignment,
+and Zig rounds a 24-bit integer up to its ABI alignment of 4 bytes. Nothing was
+wrong with the lowering; the expectation was.
+
+**Fix:** the test now expects 4 and states why, and the docs and SPEC 10.52
+split the two semantics: exact layout claims use `bitsizeof!`, byte-size claims
+use `sizeof!` and accept the rounding. Without that split, a caller comparing
+`sizeof!` against a hand-summed bit count would see a contradiction the
+backend never promised to resolve.
+
+**Lesson:** when a query wraps a platform rule, assert the platform rule in the
+test and name it in the docs, rather than adjusting the implementation until it
+matches an assumption.

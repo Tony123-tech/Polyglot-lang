@@ -31,6 +31,7 @@ polyglot run examples/hello.poly
 | File | What it shows |
 | --- | --- |
 | `zig_parallel_simd.poly` | `#[parallel]` loops and `Simd4<f64>` on the Zig backend |
+| `zig_intrinsics.poly` | `popcount!`/`bswap!`/`bitcast!` and a `#[packed]` header on the Zig backend |
 
 The Zig example needs a Zig toolchain and is documented in
 [docs/advanced.md](../docs/advanced.md).

@@ -2,6 +2,33 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Zig-exclusive intrinsics, packed structs, unchecked bodies
+
+- Added `zig/intrinsics.py`, the single authority table for the Zig-only
+  surface: operand widths (`uN`/`iN` plus `usize`/`isize` as 64-bit), the five
+  value intrinsics, the three type intrinsics, argument validation, and a
+  Python mirror used to cross-check the emitted code.
+- Added `popcount!`, `clz!`, `ctz!`, `bswap!`, and `bitreverse!` lowering to
+  `@popCount`, `@clz`, `@ctz`, `@byteSwap`, and `@bitReverse`. Counting
+  intrinsics yield `i64`; the rearrangement ones keep the operand width so a
+  `u64` result is not truncated. Adds SPEC 8.12.15.
+- Added `#[packed]` on struct declarations, lowering to a Zig `packed struct`
+  with a computed bit total. Fields must have a known bit width; floats,
+  pointers, slices, strings, tuples and generic packed structs are rejected.
+  Adds SPEC 8.12.16.
+- Added `bitcast!(value, T)` with equal-bit-count checking, plus
+  `bitsizeof!(T)` and `sizeof!(T)` lowering to `@bitSizeOf` and `@sizeOf`
+  through an emitted `_zig_bitcast` helper. Adds SPEC 8.12.17.
+- Added `#[unchecked]` on free functions, emitting
+  `@setRuntimeSafety(false);` as the first statement of that body only; the
+  bounds-check `std.debug.assert` guards are unaffected. Adds SPEC 8.12.18.
+- `ast_nodes.StructDecl` gained an `attributes` list and `parser.parse_struct`
+  now receives the declaration's attributes, so `#[packed]` survives parsing.
+- New tests: `tests/test_zig_special.py` (19). New example:
+  `examples/zig_intrinsics.poly`. Every rejection reuses `E001`/`E003`; no new
+  diagnostic codes. The width model and the rounded `sizeof!` result are
+  recorded in SPEC 10.52, and 8.12.9 now lists the expanded subset.
+
 ## Unreleased — expansion frontier (cluster, DST, macros, IPC, bootstrap)
 
 - Added `distributed/frontier.py`: `cluster_discover_and_heartbeat`,

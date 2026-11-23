@@ -1,0 +1,60 @@
+// Zig-exclusive special functions (SPEC 8.12.15-8.12.18).
+// Run with: polyglot run --backend zig examples/zig_intrinsics.poly
+//
+// These do not exist on the Python or native backends: every call lowers onto
+// a Zig builtin (@popCount, @clz, @ctz, @byteSwap, @bitReverse, @bitCast,
+// @bitSizeOf, @sizeOf) and therefore belongs to the opt-in Zig execution mode.
+
+#[packed]
+struct FrameHeader {
+    version: u3,
+    flags: u5,
+    compressed: bool,
+}
+
+fn header_bits() -> i64 {
+    bitsizeof!(FrameHeader)
+}
+
+fn bit_density(x: u32) -> i64 {
+    popcount!(x)
+}
+
+fn leading_zeros(x: u32) -> i64 {
+    clz!(x)
+}
+
+fn swapped(x: u32) -> u32 {
+    bswap!(x)
+}
+
+fn reversed_byte(x: u8) -> u8 {
+    bitreverse!(x)
+}
+
+fn float_pattern(x: f32) -> u32 {
+    bitcast!(x, u32)
+}
+
+fn main() -> i64 {
+    let pattern: u32 = float_pattern(1.0);
+    if pattern != 0x3F800000 {
+        return 1;
+    }
+    if header_bits() != 9 {
+        return 2;
+    }
+    if bit_density(0b1011) != 3 {
+        return 3;
+    }
+    if leading_zeros(1) != 31 {
+        return 4;
+    }
+    if swapped(0x12345678) != 0x78563412 {
+        return 5;
+    }
+    if reversed_byte(1) != 128 {
+        return 6;
+    }
+    255
+}

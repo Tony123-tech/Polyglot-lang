@@ -64,3 +64,30 @@ def saturating_op(left: int, right: int, op: str, type_name: str = "i64") -> int
     if raw > hi:
         return hi
     return raw
+
+
+# Markers that make an example Zig-only. Both the parity suite and the example
+# runner read this one list, so a new Zig-exclusive construct cannot be
+# forgotten in one of them.
+ZIG_ONLY_SOURCE_MARKERS = (
+    "+|",
+    "-|",
+    "*|",
+    "SimdN<",
+    "#[parallel]",
+    "#[packed]",
+    "#[unchecked]",
+    "popcount!(",
+    "clz!(",
+    "ctz!(",
+    "bswap!(",
+    "bitreverse!(",
+    "bitcast!(",
+    "bitsizeof!(",
+    "sizeof!(",
+)
+
+
+def is_zig_only_source(source: str) -> bool:
+    """True when a program needs `--backend zig` (SPEC 8.12.5-8.12.8, 8.12.15-8.12.18)."""
+    return any(marker in source for marker in ZIG_ONLY_SOURCE_MARKERS)

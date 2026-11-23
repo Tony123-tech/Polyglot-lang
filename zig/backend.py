@@ -16,7 +16,7 @@ import ctypes
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from ast_nodes import (
     ArrayExpr,
@@ -99,6 +99,7 @@ from ast_nodes import (
     Path as AstPath,
 )
 from backends.base import BackendBase
+from compiler.frontend.errors import PolyglotError
 from zig.build import (
     ZigBuildError,
     build_dynamic_library,
@@ -106,10 +107,31 @@ from zig.build import (
     normalize_optimize,
     zig_available,
 )
+from zig.intrinsics import (
+    IntrinsicError,
+    bit_width,
+    is_float,
+    require_type_operand,
+    require_value_operand,
+    shape_for,
+)
 
 
 class ZigCompileError(RuntimeError):
     pass
+
+
+def _fail(
+    code: str,
+    message: str,
+    *,
+    reason: str | None = None,
+    help_text: str | None = None,
+) -> NoReturn:
+    """Raise a structured Zig-backend diagnostic (E001–E008)."""
+    raise PolyglotError(
+        code, message, reason=reason, help_text=help_text, phase="zig-backend"
+    )
 
 
 _VECTOR_RE = re.compile(r"^@Vector\((\d+), (f32|f64|[iu]\d+)\)$")
@@ -577,6 +599,10 @@ fn _zig_sat_mul(a: anytype, b: anytype) @TypeOf(a) {
 fn _zig_optional(value: anytype) ?@TypeOf(value) {
     return value;
 }
+
+fn _zig_bitcast(comptime T: type, value: anytype) T {
+    return @bitCast(value);
+}
 """
         self.lines.append(helper)
 
@@ -593,6 +619,9 @@ fn _zig_optional(value: anytype) ?@TypeOf(value) {
 
     def _emit_struct(self, decl: StructDecl) -> None:
         name = decl.name
+        if _has_attr(decl, "packed"):
+            self._emit_packed_struct(decl)
+            return
         if decl.generics:
             params = ", ".join(
                 f"comptime {generic.name}: type" for generic in decl.generics
@@ -615,6 +644,52 @@ fn _zig_optional(value: anytype) ?@TypeOf(value) {
             self.emit(f"{field_name}: {self._zig_type(field_type)},")
         self.indent -= 1
         self.emit("};\n")
+
+    def _emit_packed_struct(self, decl: StructDecl) -> None:
+        """Emit a Zig ``packed struct`` with a compile-time bit-size guarantee.
+
+        Every field must have a known bit width and none may be a float: a
+        packed struct's size is the sum of its fields, and a float would leave
+        the layout to the backend rather than to the declaration.
+        """
+        name = decl.name
+        if decl.generics:
+            _fail(
+                "E003",
+                f"packed struct {name} cannot be generic",
+                help_text="declare a concrete packed struct, or drop #[packed]",
+            )
+        if not decl.fields:
+            _fail("E003", f"packed struct {name} has no fields")
+        total = 0
+        rows: list[str] = []
+        for field_name, field_type, _is_pub in decl.fields:
+            ztype = self._zig_type(field_type)
+            if is_float(ztype):
+                _fail(
+                    "E001",
+                    f"packed struct field {name}.{field_name} is {ztype}; "
+                    "floats have no fixed bit width in this backend",
+                    help_text="use an integer type, or drop #[packed] for a normal struct",
+                )
+            width = bit_width(ztype)
+            if width is None:
+                _fail(
+                    "E001",
+                    f"packed struct field {name}.{field_name} has type {ztype}, "
+                    "which has no known bit width",
+                    help_text="packed fields must be integers or bool",
+                )
+            total += width
+            rows.append(f"{field_name}: {ztype},")
+        public = "pub " if decl.is_pub else ""
+        self.emit(f"{public}const {name} = packed struct {{")
+        self.indent += 1
+        for row in rows:
+            self.emit(row)
+        self.indent -= 1
+        self.emit("};")
+        self.emit(f"// {name}: {total} bits, packed\n")
 
     def _emit_enum(self, decl: EnumDecl) -> None:
         name = decl.name
@@ -711,6 +786,10 @@ fn _zig_optional(value: anytype) ?@TypeOf(value) {
         public = "pub " if fn.is_pub else ""
         self.emit(f"{public}fn {fn.name}({param_text}) {ret} {{")
         self.indent += 1
+        if _has_attr(fn, "unchecked"):
+            # Zig's safety checks (overflow, integer bounds) are disabled for
+            # this function body only; the caller opts in per function.
+            self.emit("@setRuntimeSafety(false);")
         parallel = _has_attr(fn, "parallel") and self._emit_parallel_body(fn, params)
         if parallel:
             pass
@@ -1354,12 +1433,92 @@ fn _zig_optional(value: anytype) ?@TypeOf(value) {
     def _emit_macro(self, expr: MacroCall) -> str:
         if isinstance(expr.args, str):
             return f"@{expr.path}({expr.args})"
+        if shape_for(expr.path) is not None:
+            return self._emit_value_intrinsic(expr)
+        if expr.path == "bitcast":
+            return self._emit_bitcast(expr)
+        if expr.path in {"bitsizeof", "sizeof"}:
+            return self._emit_type_intrinsic(expr)
         args = ", ".join(self._emit_expr(arg) for arg in expr.args)
         if expr.path in {"println", "print"}:
             return f"std.debug.print({args})"
         if expr.path == "vec":
             return f".{{ {args} }}"
         return f"@{expr.path}({args})"
+
+    def _emit_value_intrinsic(self, expr: MacroCall) -> str:
+        """Lower popcount!/clz!/ctz!/bswap!/bitreverse! onto Zig builtins."""
+        if len(expr.args) != 1:
+            _fail(
+                "E003",
+                f"{expr.path}! takes exactly one operand, got {len(expr.args)}",
+            )
+        operand = expr.args[0]
+        operand_type = self._infer_type(operand)
+        try:
+            shape = require_value_operand(expr.path, operand_type)
+        except IntrinsicError as error:
+            _fail("E001", str(error))
+        pinned = f"@as({operand_type}, {self._emit_expr(operand)})"
+        builtin = f"{shape.builtin}({pinned})"
+        if expr.path in {"bswap", "bitreverse"}:
+            # These preserve the operand width, so the caller's return type
+            # decides the widening; an explicit i64 cast could trap on u64.
+            return builtin
+        # The counting builtins return a width-dependent integer (u7 for
+        # @popCount of a u64); widen to the documented i64 result.
+        return f"@as(i64, @intCast({builtin}))"
+
+    def _type_argument(self, arg: Any, name: str) -> str:
+        if isinstance(arg, Ident):
+            return arg.name
+        if isinstance(arg, AstPath):
+            return arg.segments[-1]
+        if isinstance(arg, TypeName):
+            return arg.name
+        _fail(
+            "E003",
+            f"{name}! second argument must be a type name, not an expression",
+            help_text="pass a declared type, for example bitsizeof!(Flags)",
+        )
+
+    def _emit_type_intrinsic(self, expr: MacroCall) -> str:
+        if len(expr.args) != 1:
+            _fail("E003", f"{expr.path}! takes exactly one type, got {len(expr.args)}")
+        type_name = self._type_argument(expr.args[0], expr.path)
+        if type_name not in self._struct_names and type_name not in self._enum_names:
+            try:
+                require_type_operand(expr.path, type_name)
+            except IntrinsicError as error:
+                _fail("E001", str(error))
+        builtin = "@bitSizeOf" if expr.path == "bitsizeof" else "@sizeOf"
+        return f"@as(i64, {builtin}({type_name}))"
+
+    def _emit_bitcast(self, expr: MacroCall) -> str:
+        """Lower bitcast!(value, T) to the generic @bitCast helper."""
+        if len(expr.args) != 2:
+            _fail(
+                "E003",
+                f"bitcast! takes a value and a type, got {len(expr.args)} argument(s)",
+            )
+        value_type = self._infer_type(expr.args[0])
+        target = self._type_argument(expr.args[1], "bitcast")
+        source_width = bit_width(value_type)
+        target_width = bit_width(target)
+        if source_width is None or target_width is None:
+            _fail(
+                "E001",
+                f"bitcast! needs types with known bit widths, got {value_type} -> {target}",
+                help_text="use fixed-width integers or floats",
+            )
+        if source_width != target_width:
+            _fail(
+                "E001",
+                f"bitcast! cannot reinterpret {value_type} ({source_width} bits) "
+                f"as {target} ({target_width} bits)",
+                help_text="both sides of a bit cast must have the same bit count",
+            )
+        return f"_zig_bitcast({target}, {self._emit_expr(expr.args[0])})"
 
     # ------------------------------------------------------------------
     # Control-flow expressions

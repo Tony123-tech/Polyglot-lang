@@ -10,6 +10,7 @@ from backends import get_backend
 from include_expander import load_program
 from lexer import lex
 from parser import parse
+from zig.features import is_zig_only_source
 
 # Anchor to the conftest.py directory, not the current working directory
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
@@ -21,10 +22,7 @@ def _is_zig_only(example: Path) -> bool:
     The Zig backend is an opt-in mode outside the Python/native parity contract
     (see docs/zig.md), so it must not be compiled by this suite.
     """
-    source = example.read_text(encoding="utf-8")
-    return any(
-        marker in source for marker in ("+|", "-|", "*|", "SimdN<", "#[parallel]")
-    )
+    return is_zig_only_source(example.read_text(encoding="utf-8"))
 
 
 EXAMPLES = sorted(

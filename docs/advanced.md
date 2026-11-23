@@ -159,6 +159,42 @@ The full runnable example is
 `#[parallel]`, `Simd4<f64>`, `splat`, `load`, `store`, `reduce_add`, and a
 saturating `u8` return in `main()`.
 
+### Zig-exclusive intrinsics
+
+Eight calls exist only on this backend, each lowering onto a Zig builtin:
+
+| Call | Builtin | Result |
+| --- | --- | --- |
+| `popcount!(x)` | `@popCount` | `i64` set-bit count |
+| `clz!(x)` / `ctz!(x)` | `@clz` / `@ctz` | `i64` zeros within the operand width |
+| `bswap!(x)` / `bitreverse!(x)` | `@byteSwap` / `@bitReverse` | operand's own type |
+| `bitcast!(x, T)` | `@bitCast` | `T`, equal bit count required |
+| `bitsizeof!(T)` / `sizeof!(T)` | `@bitSizeOf` / `@sizeOf` | `i64` bits / bytes |
+
+```polyglot
+#[packed]
+struct FrameHeader { version: u3, flags: u5, compressed: bool }
+
+fn swapped(x: u32) -> u32 { bswap!(x) }
+fn header_bits() -> i64 { bitsizeof!(FrameHeader) }  // 9
+fn float_pattern(x: f32) -> u32 { bitcast!(x, u32) } // 1.0 -> 0x3F800000
+```
+
+`#[unchecked]` on a free function emits `@setRuntimeSafety(false)` for that
+body, so its arithmetic wraps instead of trapping; the bounds-check
+`std.debug.assert` guards stay. Widths come from the inferred polyglot type
+(`usize`/`isize` are 64-bit, an unannotated identifier is `i64`), and a width
+that cannot be inferred is `E001` rather than a guess. `sizeof!` reports
+`@sizeOf`, which rounds up to the backing integer's alignment; use
+`bitsizeof!` for an exact count.
+
+The runnable example is
+[examples/zig_intrinsics.poly](../examples/zig_intrinsics.poly):
+
+```sh
+polyglot run examples/zig_intrinsics.poly --backend zig   # prints 255
+```
+
 ### Build and cache
 
 ```sh
@@ -185,12 +221,14 @@ blocks with `break <value>`), direct range `for`, `return`, integer casts,
 indexing with bounds-checked slice access, binary operations, signed `/` and `%`
 (lowered to `@divTrunc`/`@rem`), saturating operations, arbitrary-width
 integers, `Result<T, PillarError>` lowered to `PillarError!T`, parallel range
-loops, and the SIMD builtins above. It does **not** lower structs, enums, `if`,
-`match`, strings, `Vec`, `Option`, or ordinary user-function calls. Programs
+loops, the SIMD builtins above, user-function calls, `if`/`else`, struct
+declarations and field access, the intrinsics above, and `#[packed]` structs.
+It does **not** lower struct construction, enums, `match`, strings, `Vec`, or
+`Option`. Programs
 outside that subset are outside the Zig contract; use the Python or native
 backend for them. See [docs/zig.md](zig.md) for the complete feature
-reference, SPEC 8.12 for the normative rules, and SPEC 10.42 for the boundary
-entry.
+reference, SPEC 8.12 for the normative rules, and SPEC 10.42 / 10.52 for the
+boundary entries.
 
 ### Language and runtime models (experimental)
 

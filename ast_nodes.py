@@ -758,6 +758,9 @@ class StructDecl(Node):
     fields: list[tuple[str, Type, bool]]  # (name, type, is_pub)
     generics: list[GenericParam] = field(default_factory=list)
     is_pub: bool = False
+    # Attributes are kept on the declaration so a backend can honour
+    # `#[packed]` without a parser-side special case (SPEC 8.12.16).
+    attributes: list[Attr] = field(default_factory=list)
 
 
 @dataclass

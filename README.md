@@ -172,10 +172,17 @@ subset covers top-level functions, `let`/assignment, `while`/`loop`/range `for`,
 bounds-checked slice indexing, labeled-block `break <value>`,
 `Result<T, PillarError>` → `PillarError!T`, saturating arithmetic, arbitrary
 bit-width `uN`/`iN` (`0..=65535`), `#[parallel]` range-loop splitting, and
-`SimdN<T>` builtins. Structs, enums, `if`, `match`, strings, `Vec`, `Option`,
-and ordinary user-function calls are not lowered. The artifact is a C-ABI shared
-library (`__cabi_*` symbols) loaded with `ctypes`, not an importable Python
-extension. See [docs/zig.md](docs/zig.md) and SPEC 8.12.
+`SimdN<T>` builtins, user-function calls, `if`/`else`, struct declarations and
+field access. Struct construction, enums, `match`, strings, `Vec`, and `Option`
+are not lowered. The artifact is a C-ABI shared library (`__cabi_*` symbols)
+loaded with `ctypes`, not an importable Python extension. See
+[docs/zig.md](docs/zig.md) and SPEC 8.12.
+
+Zig also carries a **Zig-exclusive surface** the other backends cannot model:
+`popcount!`, `clz!`, `ctz!`, `bswap!`, `bitreverse!`, `bitcast!(value, T)`,
+`bitsizeof!(T)` and `sizeof!(T)`, a `#[packed]` struct layout, and an
+`#[unchecked]` function that drops Zig's runtime safety checks for that body
+(SPEC 8.12.15–8.12.18, boundary in 10.52).
 
 ```polyglot
 fn main() -> i64 { (250 as u8 +| 20 as u8) as i64 }
@@ -289,6 +296,7 @@ developer tool, not a sandbox.
 pytest -q
 pytest -q -m slow
 pytest -q tests/test_zig_backend.py     # requires zig on PATH
+pytest -q tests/test_zig_special.py     # Zig-exclusive intrinsics
 pytest -q tests/test_gleam_style.py
 pytest -q tests/test_actor_otp.py
 pytest -q tests/test_mojo_bridge.py
@@ -309,8 +317,8 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3340 passed, 6 skipped, 31 deselected (`pytest -q`);
-31 passed, 3346 deselected (`pytest -q -m slow`).
+**Current test status:** 3359 passed, 6 skipped, 31 deselected (`pytest -q`);
+31 passed, 3365 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
 bounds-checked slice indexing, labeled-block `break <value>`, and
