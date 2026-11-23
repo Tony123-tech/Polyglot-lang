@@ -1761,6 +1761,9 @@ class Translator:
         self._method_return_types.clear()
         self.impl_blocks.clear()
         # Pass 1: collect struct / enum / impl names.
+        from termination import check_program
+
+        self._proven_terminating = check_program(program)
         for item in program.items:
             if isinstance(item, StructDecl):
                 self.struct_names.add(item.name)
@@ -1808,6 +1811,7 @@ class Translator:
             body.append(self.translate_struct(item))
             emitted_classes.add(item.name)
 
+        self._proven_terminating = check_program(program)
         for item in program.items:
             if isinstance(item, ImplBlock):
                 continue
@@ -2099,7 +2103,9 @@ class Translator:
     ) -> ast.FunctionDef | ast.AsyncFunctionDef:
         from termination import check_function
 
-        check_function(fn)
+        check_function(
+            fn, proven_terminating=getattr(self, "_proven_terminating", None)
+        )
         params: list[ast.arg] = [self.translate_fn_param(p) for p in fn.params]
         has_self = bool(params) and params[0].arg == "self"
         if is_method and not has_self:

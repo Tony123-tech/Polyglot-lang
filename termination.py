@@ -349,7 +349,7 @@ def _recursive_call_decreases(
     return decreasing
 
 
-def check_function(fn: FnDecl) -> None:
+def check_function(fn: FnDecl, *, proven_terminating: set[str] | None = None) -> None:
     """Raise TerminationError if an annotated function cannot be proven total."""
     if not fn.terminates:
         return
@@ -522,6 +522,12 @@ def check_function(fn: FnDecl) -> None:
                         value,
                         _call_site_span(value, getattr(fn, "span", None)),
                     )
+            elif (
+                isinstance(value.func, Ident)
+                and proven_terminating
+                and value.func.name in proven_terminating
+            ):
+                pass
             else:
                 fail(
                     "a non-recursive function call is outside the supported "
@@ -575,3 +581,45 @@ def check_function(fn: FnDecl) -> None:
             visit(child, lower_bounds)
 
     visit(fn.body, {})
+
+
+def check_program(program) -> set[str]:
+    """Verify all #[terminates] functions in topological order (acyclic calls)."""
+    fns = {
+        it.name: it
+        for it in getattr(program, "items", [])
+        if isinstance(it, FnDecl) and it.terminates
+    }
+    verified: set[str] = set()
+    visiting: set[str] = set()
+
+    def _verify(name: str) -> None:
+        if name in verified:
+            return
+        if name in visiting:
+            fn = fns[name]
+            raise TerminationError(
+                fn.name,
+                "mutual recursion is outside the supported termination proof",
+                "break the mutual cycle or use an explicit decreasing measure",
+                fn.line,
+                fn.col,
+                getattr(fn, "span", None),
+            )
+        visiting.add(name)
+        fn = fns[name]
+        for node in _walk(fn.body):
+            if (
+                isinstance(node, Call)
+                and isinstance(node.func, Ident)
+                and node.func.name in fns
+                and node.func.name != name
+            ):
+                _verify(node.func.name)
+        check_function(fn, proven_terminating=verified)
+        visiting.remove(name)
+        verified.add(name)
+
+    for fname in fns:
+        _verify(fname)
+    return verified

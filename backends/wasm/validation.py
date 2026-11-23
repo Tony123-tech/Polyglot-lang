@@ -29,7 +29,7 @@ from ast_nodes import (
 )
 from backends.errors import InvalidIntegerParseLiteralError, check_host_call_arity
 from backends.python.translator import TypeErrorForBoundary
-from termination import check_function
+from termination import check_function, check_program
 
 _INTEGER_TYPES = {
     "i8",
@@ -135,12 +135,12 @@ def _validate_let(stmt: LetStmt, locals_: dict[str, str]) -> None:
         )
 
 
-def _validate_item(item: Any) -> None:
+def _validate_item(item: Any, proven_terminating: set[str] | None = None) -> None:
     if isinstance(item, FnDecl):
         if item.terminates:
             # TerminationError carries ``reason`` with the stable message the
             # differential harness normalizes to E002.
-            check_function(item)
+            check_function(item, proven_terminating=proven_terminating)
         locals_: dict[str, str] = {}
         for param in item.params:
             name = getattr(param.pattern, "name", None)
@@ -172,12 +172,13 @@ def _walk(node: Any, locals_: dict[str, str]) -> None:
 
 def wasm_preflight_validate(program: Program) -> None:
     """Run the shared frontend checks before any WASM-specific lowering."""
+    proven = check_program(program)
     for item in program.items:
         if isinstance(item, FnDecl):
-            _validate_item(item)
+            _validate_item(item, proven)
         elif hasattr(item, "items"):
             for nested in item.items:
-                _validate_item(nested)
+                _validate_item(nested, proven)
 
 
 __all__ = ["wasm_preflight_validate"]

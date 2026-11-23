@@ -1131,6 +1131,9 @@ class RustCodegen:
         self._payload_enum_names = set()
         self.borrow_state_types = set()
 
+        from termination import check_program
+
+        self._proven_terminating = check_program(program)
         for item in program.items:
             if isinstance(item, StructDecl):
                 self.struct_names.add(item.name)
@@ -1195,6 +1198,7 @@ class RustCodegen:
             self.generate_struct(struct)
             self._end_fragment(f"struct:{struct.name}", start)
         emitted_impls: set[str] = set()
+        self._proven_terminating = check_program(program)
         for item in program.items:
             if not isinstance(item, StructDecl):
                 if isinstance(item, ImplBlock):
@@ -1339,7 +1343,9 @@ class RustCodegen:
     def generate_fn(self, fn: FnDecl, *, as_method: bool) -> None:
         from termination import check_function
 
-        check_function(fn)
+        check_function(
+            fn, proven_terminating=getattr(self, "_proven_terminating", None)
+        )
         self.set_origin(fn)
         previous_string_bindings = self.string_bindings
         self.string_bindings = set(previous_string_bindings)
