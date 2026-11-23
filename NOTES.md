@@ -16,14 +16,72 @@
 - Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries, intrinsics, `#[packed]`, `#[unchecked]`, overflow reports/rotations/conversions/buffers
 - Runtime failures: located `E002` guards on both backends, IEEE 754 float division
 - Ownership: explicit `drop(x)`, borrow-vs-move conflicts, bounded NLL, loop fixpoint
+- Rust ergonomics: trait coherence/composition/dispatch plans, arena handles, async boundaries
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3411 passed, 6 skipped, 31 deselected (fast suite, after the `drop`/borrow batch).
+**Latest baseline:** 3498 passed, 6 skipped, 31 deselected (fast suite, after the Rust ergonomics batch).
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
+
+## Rust ergonomics — plans that answer a decision, not code that pretends
+
+**Goal:** cover the three things Rust programmers ask for most — coherent trait
+extension without orphan-rule walls, splitting a value into disjoint mutable
+views instead of cloning it, and async/PyO3 boundaries that neither lose error
+context nor leak work on cancellation — in a form that can be tested without
+Cargo.
+
+**The shape of the answer.** Each capability is a *plan*: a function that
+validates its input, returns a deterministic description (emitted headers,
+arm order, cleanup order, schedule), and raises `PolyglotError` with the
+framework codes when the input is incoherent. That is a deliberate choice over
+generating Rust source, because the value of each feature is a decision — do my
+impls cohere, are my dispatch arms disjoint, is my cleanup order correct —
+and a decision is cheaper to assert than a ninety-line `unsafe` block that no
+test compiles. It also keeps `cargo check`/`cargo clippy` out of the loop,
+which is why `backends/rust/` needed no new Cargo scaffolding: importing it
+costs 0.09s and builds nothing.
+
+**Where each rule comes from.** `rste_impl_plan` encodes the orphan rule
+(`impl` is legal when the crate owns the trait *or* the type) and refuses a
+blanket impl plus a concrete impl unless the concrete type is in the blanket's
+explicit exclusion list — with the flag `requires_specialization=False` only
+when the plan really is stable-Rust reachable. `rste_fast_path` refuses to
+infer coverage: `covers` is explicit, two arms sharing a type is `E002`, and a
+generic `Copy` arm reports `stable=False`. `rsbe_arena_simulate` runs the
+protocol rather than describing it, so "a stale key is refused after the slot
+is reused" is observed in a trace, not asserted in prose. `rsai_gil_plan`
+refuses a Python-object operation in a released region, which is the PEP 667
+hazard `allow_threads` creates, instead of documenting it in a comment.
+
+**What is not claimed.** No generated code, no measured speedup, no soundness
+guarantee for the emitted Rust, and no trait solving: associated-type equality,
+lifetime bounds, and auto-trait leakage are outside the plan, so a plan it
+accepts can still be rejected by rustc. All five limits are written down in
+SPEC 10.56 rather than left to the reader.
+
+### Bug 1 — the emitted split binding was not valid Rust
+
+**Symptom:** the smoke run of `rsbe_split_fields(["a", "b"])` printed
+`('let &mut a = &mut self.a;', 'let &mut b = &mut self.b;')`.
+
+**Cause:** the pattern was copied from a slice-window split, where
+`let &mut w = &mut xs[0..3];` is correct because the right-hand side is a
+`&mut [T]` and the pattern destructures the reference. For a field access the
+right-hand side is already a place of type `&mut T`, so the extra `&mut` in the
+pattern makes the binding a `&mut &mut T` — the plan was emitting code that
+does not compile, in a batch whose whole point is that the emitted strings are
+trustworthy.
+
+**Fix:** field views emit `let a = &mut self.a;`, and the window views keep
+their destructuring pattern because that one is correct.
+
+**Lesson:** an emitted string is a claim about Rust. A plan that prints
+uncompilable code is worse than one that prints nothing, because the string is
+what a reader copies.
 
 ## Explicit release and borrow conflicts — one ownership pass, five states
 

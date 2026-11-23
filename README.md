@@ -212,7 +212,7 @@ examples and their tests live in [docs/advanced.md](docs/advanced.md).
 
 ### Expansion frontier
 
-Five bounded engineering models, each with a documented limit rather than a
+Six bounded engineering models, each with a documented limit rather than a
 claim:
 
 | Surface | What it proves | Docs |
@@ -222,10 +222,13 @@ claim:
 | Hygienic macro engine | `name#scope` binders, definition-site free names, typed holes, cross-backend opcode parity | [docs/macros.md](docs/macros.md) |
 | Shared-memory ring arena | `mmap` ring with zero-copy `memoryview` reads, FIFO leases, epoch-fenced borrow leases, blunt reclaim | [docs/ipc_arena.md](docs/ipc_arena.md) |
 | Bootstrapped compiler core | Subset front end to canonical IR, IR re-read to a fixed-point digest, stage diff | [docs/bootstrap.md](docs/bootstrap.md) |
+| Rust ergonomics plans | Trait coherence/composition/dispatch, disjoint split and generational arena plans, async error/deadline/GIL boundaries — plans, not code | [docs/rust_ergonomics.md](docs/rust_ergonomics.md) |
 
 `tests/test_cluster_frontier.py`, `tests/test_dst.py`, `tests/test_macro_engine.py`,
-`tests/test_ipc_arena.py`, and `tests/test_bootstrap.py` cover them; all are
-deterministic and run in the fast suite.
+`tests/test_ipc_arena.py`, `tests/test_bootstrap.py`,
+`tests/test_traits_ext.py`, `tests/test_borrow_ergo.py`, and
+`tests/test_async_interop.py` cover them; all are deterministic and run in the
+fast suite.
 
 ## Error codes (E001–E009)
 
@@ -320,8 +323,8 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3411 passed, 6 skipped, 31 deselected (`pytest -q`);
-31 passed, 3417 deselected (`pytest -q -m slow`).
+**Current test status:** 3498 passed, 6 skipped, 31 deselected (`pytest -q`);
+31 passed, 3504 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
 unchecked slice indexing, labeled-block `break <value>`, and

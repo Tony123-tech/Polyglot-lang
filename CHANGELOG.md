@@ -2,6 +2,35 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Rust ergonomics plans: traits, borrow splitting, async boundaries
+
+- `backends/rust/traits_ext` plans coherent extension (`rste_impl_plan`: orphan
+  rule, duplicate impls, blanket-versus-concrete overlap with an explicit
+  exclusion-list escape and a `requires_specialization` flag), blanket adapter
+  composition (`rste_compose`: ordered chains, `E005` cycles, `E002` unreachable
+  targets), disjoint fast-path dispatch (`rste_fast_path`: explicit `covers`,
+  disjointness proof, honest stable-versus-nightly flag), and iterator/`Try`
+  associated-type shapes. Adds SPEC 8.22.1-8.22.5.
+- `backends/rust/borrow_ergo` plans field and slice-window splits
+  (`rsbe_split_fields`, `rsbe_split_windows`: whole-struct borrow refusal,
+  overlap and bounds errors), generational arena shapes and an executable
+  epoch simulation (`rsbe_arena_plan`, `rsbe_arena_simulate`: a stale key is
+  refused even after the slot is reused, an exhausted epoch is reported burned
+  instead of wrapped), and reverse-order cleanup guards (`rsbe_scope_exit`).
+  Adds SPEC 8.22.6-8.22.7.
+- `backends/rust/async_interop` models structured error chains and
+  non-short-circuiting aggregation, retry/deadline/cancel plans with explicit
+  cancellation windows and an idempotence caveat, and typed PyO3 conversions
+  plus a GIL-region check that refuses a Python-object operation inside
+  `allow_threads`. Adds SPEC 8.22.8-8.22.10.
+- All of it is plan-level: no Rust is generated and no Cargo is invoked, so
+  `cargo check`/`cargo clippy` do not cover it; the coverage is
+  `tests/test_traits_ext.py`, `tests/test_borrow_ergo.py`, and
+  `tests/test_async_interop.py` (87 cases). No performance or soundness claim
+  is made, and the limits are in SPEC 10.56. `docs/rust_ergonomics.md`
+  documents each plan.
+- Fast baseline moves to 3498.
+
 ## Unreleased — Explicit `drop`, borrow conflicts, and a loop fixpoint
 
 - `drop(x)` is now a checked language operation rather than a name that did not
