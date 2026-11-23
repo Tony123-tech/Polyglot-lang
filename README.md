@@ -1,51 +1,50 @@
 # polyglot-lang
 
-A Rust-like language with a shared lexer, parser, and AST, plus a Python backend, a native PyO3 extension backend, an experimental compute-only WebAssembly backend, and an experimental Zig backend.
+**polyglot-lang** (v0.3.8) is a Rust-like language with one shared front end
+(lexer, parser, AST) and several backends: a Python transpiler with no native
+dependencies, a native Rust/PyO3 extension backend, an experimental WebAssembly
+backend, an experimental Apple-Silicon JIT backend, and an experimental Zig
+backend. It also ships pure-Python language and runtime models (Gleam-style
+ADTs, OTP actors, Mojo-style origin tracking) for static analysis and runtime
+verification.
 
-## Why polyglot-lang?
-
-You want Rust's syntax, type safety, and explicit error handling.
-But you don't want to rewrite your whole project in Rust, or set up
-`Cargo.toml` + PyO3 + maturin just to speed up one function.
-
-`polyglot-lang` lets you write one `.poly` file:
+Write one `.poly` file and choose how to run it:
 
 ```polyglot
 fn add(a: i64, b: i64) -> i64 { a + b }
 ```
 
-and choose how to run it:
+## Backends at a glance
 
-- **Python backend** — `polyglot run add.poly` (no build step, no Rust)
-- **Native backend** — `polyglot build add.poly` (compiles to a PyO3 extension)
-- **WASM backend (experimental)** — `polyglot build add.poly --backend wasm` (writes WebAssembly text format)
-- **Zig backend (experimental)** — `polyglot run add.poly --backend zig` (compiles through the system Zig toolchain and loads the result with `ctypes`)
+| Backend | Default flag | Artifact | Requirements | Contract |
+|---------|--------------|----------|--------------|----------|
+| Python | `python` | Runs in-process (Python AST) | None | Parity baseline |
+| Native | `native` (`build` default) | PyO3 extension (`.so`/`.pyd`) | `cargo` + `rustc` | Parity baseline |
+| WASM | `wasm` | `.wat` via wasmtime | `wasmtime` extra | Experimental, compute-only |
+| JIT | `jit` | AArch64 machine code | macOS, Apple Silicon | Experimental |
+| Zig | `zig` | C-ABI dynamic library via `ctypes` | `zig` on `PATH` | Experimental |
 
-The Python and native backends share a front end and are parity-tested for
-the documented language subset. Unsupported features and some runtime behavior
-remain backend-specific; see the support matrix and known limitations below.
-The WASM and Zig backends are opt-in experiments and are not part of that
-parity contract. No `Cargo.toml` or `pyproject.toml` scaffolding is needed for
-a single-file program.
+Python and native are parity-tested for the documented language subset. WASM,
+JIT, and Zig are opt-in experiments and are **not** part of that parity
+contract. No `Cargo.toml` or `pyproject.toml` scaffolding is needed for a
+single-file program.
 
 ## Quick Start
 
-New to Rust-like syntax? See [GUIDE.md](GUIDE.md) for a step-by-step tutorial.
+Install:
 
 ```sh
 pip install polyglot-lang
 ```
 
-Python 3.14.8 or later is required.
-
-Create `hello.poly`:
+Python 3.14.8 or later is required. Create `hello.poly`:
 
 ```polyglot
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn main() -> i64 { add(2, 3) }
 ```
 
-Run it:
+Run it with the Python backend (no build step):
 
 ```sh
 polyglot run hello.poly
@@ -57,107 +56,96 @@ Output:
 5
 ```
 
-Build a native extension (requires a Rust toolchain and Cargo):
+Build a native extension (requires a Rust toolchain):
 
 ```sh
 polyglot build hello.poly
 python -c "import hello; print(hello.add(2, 3))"
 ```
 
-If you don't have a Rust toolchain, you can skip this step. The Python backend (`polyglot run`) works without it.
+The first native build takes about two minutes; warm cached builds take seconds.
+The Python backend has no build step. If you lack a Rust toolchain, skip the
+native build — `polyglot run` works without it.
 
-> **First native build takes about 2 minutes.** Subsequent builds reuse the
-> cache and take a few seconds. The Python backend (`polyglot run`)
-> has no build step.
+New to Rust-like syntax? See [GUIDE.md](GUIDE.md) for a step-by-step tutorial.
 
-## Status
+## CLI reference
 
-| Milestone | Status | Scope                                                                                                                                        |
-| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| N0        | Done   | Empty program → Cargo → load module                                                                                                          |
-| N1        | Done   | Free functions, `i64`/`f64`/`bool`/`String`, `Vec`, structs with `impl` exposed as PyO3 classes, and `if`                                    |
-| N2a       | Done   | Native `while`, `loop`, and `match`                                                                                                          |
-| N2b       | Done   | `Vec` methods: `push`, `pop`, `len`, and indexing                                                                                            |
-| N2c       | Done   | Multiple structs/enums as `pyclass`                                                                                                          |
-| N2d       | Done   | Improved caching and Rust-error mapping to source lines                                                                                      |
-| N3        | Done   | `Vec` iteration, `contains`, `sort`/`sort_by`, `map`/`filter`/`fold`, slicing, and mutation methods                                          |
-| N4        | Done   | String length/iteration, split/join, replace/trim, case conversion, `parse`, `format!`, `write!`, slicing, and comparison                    |
-| N5        | Done   | Option/Result, `?`, `if let`, async free functions, match exhaustiveness warnings, and Python sandboxing                                     |
-| N6        | Done   | Additional `Vec` and `String` methods, including search, slicing, rotation, and sort helpers                                                 |
-| N7        | Done   | Distinct `usize`/`isize` types, explicit casts, and target-width-aware boundary checks                                                       |
-| N8        | Done   | Collections-layer `HashMap` operations and Python/native dictionary boundaries                                                               |
-| N9        | Done   | Platform-defined Option/Result combinators and native Result continuations                                                                   |
-| N10       | Done   | SPEC v0.2.7 and final conformance status                                                                                                     |
-| M10       | Done   | Opt-in termination checking for `#[terminates]` functions                                                                                    |
-| F1        | Done   | Installable package, CLI, examples, and delivery documentation                                                                               |
-| M3        | Done   | HashMap entry completion, `BTreeMap`, `HashSet`, and nested `HashMap` depth 1                                                                |
-| M4        | Done   | Additional fixed-width integer types and the cross-backend cast matrix                                                                       |
-| M5        | Done   | Send-aware `PyFuture`, async `&self`/`&mut self` impl methods, drop-based cancellation, a `mio` reactor with timers, and an `asyncio` bridge |
+```sh
+polyglot run <file>        [--backend python|native|wasm|jit|zig] [--target-width N] [--error-format text|json] [--verbose]
+polyglot build <file>      [--backend python|native|wasm|zig] [--out-dir <dir>] [--incremental] [--error-format text|json] [--verbose]
+polyglot check <file>                  [--all-errors] [--error-format text|json] [--verbose]
+polyglot lsp
+polyglot compile --backend python|native|wasm|jit|zig (--file <path> | --stdin) [--trusted] [--error-format text|json] [--verbose]
+polyglot exec (<file> | --stdin)       [--backend python|native|wasm|jit|zig] [--target-width N] [--result-file <path>] [--error-format text|json] [--verbose]
+polyglot visualizer [--host 127.0.0.1] [--port 8765] [--no-open] [--verbose]   (alias: gui)
+polyglot telemetry [--section all|telemetry|cache|hotpatch] [--json] [--color] [--save-as NAME] [--compare NAME]
+polyglot timings [--json] [--color] [--save-as NAME] [--compare NAME]
+polyglot cache   [--json] [--color] [--save-as NAME] [--compare NAME]
+polyglot hotpatch[--json] [--color] [--save-as NAME] [--compare NAME]
+```
 
-**Current test status:** 2979 passed, 6 skipped, 24 deselected (`pytest -q`); 24 passed, 3030 deselected (`pytest -q -m slow`). The experimental Zig SIMD/parallel C-ABI defects have been fixed in `zig/backend.py` (vector `extern struct` wrappers, a single `std` import, and eviction of stale zero-byte dylibs); all four previously failing cases now pass.
+| Command | What it does |
+|---------|--------------|
+| `run` | Compiles and executes a file; prints `main()`'s return value when present. `--target-width 32\|64` simulates that `usize`/`isize` width on the Python backend only. |
+| `build` | Compiles only. Native emits an extension module, WASM writes a `.wat`, Zig copies a C-ABI dynamic library. All print the artifact path. `--incremental` reuses per-function Rust fragments across native rebuilds. |
+| `check` | Parses, translates (Python path only — no `--backend`), and runs `#[terminates]` checks without executing. `--all-errors` reports every top-level parse error. |
+| `lsp` | Starts the stdio language server (`textDocument/publishDiagnostics` on open/change/save). |
+| `compile` | Compatibility command used by the HTTP executor; prints exported top-level names. |
+| `exec` | Compiles and executes like `run`, prints program output only, and — with `--result-file` — writes JSON with compile/run timings, peak RSS, return value, and structured `E001`–`E008` diagnostics. |
+| `visualizer` (`gui`) | Local dependency-free web UI for the AST, monomorphization diff, error spans, and side-by-side Python/native output. Binds to `127.0.0.1` by default; runs submitted code as trusted local code. |
+| `telemetry`/`timings`/`cache`/`hotpatch` | Print compile-phase timings, cache hit rates, monomorphization counts, and hot-patch status. `--save-as NAME` and `--compare NAME` persist and diff baselines outside the workspace. |
 
-## Support matrix
+Errors use the toolchain five-line format (six lines when a span is available);
+pass `--verbose` for a full traceback. `--error-format text|json` is supported
+on `run`, `build`, `check`, `compile`, and `exec`; JSON emits one object with
+`code`, `message`, `line`, `col`, `span`, and `source`.
 
-| Feature                                                                        | Python backend   | Native backend |
-| ------------------------------------------------------------------------------ | ---------------- | -------------- |
-| Vec, String, Option, Result                                                    | ✅               | ✅             |
-| HashMap (core ops)                                                             | ✅               | ✅             |
-| HashMap mutable iterators (`iter_mut`, `values_mut`)                           | ✅               | ✅             |
-| BTreeMap                                                                       | ✅               | ✅             |
-| HashSet                                                                        | ✅               | ✅             |
-| Nested HashMap (depth 1)                                                       | ✅               | ✅             |
-| Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, isize, usize) | ✅               | ✅             |
-| `include!` directive                                                           | ✅               | ✅             |
-| Bundled `std:` standard library                                                | ✅               | ✅             |
-| `vec![...]` and `vec![value; count]`                                           | ✅               | ✅             |
-| `String::from(...)`                                                            | ✅               | ✅             |
-| Lazy `Option`/`Result::unwrap_or_else`                                         | ✅               | ✅             |
-| `std:fs` helpers (trusted host seam)                                           | ✅ (trusted)     | ✅ (trusted)   |
-| `if let` in expression position (`Some`/`None`/`Ok`/`Err`)                     | ✅               | ✅             |
-| HashMap `entry(k).or_default()`                                                | ✅               | ✅             |
-| Error codes (E001–E008)                                                        | ✅               | ✅             |
-| Structured fix hints in CLI JSON and LSP diagnostics                           | ✅               | ✅             |
-| LSP `publishDiagnostics` on open/change/save                                   | ✅               | ✅             |
-| `#[terminates]` checking                                                       | ✅               | ✅             |
-| Multiple self-recursive calls in `#[terminates]` proofs                        | ✅               | ✅             |
-| async free functions                                                           | ✅ (synchronous) | ✅             |
-| async `&self` / `&mut self` impl methods                                       | ✅               | ✅             |
-| cross-thread await with Send captures                                          | n/a              | ✅             |
-| drop-based cancellation                                                        | n/a              | ✅             |
-| reactor timer wakeups                                                          | n/a              | ✅             |
-| `asyncio` awaiting of pending futures                                          | n/a              | ✅             |
-| Box patterns                                                                   | ✅               | ⬜ Deferred    |
-| Payload enum slices                                                            | ✅               | ⬜ Deferred    |
+Backend requirements: Python — none; native — Rust toolchain (`cargo`, `rustc`)
+and PyO3-compatible build tooling; WASM — optional `wasm` extra (`wasmtime`);
+JIT — Apple Silicon (`MAP_JIT`); Zig — `zig` on `PATH` (`zig version`).
 
-`BTreeMap` iteration is sorted by key in both backends. `HashSet`
-iteration order is unspecified; sort before comparing. `get_mut` on
-`BTreeMap`/`HashSet` returns an owned copy at the native Python boundary
-(see SPEC 8.10.2 and 10.20).
+## Support & parity
 
-The experimental WASM backend is not part of this matrix. It supports only
-`i64` and `bool` values, with no strings, aggregates, or host imports.
+The Python and native backends share a front end and are parity-tested for the
+documented subset:
+
+| Feature | Python | Native |
+|---------|--------|--------|
+| Vec, String, Option, Result | ✅ | ✅ |
+| HashMap / BTreeMap / HashSet | ✅ | ✅ |
+| Nested HashMap (depth 1) | ✅ | ✅ |
+| Integer types (i8…u128, isize, usize) | ✅ | ✅ |
+| `include!` directive; bundled `std:` library | ✅ | ✅ |
+| `vec![...]`, `String::from(...)`, lazy `unwrap_or_else` | ✅ | ✅ |
+| `if let` (`Some`/`None`/`Ok`/`Err`), statement & expression position | ✅ | ✅ |
+| `HashMap::entry(...)` (`or_default`, `or_insert`, …) | ✅ | ✅ |
+| Error codes `E001`–`E008` + structured fix hints | ✅ | ✅ |
+| LSP `publishDiagnostics` on open/change/save | ✅ | ✅ |
+| `#[terminates]` checking, incl. multiple self-recursive calls | ✅ | ✅ |
+| `std:fs` trusted host seam | ✅ (trusted) | ✅ (trusted) |
+| Async free functions | ✅ (synchronous) | ✅ |
+| Async `&self` / `&mut self` impl methods | ✅ | ✅ |
+| Cross-thread Send awaits, drop-based cancellation, reactor timers | ⬜ | ✅ |
+| Box patterns, payload enum slices | ✅ | ⬜ Deferred |
+
+`BTreeMap` iteration is sorted by key in both backends; `HashSet` iteration order
+is unspecified — sort before comparing. `get_mut` on `BTreeMap`/`HashSet`
+returns an owned copy at the native Python boundary (SPEC 8.10.2, 10.20).
 
 ### Experimental Zig backend
 
-The Zig backend is a separate opt-in execution mode. It is not part of the
-Python/native parity contract, and it does not replace either backend for
-normal use. It is selected with `--backend zig` on `run`, `build`, `exec`, and
-`compile`, or with `get_backend("zig")`.
-
-| Feature                                                                        | Zig backend    | Notes                                                                            |
-| ------------------------------------------------------------------------------ | -------------- | -------------------------------------------------------------------------------- |
-| Top-level function definitions and C-ABI wrappers                              | ✅             | The tested subset is intentionally narrow                                        |
-| `let`, assignment, `while`, range `for`, `return`, binary and cast expressions | ✅             | See SPEC 8.12                                                                    |
-| Integer casts                                                                  | ✅             | Integer targets only; float casts are not lowered                                |
-| Saturating arithmetic                                                          | ✅             | `+`, `-`, and `*` with a trailing pipe, clamped at declared bounds               |
-| Arbitrary bit-width `uN`/`iN` (`0..=65535`)                                    | ✅ Zig-native  | Python C ABI exposes 64 bits only                                                |
-| `#[parallel]` range-loop splitting                                             | ✅             | Direct `for i in start..end` loops only                                          |
-| `SimdN<T>` and `Simd::*` builtins                                              | ✅             | `splat`, `load`, `store`, `reduce_add`, `reduce_mul`, `reduce_min`, `reduce_max` |
-| Structs, enums, `if`, `match`, strings, `Vec`, `Option`, `Result`              | ⬜ Not lowered | Outside the current Zig contract                                                 |
-| Ordinary user-function calls                                                   | ⬜ Not lowered | Only the SIMD builtins are special-cased today                                   |
-| Importable Python extension from `polyglot build`                              | ⬜ No          | The artifact is a C-ABI shared library, not a PyO3 module                        |
-
-Quick example:
+Opt-in (`--backend zig` on `run`, `build`, `exec`, `compile`, or
+`get_backend("zig")`); not part of the Python/native parity contract. The tested
+subset covers top-level functions, `let`/assignment, `while`/`loop`/range `for`,
+`return`, binary and cast expressions, signed `/`/`%` (`@divTrunc`/`@rem`),
+bounds-checked slice indexing, labeled-block `break <value>`,
+`Result<T, PillarError>` → `PillarError!T`, saturating arithmetic, arbitrary
+bit-width `uN`/`iN` (`0..=65535`), `#[parallel]` range-loop splitting, and
+`SimdN<T>` builtins. Structs, enums, `if`, `match`, strings, `Vec`, `Option`,
+and ordinary user-function calls are not lowered. The artifact is a C-ABI shared
+library (`__cabi_*` symbols) loaded with `ctypes`, not an importable Python
+extension. See [docs/zig.md](docs/zig.md) and SPEC 8.12.
 
 ```polyglot
 fn main() -> i64 { (250 as u8 +| 20 as u8) as i64 }
@@ -167,455 +155,173 @@ fn main() -> i64 { (250 as u8 +| 20 as u8) as i64 }
 polyglot run sat.poly --backend zig   # prints 255
 ```
 
-The backend requires `zig` on `PATH`. It writes generated Zig and a cached
-dynamic library under `~/.cache/polyglot-zig`, keyed by a hash of the generated
-source. `polyglot build --backend zig` copies the cached library next to the
-source (as `<stem>.so` on macOS); load it with `ctypes`, not `import`. See
-[docs/zig.md](docs/zig.md) for the full feature guide and boundaries.
+Zig caches generated Zig and its dynamic library under `~/.cache/polyglot-zig`,
+keyed by a hash of the generated source. `polyglot build --backend zig` copies
+the cached library next to the source (`.so` on macOS).
 
-## Features
+### Experimental language & runtime models
 
-- **Shared front end:** Turns source text into tokens, a parsed program, and AST nodes.
-- **Python backend:** Translates the Rust-like AST to a Python AST, then compiles and executes it.
-- **Native backend:** Generates Rust source with PyO3, builds it with Cargo, and loads the resulting Python extension (`.so` on macOS and Linux, `.pyd` on Windows).
-- **WASM backend (experimental):** Lowers an `i64`/`bool` compute-only subset to WebAssembly text format (`.wat`) and runs it through `wasmtime`. A compile-time specialization pass (`backends.wasm.aggregates`) lowers structs, vectors, enum variants and bounded generic impls into the scalar expressions the WAT emitter already understands; a shared preflight validator (`backends.wasm.validation`) reuses the Python/native `E001`–`E008` diagnostics. Genuine dynamic aggregate ABIs remain explicit `E003` boundary skips, never false mismatches. The production frame in `backends.wasm.framework` adds checked linear-memory layout, struct/Result/string/slice ABI marshaling, validated host imports/exports, trap/OOM diagnostics, fresh per-run instances, and three-backend parity checks.
-- **Speculative JIT frame:** `runtime.jit` composes with the Apple Silicon `MAP_JIT` backend to track hot traces, emit type/null/bounds guards, deoptimize without losing live state, manage W^X code blocks, patch inline caches atomically, invalidate on redefinition/hotpatch, and report `E008` with spans. Privileged operations are model-only unless explicitly enabled on a supported host.
-- **Hard compiler/runtime frames:** Bounded mutually recursive generic expansion, trait coherence/projection/higher-rank bounds, dominance and loop-header validation, branch-aware move tracking, deterministic RAII cleanup, RCU/reactor/TOCTOU/rollback invariants, and isolated build/cache scopes live in `compiler.types.hard`, `compiler.ir.hard`, `runtime.hotpatch.hard`, and `tools.build_ci.hard`.
-- **Research frames H–K (bounded, no WASM/JIT changes):** `compiler.formal` adds bounded symbolic execution, relational refinement checks, and infeasible-path witnesses; `compiler.termination` adds explicit structural/lexicographic variants, loop-bound certificates, and deterministic resource-fuel contracts; `runtime.hard_state` adds declared points-to/alias over-approximations, total live-state schema migrations, and quarantined fault replay; `tools.adversarial` adds deterministic grammar-bounded case generation, mutation-score gating, and a spec-oracle report. Each frame is sound within its declared bound and reports `Unknown`, bound exhaustion, or a structured `E001`–`E008` diagnostic instead of claiming any undecidable property.
-- **Zig backend (experimental):** Generates Zig source, builds a dynamic library with `zig build-lib -dynamic -O ReleaseFast`, and exposes `__cabi_*` wrappers through `ctypes`. It adds Zig-style saturating arithmetic, arbitrary bit-width integers, `#[parallel]` range-loop splitting, and `SimdN<T>` vector builtins for a narrow, tested AST subset. See [docs/zig.md](docs/zig.md) and SPEC 8.12.
-- **Common backend interface:** Select a backend with `get_backend("python")`, `get_backend("native")`, `get_backend("wasm")`, or `get_backend("zig")`. Calling `backend.compile(program)` returns a namespace dictionary.
-- **CLI:** `polyglot run`, `polyglot build`, `polyglot check`, `polyglot lsp`, the compatibility `polyglot compile` command, the machine-readable `polyglot exec` command, and the interactive `polyglot visualizer` (alias `gui`).
-- **N5:** Option and Result construction and combinators, the `?` operator, `if let`, async functions, match exhaustiveness warnings, and Python sandboxing.
-- **N6:** Additional `Vec` methods (`first`, `last`, `get`, `truncate`, `rotate_*`, `fill`, `swap`, `resize`, `split_off`, `partition`, `sort_*`, `is_sorted`, and others) and `String` methods (`find`, `rfind`, `strip_*`, `split_once`, `lines`, `as_bytes`, `is_char_boundary`, and others).
-- **N7:** Distinct `usize`/`isize` types, explicit `as` boundaries, range-loop variable typing, and selectable Python target-width simulation.
-- **N8:** `HashMap<K, V>` construction and supported operations, typed `usize` length, dict conversion, key/value/iteration views, mutable iterators, entry insertion, and mutable access.
-- **N9:** Dedicated Python/native coverage for Platform-defined Result/Option combinators and native `Result::and_then`/`or_else`.
-- **M10:** `#[terminates]` enables conservative static termination checks for bounded ranges, decreasing `while` variants, and recursive descent.
-- **M5:** Send-aware `PyFuture`, async `&self`/`&mut self` impl methods with native borrow guards, drop-based cancellation, a single-threaded `mio` reactor for timer and Unix fd wakeups, cross-thread Send awaits, and an `asyncio` bridge for pending futures.
-- **Bundled stdlib:** `include!("std:...")` resolves nine pure-`.poly` modules (`math`, `algo`, `str_utils`, `fs`, `collections`, `numpy`, `linalg`, `random`, `prelude`) from the installed package on both backends. `std:` includes are deduplicated; ordinary includes are still textual.
-- **Convenience lowering:** `vec![...]` (including `vec![value; count]`) and `String::from(...)` lower to the same AST as `[...].to_vec()` and `"...".to_string()` on both backends.
-- **Lazy fallbacks:** `Option::unwrap_or_else` and `Result::unwrap_or_else` call their closure only when the value is absent or an `Err`.
-- **File helpers:** `std:fs` exposes `read_text`, `write_text`, `append_text`, `exists`, `remove`, `read_text_or`, `write_text_if_missing`, and `read_text_nonempty` as `Result`-returning wrappers over a trusted-only host seam. See SPEC 8.11.
-- **Broader `if let`:** `Some`, `None`, `Ok`, and `Err` patterns work in statement and expression positions (including `let` initialisers and call arguments) on both backends.
-- **Extended entry API:** `HashMap::entry` adds `or_default()` alongside `or_insert`, `or_insert_with`, `or_insert_with_key`, and `and_modify`.
-- **Richer toolchain diagnostics:** `polyglot exec --error-format=json` and the diagnostic helper carry deterministic fix hints, and the language server publishes `textDocument/publishDiagnostics` on open, change, and save.
-- **Framework function registry:** 100 numbered compiler/runtime/tooling functions across ten frames are discoverable through `framework_functions`; the canonical list and naming notes are in [docs/framework_functions.md](docs/framework_functions.md).
-- **Differential parity fuzzer:** `python tools/diff_fuzz.py --seed 42 --case-count 8 --json` generates deterministic programs (recursive generics, trait bounds, match guards, arithmetic/control flow, Option/Result, strings/floats, collections, stdlib includes, hotpatch-shaped state, and E001–E008 cases), runs Python and native backends under isolated cache scopes, shrinks mismatches, and writes minimal artifacts under `.artifacts/diff_fuzz/` only on a real mismatch.
-- **Three-way parity harness:** `python tools/three_way_parity.py --seed 2026 --json` runs the same deterministic 12-case matrix (scalar control flow, recursive structs/enums, nested vectors, bounded generics, and E001–E008 diagnostics) on Python, Rust-PyO3, and WASM. It normalizes codes/failure modes/outcomes, uses per-case isolated caches, and persists artifacts only for genuine divergence. Seeds `1`, `42`, `9999`, and `2026` are release-gate checks.
-- **Unified release gate:** `python tools/release_gate.py --quick` (or `--full`, optionally `--jobs N`) runs ruff, scaffold drift, core pytest suites, the `hard-frames-parity` stage (JIT/WASM/hard-frame suites plus three-way parity seeds `1`, `42`, `9999`, `2026`), the `research-frames` stage (bounded formal/termination/hard-state/adversarial suites plus an in-process spec-oracle check), bounded fuzz seeds, isolated cargo checks, docs checks, worktree cleanliness, cargo format/doc, dependency/metadata audits, doc links, benchmark regression, and release metadata in a fixed 14-stage order, then emits one pass/fail report. The research runner is injectable so verification never spawns native or JIT code.
-- **Session telemetry:** `polyglot telemetry`, `polyglot timings`, `polyglot cache`, and `polyglot hotpatch` print compile-phase timings, cache hit rates, monomorphization counts, and hot-patch status. `--save-as NAME` and `--compare NAME` persist and diff baselines outside the workspace. Hot-patch events are captured automatically from RCU, rollback-journal, and frame-migrator operations. The visualizer exposes the same data at `GET /api/telemetry` in a collapsed Telemetry panel. All payloads are path-redacted.
-- **CI and distribution:** GitHub Actions runs the full gate on macOS/Linux and publishes maturin-built native wheels per platform with SBOMs; release-only signing and trusted publishing are configured in CI. See [docs/native_distribution.md](docs/native_distribution.md).
-- **Third-party audit:** [docs/third_party_audit.md](docs/third_party_audit.md) records the read-only audit surface for `dfmacro`, `PyFrameRestart`, and the external terminal UI, with explicit scope decisions.
-- **Module isolation:** Every Python compilation registers under a unique generated module name, so separate programs do not clobber each other in `sys.modules`.
-- **Distributed actors (experimental):** An opt-in `distributed/` runtime moves actors between nodes with a versioned Python/native codec, checkpointable await journals, anchored connections, epoch/fencing leases, and checkpoint-based rollback. See [docs/distributed.md](docs/distributed.md).
+Pure-Python modules, no native toolchain, outside the Python/native parity
+contract:
 
-## CLI
-
-```sh
-polyglot run <file> [--backend python|native|wasm|zig] [--target-width N]
-polyglot build <file> [--backend python|native|wasm|zig] [--out-dir <dir>] [--incremental]
-polyglot check <file> [--all-errors]
-polyglot lsp
-polyglot compile --backend python|native|wasm|zig (--file <path> | --stdin)
-polyglot exec (<file> | --stdin) [--backend python|native|wasm|jit|zig] [--result-file <path>]
-polyglot visualizer [--host 127.0.0.1] [--port 8765] [--no-open]
-```
-
-- `run` compiles and executes a file and prints the result of `main()` when it returns a value. `--target-width 32` or `64` simulates the corresponding `usize`/`isize` width on the Python backend.
-- `build` compiles a file. The native backend produces an extension module, the WASM backend writes a `.wat` file, and the Zig backend copies a C-ABI dynamic library; all print the artifact path. `--incremental` reuses per-function Rust fragments across native rebuilds. A Zig build artifact is loaded with `ctypes`; it is not an importable Python extension.
-- `check` parses, translates (Python backend), and runs termination checks without executing. It does not take `--backend`; it always uses the Python translation path. `--all-errors` recovers from top-level syntax errors and reports every parse error it finds.
-- `lsp` runs the stdio language server.
-- `compile` is a compatibility command used by the HTTP executor and older tooling. It prints the exported top-level names.
-- `exec` compiles and executes like `run`, but prints only program output. With `--result-file`, it also writes JSON containing compile/run timings, the runner's peak RSS, the return value, and structured E001–E008 diagnostics. It is the execution primitive behind the visualizer.
-- `visualizer` (alias `gui`) starts a dependency-free local web UI for the AST, monomorphization pass, generic-to-concrete source diff, error spans, and side-by-side Python/native output. The server binds to `127.0.0.1` by default and runs submitted programs as trusted local code; see [docs/visualizer.md](docs/visualizer.md).
-- Errors use the toolchain five-line format, or six lines when a span is available. Pass `--verbose` to include a traceback.
-- `--error-format text|json` selects the diagnostic format on `run`, `build`, `check`, `compile`, and `exec`. JSON output is a single object with `code`, `message`, `line`, `col`, `span`, and `source`.
-
-The Python backend has no native dependencies. The native backend requires a Rust toolchain (`cargo` and `rustc`) and PyO3-compatible build tooling. The WASM backend requires the optional `wasm` extra (`wasmtime`). The Zig backend requires `zig` on `PATH`; run `zig version` to check it.
-
-## Include directive
-
-`include!("path.poly");` splices the items of another `.poly` file at that point. Paths are resolved relative to the including file, and includes may nest.
-
-```polyglot
-// math.poly
-fn add(a: i64, b: i64) -> i64 { a + b }
-
-// main.poly
-include!("math.poly");
-fn main() -> i64 { add(2, 3) }
-```
-
-- Includes are one-way; the included file does not see the includer's items.
-- Cycles are rejected with `E005`, and missing files with `E006`.
-- Including the same file twice is allowed and splices its items twice. This is textual inclusion: duplicate item definitions are the author's responsibility.
-- `include!` is only valid at item position. Using it inside a block is a parse error.
-- Absolute paths and `..` segments are allowed. There is no repository-containment policy.
-
-The directive is expanded before code generation, so both backends see the same spliced program.
-
-### Bundled standard library
-
-Use the reserved `std:` namespace to include a module that ships with the package:
-
-```polyglot
-include!("std:prelude");
-
-fn main() -> i64 {
-    let xs: Vec<i64> = [3, 1, 2].to_vec();
-    let sorted = bubble_sort(xs);
-    let m = match from_vec([1.0, 2.0, 3.0, 4.0].to_vec(), 2, 2) {
-        Ok(v) => v,
-        Err(_) => zeros(0, 0),
-    };
-    sorted[0] + (m.trace() as i64)
-}
-```
-
-The bundled modules are pure `.poly` and require no extra dependencies:
-
-| Module            | Contents                                                                                                 |
-| ----------------- | -------------------------------------------------------------------------------------------------------- |
-| `std:math`        | integer helpers, `gcd`/`lcm`/`pow_mod`/`is_prime`, and pure `f64` `sqrt`/`exp`                           |
-| `std:algo`        | sorting, searching, sums, extrema, `unique`, chunk sums, running maxima, and occurrence counting         |
-| `std:str_utils`   | trimming, case conversion, split/join, padding, search, reversal, and `capitalize`/`count_lines` helpers |
-| `std:fs`          | `Result`-returning text read/write/append/exists/remove helpers over a trusted host seam                 |
-| `std:collections` | `Stack`, `Queue`, `SetI64`, and `Counter`                                                                |
-| `std:numpy`       | dense `NdArray` creation, element-wise ops, reductions, and matrix products                              |
-| `std:linalg`      | `inv`, `solve`, and `determinant` via Gauss-Jordan/Gaussian elimination                                  |
-| `std:random`      | deterministic Xoshiro256\*\* `Rng` with `next_u64`/`next_f64`/ranges/shuffle                             |
-| `std:prelude`     | includes every module above                                                                              |
-
-- `include!("std:math")` appends `.poly` automatically; `include!("std:math.poly")` also works.
-- `std:` paths are always resolved inside the packaged `stdlib/` directory. Missing modules and paths that escape that directory report `E006`.
-- `std:` includes are deduplicated by resolved path, so `std:numpy` can be included by the program, `std:linalg`, and `std:prelude` at once without duplicating `NdArray`. Ordinary includes keep the textual duplicate-splice behaviour.
-- There is no package manager. `std:` modules are part of this distribution and use only features described in the specification.
-
-## Examples
-
-The `examples/` directory contains runnable programs:
-
-- `hello.poly` — function call and return value
-- `fib.poly` — recursive `#[terminates]` function
-- `vec_ops.poly` — Vec mutation, length, and sorting
-- `string_ops.poly` — split, join, and replace
-- `hashmap.poly` — HashMap insert/get/iteration
-- `option_result.poly` — Option, Result, `?`, and `if let`
-- `terminates.poly` — `#[terminates]` decreasing loop
-- `zig_parallel_simd.poly` — Zig saturating arithmetic, `#[parallel]`, and SIMD reductions
-
-Run them with:
-
-```sh
-polyglot check examples/hello.poly
-polyglot run examples/hello.poly
-```
-
-## Primitive semantics
-
-Explicit numeric types follow Rust where Python's defaults differ:
-
-- `as` casts truncate and reinterpret integer values at the target width; `isize`/`usize` are 64-bit, `f32` rounds through single precision, and `char` uses Unicode code points.
-- `/` truncates toward zero for integers; `%` keeps the dividend's sign. Float `%` uses `fmod`.
-- Annotated numeric bindings, assignments, compound assignments, and returns wrap at the declared width, matching native release builds.
-
-Overflow parity is limited to explicitly typed bindings; unannotated inference still uses Python's unbounded integers. These semantics are covered by `tests/test_native_n8_types.py`.
-
-The experimental Zig backend adds two integer features that are not part of
-the Python/native contract:
-
-- **Saturating arithmetic.** `+|`, `-|`, and `*|` clamp at the bounds of the
-  declared integer type instead of wrapping or raising.
-- **Arbitrary bit-width integers.** `uN` and `iN` for `0 <= N <= 65535` are
-  represented at their native Zig width. At the Python boundary every integer
-  is converted to a 64-bit `ctypes` value, so widths above 64 bits are
-  truncated. See SPEC 8.12 and [docs/zig.md](docs/zig.md).
-
-The Python fallback lowering rewrites the saturating operators to
-`_zig_sat_add`, `_zig_sat_sub`, and `_zig_sat_mul` and clamps at `i64` bounds;
-that fallback is not bit-width aware.
-
-## Async
-
-Native async functions return a `PyFuture` that can be awaited from Python.
-The future works both with `asyncio.run` directly and inside a coroutine:
+| Module | Inspired by | Provides | Guide |
+|--------|-------------|----------|-------|
+| `compiler/gleam_style/` | Gleam | Total ADTs, exhaustive-match witnesses (`E002`), bit-array patterns with checked bounds, cross-target capability contracts | [docs/gleam_style.md](docs/gleam_style.md) |
+| `runtime/actor_otp/` | Elixir/OTP | Share-nothing actors, deep-copied messages, `one_for_one`/`one_for_all`/`rest_for_one` supervision with restart budgets, let-it-crash `E001`–`E008` reports, bounded telemetry | [docs/actor_otp.md](docs/actor_otp.md) |
+| `compiler/mojo_bridge/` | Mojo | `Copyable`/`Movable`/`BorrowOnly` value kinds, `Owned`/`Borrowed`/`UnsafeAnyOrigin` lifetimes, SIMD lane analysis, MLIR availability probe, PEP 667-safe CPython interop | [docs/mojo_bridge.md](docs/mojo_bridge.md) |
 
 ```python
-import asyncio
+from compiler.gleam_style import AdtDef, Variant, check_exhaustive
 
-from backends import get_backend
-from lexer import lex
-from parser import parse
-
-source = """
-async fn add(a: i64, b: i64) -> i64 {
-    a + b
-}
-"""
-namespace = get_backend("native", trusted=True).compile(parse(lex(source)))
-assert asyncio.run(namespace["add"](2, 3)) == 5
+option = AdtDef("Option", (Variant("Some", ("Int",)), Variant("None")))
+check_exhaustive(option, [("Some", ("x",))])
+# error[E002]: non-exhaustive match on 'Option'; missing patterns: None
 ```
 
-The native backend uses a hand-written `PyFuture` runtime, not
-`pyo3-asyncio`. Futures are Send-aware: a future created on one thread can be
-awaited on another when its captured values are Send. Async `&self` impl
-methods also return `PyFuture`; referenced fields are cloned into owned
-locals before the future is created, so the method body does not capture
-`self`.
+## Error codes (E001–E008)
 
-A single reactor thread drives the native futures. Each task has a waker that
-re-enqueues it for polling, timers are delivered from a deadline heap, and
-Unix file-descriptor readiness uses `mio`. When Python awaits a future that is
-not ready, `PyFutureIterator` returns an `asyncio` future created on the
-running loop; the reactor completes it thread-safely with
-`loop.call_soon_threadsafe`, so there is no busy-polling. Dropping a future or
-its iterator before completion cancels it by drop semantics.
+Every diagnostic carries a stable code:
 
-The runtime also provides internal `polyglot_sleep_ms` and Unix-only
-`polyglot_readable` helpers, plus an `await_with_timeout(future, seconds)`
-helper. These are runtime and test helpers, not language-level APIs.
-`await_with_timeout` waits on a condition-variable waker with the GIL
-released and raises `PyTimeoutError` on expiry. Async `&mut self` methods are
-supported natively: an atomic borrow guard rejects overlapping calls, mutable
-fields are copied before the future runs, and field writes are committed only
-when the future completes successfully. Bare `self` use and non-`Clone` fields
-remain unsupported.
+| Code | Raised by | Meaning |
+|------|-----------|---------|
+| `E001` | `TypeErrorForBoundary` | Implicit conversion between different integer types; add an explicit `as` cast. SPEC 2.4.6–2.4.7. |
+| `E002` | `TerminationError` | `#[terminates]` function has no supported termination proof. SPEC 2.8. |
+| `E003` | `TranslateError` | AST-to-backend translation failure (unsupported construct, invalid pattern). Python backend only; native reports `E004` or `E007`. |
+| `E004` | `RustCompileError` | Generated Rust failed to compile; original source location included when available. |
+| `E005` | `IncludeCycleError` | Cyclic `include!` chain; the full chain is printed. SPEC 9.2. |
+| `E006` | `IncludeNotFoundError` | `include!` target missing or unreadable; `std:` paths escaping `stdlib/` also report this. SPEC 9.2. |
+| `E007` | `UnsupportedNativePatternError` | Source pattern cannot be represented by stable Rust (also reserved `#[gpu]`/`#[npu]`). SPEC 8.3. |
+| `E008` | `InvalidIntegerParseLiteralError` | A literal integer could not be parsed for the target type. |
 
-## Sandbox
+Fix hints are local and deterministic (currently an edit only for implicit `as`
+casts under `E001`). The language server publishes at most one diagnostic per
+validation event and does not apply UTF-16 code-unit encoding to positions
+(SPEC 10.39, 10.40).
 
-`PythonBackend(sandbox=True)` restricts `__builtins__` to a safe subset, independently of the `trusted` flag. It blocks `__import__`, `eval`, `open`, `compile`, and `globals`. The safe subset includes `abs`, `all`, `any`, `bool`, `dict`, `enumerate`, `filter`, `float`, `format`, `frozenset`, `int`, `isinstance`, `issubclass`, `iter`, `len`, `list`, `map`, `max`, `min`, `next`, `object`, `print`, `range`, `repr`, `reversed`, `round`, `set`, `slice`, `sorted`, `str`, `sum`, `tuple`, `type`, `zip`, the `True`/`False`/`None` constants, standard exceptions, and `__build_class__`.
+## Platform & runtime boundaries
 
-```python
-from backends.python.translator import PythonBackend
+### Build & test cache isolation
 
-namespace = PythonBackend(sandbox=True).compile(program)
-```
+Native builds set an isolated `CARGO_TARGET_DIR` per build/check scope (Cargo's
+`target` directory never escapes the build directory; `sccache` is used via
+`RUSTC_WRAPPER` when available). The native backend caches under
+`~/.cache/polyglot-native`; the Zig backend caches under
+`~/.cache/polyglot-zig`. Test and fuzz tooling (`tools/diff_fuzz.py`,
+`tools/three_way_parity.py`, `runtime/causal_replay/isolation.py`) runs each
+case under a scoped temporary directory so parallel runs do not race.
 
-For isolation levels A/B/C and the `X-Trusted-Token` requirement, see the
-Security section in [NOTES.md](NOTES.md#security).
-
-`trusted=False` is not a sandbox; it is a speed bump. The sandbox restricts
-`__builtins__` but does not provide process isolation. Treat untrusted input
-as requiring OS-level isolation, such as the subprocess or Docker levels
-described in `NOTES.md` (isolation B or C), with network access disabled and
-a read-only filesystem where appropriate.
-
-The visualizer's **Run** button uses the same subprocess isolation pattern,
-but the visualizer itself is a local developer tool, not a sandbox. It binds
-to `127.0.0.1` and executes submitted code as trusted local code.
-
-## Performance
-
-Native builds use `sccache` through `RUSTC_WRAPPER` when it is available.
-Cargo's `target` directory stays within each build directory. After clearing
-the cache, the first build takes about two minutes; a warm cached build takes
-seconds. 22 slow tests, including source-line mapping, are deselected by
-default.
-
-The Zig backend caches generated Zig and its dynamic library under
-`~/.cache/polyglot-zig`, keyed by a SHA-256 prefix of the generated source.
-A cache hit skips `zig build-lib`. Remove the directory to force a rebuild:
-
-```sh
-rm -rf ~/.cache/polyglot-zig
-```
-
-See [NOTES.md](NOTES.md#build-performance) for detailed build-performance notes.
-
-## Relationship to PyO3 and maturin
-
-**Quick decision:** If you want full Rust control, wheel packaging, and
-cross-platform builds, use maturin. If you want to write one Rust-like file
-and get either a Python module or a native extension without writing
-`Cargo.toml` or PyO3 scaffolding by hand, use `polyglot-lang`. Native builds
-still run Cargo internally, and the current single-file model does not yet
-expose arbitrary crate dependencies.
-
-## Error codes
-
-Diagnostics include a stable error code. The table below maps each code to its class and meaning.
-
-| Code   | Class                             | Meaning                                                                                                                                                        |
-| ------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `E001` | `TypeErrorForBoundary`            | An implicit conversion between different integer types was attempted. Add an explicit `as` cast. See SPEC 2.4.6–2.4.7.                                         |
-| `E002` | `TerminationError`                | A function annotated `#[terminates]` could not be proven to terminate. See SPEC 2.8.                                                                           |
-| `E003` | `TranslateError`                  | A generic AST-to-backend translation failure (unsupported construct, invalid pattern, etc.). Python backend only; the native backend reports `E004` or `E007`. |
-| `E004` | `RustCompileError`                | The generated Rust failed to compile. The message includes the original source location when available.                                                        |
-| `E005` | `IncludeCycleError`               | A cyclic `include!` chain was detected. The message prints the full chain. See SPEC 9.2.                                                                       |
-| `E006` | `IncludeNotFoundError`            | An `include!` target file does not exist or is unreadable. See SPEC 9.2.                                                                                       |
-| `E007` | `UnsupportedNativePatternError`   | A source pattern cannot be represented by stable Rust. See SPEC 8.3.                                                                                           |
-| `E008` | `InvalidIntegerParseLiteralError` | A literal integer could not be parsed for the target type.                                                                                                     |
-
-## Experimental engineering pillars
-
-The following table maps the ten proposed research areas to the code that
-exists today. These are prototypes and partial foundations, not guarantees of
-mid-instruction `f_code` rewriting, arbitrary formal verification, transparent
-process migration, hardware isolation, or autonomous distributed repair. They
-are not part of the stable `polyglot run` / `polyglot build` contract.
-
-| Area                      | Module                      | What it does                                                                                                                                                                        |
-| ------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Hot-patching              | `backends/hotpatch.py`      | Quiescent Python code/class swaps, live-struct migration, native symbol indirection slots; no executable-text patching                                                              |
-| Meta-compiler             | `compiler/evolution.py`     | Template-based candidate passes, isolated corpus validation, and versioned history; no self-rewriting compiler                                                                      |
-| Formal synthesis          | `proofs/synthesis.py`       | A controlled invariant grammar, interval/polynomial proofs, certificates, and dual-backend emission; no unrestricted natural-language proofs                                        |
-| Time travel               | `debug/timetravel.py`       | Checkpoint/replay and object-graph snapshots; no rewinding live CPython frames or PyO3 stacks                                                                                       |
-| Speculative transmutation | `runtime/transmute.py`      | Type profiling, background specialization, and guarded fallback; no nanosecond deoptimization guarantee                                                                             |
-| Distributed migration     | `distributed/`              | Cooperative actor checkpoint/replay with await journals and fencing; no opaque stack migration                                                                                      |
-| Distributed memory        | `distributed/dsm.py`        | In-process CRDTs (LWW/OR-Set/PN-Counter), Raft-style log/quorum, Merkle diffs, HLC/vector clocks, fencing, and MVCC; no `userfaultfd`, RDMA, or real cluster consensus              |
-| Hardware sandboxing       | `security/sandbox.py`       | Declarative `mprotect`/seccomp/MPK/CFI plans (`E007` at execution) plus real taint, fuel, bounds, and zeroization models; no OS-enforced isolation                                  |
-| GPU/NPU offloading        | `compiler/heterogeneous.py` | Affine-loop detection, textual MLIR-like IR/kernel models, fusion, tiling, quantization, and CPU fallback; real device dispatch is rejected with `E007`, as are `#[gpu]` / `#[npu]` |
-| Agent swarm/self-healing  | `swarm/agent.py`            | In-memory gossip, heuristic panic detector, HMAC-signed quorum model, reputation, canary rollout, MST healing, and span-aware audits; no real network or threshold signatures       |
-
-The opt-in `runtime/hotpatch/` subsystem is a second-generation hot-patch
-implementation documented in [docs/quantum_hotpatch.md](docs/quantum_hotpatch.md).
-
-These ten areas comprise a unified 10-pillar / 100-function capability registry
-at `runtime/capabilities.py`; both backends expose the same 100 names and emit
-the same span-aware diagnostics. See
-[docs/unified_pillars.md](docs/unified_pillars.md) for the full matrix, parity
-policy, and the generated opt-in `native_pillars/` PyO3 scaffold. See
-[docs/experimental_pillars.md](docs/experimental_pillars.md) for APIs, examples,
-and explicit limitations. These modules reuse the public `E001`–`E008`
-diagnostic codes where applicable; this does not imply a diagnostic for every
-unsupported research area or guarantee a character span when the source
-location is unavailable. The distributed runtime has its own guide at
-[docs/distributed.md](docs/distributed.md).
-
-## Known limitations
-
-- The experimental modules are not wired into the CLI. They operate on
-  quiescent checkpoints, deterministic in-process models, and explicit
-  adapters. Distributed shared memory, consensus, OS-enforced sandboxing,
-  GPU/NPU offloading, and agent swarms are **modelled**, not the privileged or
-  hardware mechanisms named in the directive; requests that need those
-  mechanisms are uniformly rejected with `E007`. Existing prototypes do not
-  patch foreign loaded executable text, rewrite a running frame's `f_code`
-  mid-instruction, parse unrestricted natural language, or guarantee nanosecond
-  deoptimization. See [docs/quantum_hotpatch.md](docs/quantum_hotpatch.md),
-  [docs/experimental_pillars.md](docs/experimental_pillars.md), and
-  [docs/unified_pillars.md](docs/unified_pillars.md).
-- `#[gpu]` and `#[npu]` function annotations are reserved but unsupported.
-  Both Python and native compilation reject them before backend lowering with
-  the same `E007` diagnostic and attribute span.
-- The lock-order proof accepts an explicit finite set of acquisition edges.
-  Cycles are rejected with an `E002` witness path; this does not prove
-  deadlock-freedom for arbitrary program code.
-- Distributed migration is cooperative replay, not opaque stack copying:
-  both nodes must run the same handlers and layouts, task handlers must be
-  deterministic up to each await, raw file descriptors never move, and the
-  in-memory transport/checkpoint store are development components. See
-  [docs/distributed.md](docs/distributed.md).
-- `is_ok`, `is_err`, `map_err`, `ok_or`, `and_then`, and `or_else` are Python-only inside let-bindings.
-- `while let Some(x) = iter.next()` is out of scope because Python has no Rust-style Option-returning `next()`.
-- Box patterns, enum payload slices, and nested Vec slice patterns are Python-only.
-- Async `&mut self` methods are supported natively through an atomic borrow
-  guard, copied mutable fields, and commit-on-success. Async `&self` methods
-  may only read fields (`self.<field>`); bare `self` use and non-`Clone` fields
-  such as payload enums are not supported.
-- Async is Experimental. The Python backend executes async functions
-  synchronously. Native futures work with `asyncio`, but the language does not
-  yet expose timer or I/O primitives: `polyglot_sleep_ms`,
-  `polyglot_readable`, and `await_with_timeout` are runtime/test helpers only.
-  See SPEC 8.2 and 10.34.
-- The WASM backend is experimental and compute-only. It supports `i64`/`bool`
-  values with no strings, aggregates, or host imports.
-- The Zig backend is experimental and opt-in. It is not part of the
-  Python/native parity contract or the main support matrix. Its current
-  lowering covers a narrow AST subset: free functions, scalar parameters and
-  returns, `let`, assignment, `while`, direct range `for`, returns, integer
-  casts, indexing, binary operators, saturating operators, arbitrary-width
-  integers, `#[parallel]` range loops, and the SIMD builtins. Structs, enums,
-  `if`, `match`, strings, collections, and ordinary user-function calls are
-  not lowered; programs outside the tested subset are not covered by the
-  contract. See SPEC 8.12 and 10.42.
-- The Zig backend exposes only a C ABI. `polyglot build --backend zig` writes a
-  shared library with `__cabi_*` symbols for `ctypes`; it is not an importable
-  Python extension module. All Python-boundary integers are 64-bit, so
-  arbitrary-width values wider than 64 bits are truncated at that boundary.
-- `#[parallel]` splits only a direct range `for` loop in the annotated function
-  into up to 16 worker threads (capped by available CPUs). It provides no
-  ordering, reduction, or synchronization guarantees, and loop bodies still
-  need to avoid data races by construction. Nested loops run serially.
-- SIMD support is limited to the named `SimdN<T>` types and the `Simd::splat`,
-  `Simd::load`, `Simd::store`, and `Simd::reduce_*` builtins. There is no
-  masking, gather/scatter, or general vector type inference.
-- `HashMap` supports the entry subset (`or_insert`, `or_insert_with`, `or_insert_with_key`, `and_modify`, `key`, `or_default`); `Entry::insert` remains deferred on the native backend. See SPEC 10.41.
-- The `#[terminates]` checker accepts multiple self-recursive calls when each
-  strictly decreases an argument under a lower-bound guard (e.g. classic
-  `fib(n-1) + fib(n-2)` with `n > 1`); an `E002` points at the offending call.
-  Guards from an enclosing scope are not visible inside a nested function or
-  closure. Mutual recursion, loops with `break`, complex arithmetic,
-  non-recursive calls, and async suspension are deferred. See SPEC 10.22.
-- `if let` supports the builtin `Some`, `None`, `Ok`, and `Err` patterns in
-  statement and expression positions, including `let` initialisers and call
-  arguments. Other if-let pattern forms still raise a translation error. See
-  SPEC 5.4 and 10.12.
-- `std:fs` calls a compiler-reserved host seam and is available only to
-  trusted compilation paths. Native `Err` payloads are `PyErr` rather than
-  language strings, so portable code should match on `Err(_)` rather than
-  binding the payload. See SPEC 8.11 and 10.38.
-- Fix hints are local and deterministic (currently an edit only for implicit
-  `as` casts); other diagnostics may provide a message without a text edit.
-  The language server publishes at most one diagnostic per validation event
-  and does not apply UTF-16 code-unit encoding to positions. See SPEC 10.39
-  and 10.40.
-- `BTreeMap` and `HashSet` are available in both backends for the type sets in SPEC 7.2.6. Deeper composition and unsupported key/value combinations remain deferred. See SPEC 10.25 and 10.27.
-- Nested `HashMap` (`HashMap<K, HashMap<K2, V2>>`) is supported at depth 1 in both backends. Deeper nesting is deferred. See SPEC 10.25.
-- `get_mut` on `BTreeMap` and `HashSet` follows the same Python-boundary copy semantics as `HashMap` (Python: mutable view; native: owned copy that cannot mutate the input). See SPEC 8.10.2 and 10.20.
-- The bundled `std:` modules are pure `.poly` and inherit the language subset. They are not a package manager, do not expose arbitrary Cargo dependencies, and only `std:` includes are deduplicated. See SPEC 9.2 and 10.35.
-
-## Running tests
-
-Run the test suite from the project root:
-
-```sh
-pytest -q
-pytest -q -m slow
-```
-
-`pytest -q` deselects slow tests by default. `pytest -q -m slow` runs only
-the slow tests. `make check` runs the linters, the docs-sync check, and the
-fast suite.
-
-Zig backend tests are skipped when `zig` is not on `PATH`. They exercise
-saturating arithmetic, arbitrary bit widths, `#[parallel]` loops, SIMD
-vectors and reductions, the lowering fallback, and the CLI `run`/`build`
-paths. Run just that file with:
-
-```sh
-pytest -q tests/test_zig_backend.py
-```
-
-The native backend caches build artifacts under `~/.cache/polyglot-native`.
-The Zig backend caches under `~/.cache/polyglot-zig`. To clear both caches:
+Clear both caches:
 
 ```sh
 rm -rf ~/.cache/polyglot-native ~/.cache/polyglot-zig
 ```
 
+### Privileged / model-only mechanisms
+
+The speculative JIT (`runtime.jit`) composes with the Apple Silicon `MAP_JIT`
+backend to track hot traces, emit type/null/bounds guards, deoptimize without
+losing live state, manage W^X code blocks, and report `E008` with spans.
+`MAP_JIT`, PEP 667 frame locals, raw addresses, and TOCTOU windows are **model
+only unless explicitly enabled on a supported host**. The experimental pillar
+modules (`compiler/gleam_style/`, `runtime/actor_otp/`, `compiler/mojo_bridge/`)
+and the research frames H–K (`compiler.formal`, `compiler.termination`,
+`runtime.hard_state`, `tools.adversarial`) do not generate native code, do not
+invoke MLIR/GPU toolchains, and do not touch `MAP_JIT`, PEP 667 frame locals, or
+raw addresses; requests needing those mechanisms are rejected with `E007`.
+Distributed shared memory, OS-enforced sandboxing, GPU/NPU offloading, and agent
+swarms are modelled, not privileged hardware mechanisms. `#[gpu]` and `#[npu]`
+are reserved but unsupported — both backends reject them with `E007` and an
+attribute span before lowering.
+
+### Sandbox
+
+`PythonBackend(sandbox=True)` restricts `__builtins__` to a safe subset
+(independent of the `trusted` flag), blocking `__import__`, `eval`, `open`,
+`compile`, and `globals`. `trusted=False` is a speed bump, not a sandbox — there
+is no process isolation. Treat untrusted input as needing OS-level isolation
+(subprocess or Docker; see NOTES.md isolation levels B/C). The visualizer binds
+to `127.0.0.1` and executes submitted code as trusted local code; it is a
+developer tool, not a sandbox.
+
+## Verification & reporting
+
+```sh
+pytest -q
+pytest -q -m slow
+pytest -q tests/test_zig_backend.py     # requires zig on PATH
+pytest -q tests/test_gleam_style.py
+pytest -q tests/test_actor_otp.py
+pytest -q tests/test_mojo_bridge.py
+```
+
+- `pytest -q` deselects slow tests by default. `make check` runs ruff, the
+  docs-sync check, and the fast suite.
+- `python tools/diff_fuzz.py --seed 42 --case-count 8 --json` runs a
+  deterministic differential fuzzer across the Python and native backends under
+  isolated cache scopes, shrinking mismatches and writing artifacts only on a
+  real mismatch.
+- `python tools/three_way_parity.py --seed 2026 --json` runs a 12-case matrix
+  on Python, Rust-PyO3, and WASM with per-case isolated caches. Seeds `1`, `42`,
+  `9999`, `2026` are release-gate checks.
+- `python tools/release_gate.py --quick` (or `--full`, `--jobs N`) runs the
+  unified 14-stage release gate (lint, drift, pytest, hard-frames-parity,
+  research-frames, fuzz, cargo checks, docs, distribution, benchmarks) and emits
+  one pass/fail report; the research runner is injectable so verification never
+  spawns native or JIT code.
+
+**Current test status:** 3224 passed, 5 skipped, 24 deselected (`pytest -q`);
+24 passed, 3152 deselected (`pytest -q -m slow`).
+
+The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
+bounds-checked slice indexing, labeled-block `break <value>`, and
+`Result<T, PillarError>` → `PillarError!T`), and three pure-Python language/
+runtime models were added: `compiler/gleam_style/`, `runtime/actor_otp/`, and
+`compiler/mojo_bridge/`.
+
 ## Architecture
 
-`source → lexer → parser → AST → (Python AST → compile/exec | Rust + PyO3 → Cargo build → extension | Zig → zig build-lib → ctypes) → Python namespace`
+```text
+source → lexer → parser → AST →
+  Python AST → compile/exec  |
+  Rust + PyO3 → Cargo build → extension  |
+  Zig → zig build-lib → ctypes           |
+  WAT → wasmtime                          |
+  → Python namespace
+```
 
-## Roadmap
+Select a backend with `get_backend("python")`, `get_backend("native")`,
+`get_backend("wasm")`, `get_backend("jit")`, or `get_backend("zig")`; each
+`backend.compile(program)` returns a namespace dictionary.
 
-N0 through N10, M10, F1, and M5 are complete. M5 now includes a real native
-reactor thread, timer and Unix fd wakeups, cross-thread Send awaits, and an
-`asyncio` bridge. Remaining known limitations are listed under
-[Known limitations](#known-limitations). The main out-of-scope items are
-`while let Some(x) = iter.next()`, language-level async timer/I/O primitives,
-and the compute-only WASM subset. The Zig backend is an additional opt-in
-experiment; its narrow AST subset and C-ABI boundaries are documented in
-[docs/zig.md](docs/zig.md). The experimental pillar modules are separate
-opt-in research foundations; see
-[docs/experimental_pillars.md](docs/experimental_pillars.md).
+## Known limitations
 
-## Notes
+- `#[gpu]` and `#[npu]` annotations are rejected with `E007` before lowering.
+- `while let Some(x) = iter.next()` and language-level async timer/I/O
+  primitives are out of scope. `polyglot_sleep_ms`, `polyglot_readable`, and
+  `await_with_timeout` are runtime/test helpers only (SPEC 8.2, 10.34).
+- Box patterns, enum payload slices, and nested Vec slice patterns are
+  Python-only; `is_ok`/`is_err`/`map_err`/`ok_or`/`and_then`/`or_else` are
+  Python-only inside let-bindings.
+- The Python backend executes async functions synchronously; native futures
+  work with `asyncio` but expose no language-level timer/I/O primitives.
+- WASM is compute-only (`i64`/`bool`, no strings, aggregates, or host imports).
+- Zig is experimental and opt-in; its narrow AST subset and C-ABI boundary are
+  not covered by the Python/native parity contract. `#[parallel]` splits only a
+  direct range `for` into up to 16 worker threads with no ordering/reduction
+  guarantees; nested loops run serially.
+- SIMD is limited to `SimdN<T>` and `splat`/`load`/`store`/`reduce_*` builtins
+  (no masking, gather/scatter, or general vector type inference).
+- The lock-order proof accepts an explicit finite set of acquisition edges;
+  cycles are rejected with an `E002` witness path (does not prove
+  deadlock-freedom for arbitrary code).
+- Distributed migration is cooperative replay, not opaque stack copying
+  (see docs/distributed.md).
 
-See [NOTES.md](NOTES.md) for design decisions, per-batch history, and the
-lessons recorded for each fixed bug.
+## Notes & license
 
-## License
+See [NOTES.md](NOTES.md) for design decisions, per-batch history, and bug
+lessons (including the Security section for isolation levels and
+`X-Trusted-Token`). See [SPECIFICATION.md](SPECIFICATION.md) for the full
+language specification.
 
-MIT License — see [LICENSE](LICENSE) for the full text.
+MIT License — see [LICENSE](LICENSE).

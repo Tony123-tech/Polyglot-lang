@@ -2,6 +2,48 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Zig 0.17.1 codegen and language/runtime models
+
+- Upgraded the Zig backend for Zig 0.17.1: signed `/` and `%` now lower to
+  `@divTrunc` and `@rem` (truncate toward zero, C semantics) because Zig
+  rejects signed division with the ordinary operators; slice indexing
+  `items[i]` lowers to bounds-checked `_zig_at`/`_zig_at_mut` helpers with
+  `std.debug.assert`; reading `.len` on a many-item pointer (`[*]T`) emits a
+  `@compileError` instead of silently reading garbage; `Result<T, PillarError>`
+  lowers to the typed error union `PillarError!T` (not `anyerror!T`) and
+  `Err(E00n)`/`Err(n)`/`Err(error.E00n)` all resolve to the matching member;
+  and labeled-block `break <value>` lowers to `break :blk_N <value>;` with an
+  untyped label, suppressing the unreachable fallthrough that Zig rejects.
+  Adds SPEC 8.12.11–8.12.14 and 11.25.
+- Added `compiler/gleam_style/` (SPEC 8.13): total ADTs with Hindley-Milner-style
+  validation, exhaustive-match checking with concrete missing-pattern witnesses
+  (`E002`), bounded recursive cycle detection, structured bit-array pattern
+  matching (`<<header:8, len:16, payload:binary>>`) with endianness and checked
+  bounds (`E001` on short buffers, no raw pointer arithmetic), and cross-target
+  capability contracts (`E007` on unsupported capabilities) across Python,
+  Rust, Zig, BEAM, and JS descriptors. Adds 10.43 and
+  `docs/gleam_style.md`.
+- Added `runtime/actor_otp/` (SPEC 8.15): share-nothing isolated actors with
+  deep-copied messages at the send boundary, structured mailboxes with
+  selective receive, OTP supervision strategies (`one_for_one`, `one_for_all`,
+  `rest_for_one`) with `RestartIntensity` budgets and `E004` escalation, and
+  let-it-crash fault classification into structured `E001`–`E008` reports with
+  a bounded telemetry ring buffer. Platform boundaries (`MAP_JIT`, PEP 667,
+  raw-address TOCTOU, model-only paths) raise `E007`. Adds 10.44 and
+  `docs/actor_otp.md`.
+- Added `compiler/mojo_bridge/` (SPEC 8.14): value/origin semantics
+  (`Copyable`/`Movable`/`BorrowOnly` × `Owned`/`Borrowed`/`UnsafeAnyOrigin`)
+  with use-after-move (`E002`), origin-escape (`E001`), and non-silent unsafe
+  widening (`E007`) diagnostics; contiguous buffer layouts with contiguity and
+  SIMD lane analysis; backend-neutral vectorized-kernel lowering; an honest
+  MLIR availability probe that reports `available: False` with the missing tool
+  names; and cold-path CPython interop with a PEP 667 hot-loop `f_locals` guard.
+  Adds 10.45 and `docs/mojo_bridge.md`.
+- Added 128 focused tests: 11 Zig codegen tests, 37 Gleam-style tests, 34
+  actor/OTP tests, and 46 Mojo-bridge tests. Updated the verified baseline to
+  3146 passed, 6 skipped, 24 deselected (`pytest -q`) and 24 passed, 3152
+  deselected (`pytest -q -m slow`).
+
 ## Unreleased — research frames H–K
 
 - Added Frame H (`compiler.formal`): bounded symbolic execution, bounded

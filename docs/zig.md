@@ -86,8 +86,12 @@ The current lowering covers:
 | Scalar parameters and returns | ✅ | Integer, `f32`/`f64`, `bool`, pointers |
 | `let` and assignment | ✅ | `mut` and immutable bindings |
 | `while` | ✅ | Standard condition loop |
+| `loop` and `break`/`continue` | ✅ | Labeled-block `break <value>` supported |
 | Direct range `for` | ✅ | `start..end` and `start..=end` |
 | `return` and block tails | ✅ | Function result |
+| Signed `/` and `%` | ✅ | Lowered to `@divTrunc` / `@rem` (truncate toward zero) |
+| Slice bounds checks | ✅ | `items[i]` lowers to `_zig_at` with `std.debug.assert` |
+| `Result<T, PillarError>` | ✅ | Lowers to `PillarError!T`; `Err(E00n)` → `error.E00n` |
 | Integer casts | ✅ | `as` to integer types |
 | Indexing | ✅ | Pointer/slice indexing |
 | Binary operations | ✅ | Arithmetic, comparison, logical |
@@ -125,6 +129,61 @@ ordinary wrapping/overflow rules.
 The Python fallback lowering in `zig/lowering.py` rewrites the operators to
 `_zig_sat_add`, `_zig_sat_sub`, and `_zig_sat_mul`. Those helpers clamp at
 `i64` bounds and are not bit-width aware.
+
+## Integer division and remainder
+
+Zig rejects `/` and `%` on signed integers. The backend lowers them to the
+truncating builtins so signed arithmetic keeps C-like semantics:
+
+| Source | Lowering |
+| ------ | -------- |
+| `a / b` (signed) | `@divTrunc(a, b)` |
+| `a % b` (signed) | `@rem(a, b)` |
+
+`@divTrunc` truncates toward zero, so `-7 / 2` is `-3` (not `-4` as floor
+division would give), and `@rem` produces a signed remainder.
+
+## Bounds-checked slice indexing
+
+`items[i]` on a slice lowers to a call to `_zig_at` (immutable) or
+`_zig_at_mut` (mutable), which asserts `i < items.len` before indexing:
+
+```zig
+fn _zig_at(comptime T: type, items: []const T, index: usize) T {
+    std.debug.assert(index < items.len);
+    return items[index];
+}
+```
+
+Many-item pointers (`[*]T`, produced by `&[T]` parameters) have no `.len`
+field in Zig. Reading `.len` on such a pointer emits a `@compileError` with a
+clear message — pass the length explicitly as a separate `usize` argument,
+matching the `#[parallel]` convention.
+
+## Structured error unions
+
+`Result<T, PillarError>` lowers to the typed error union `PillarError!T`
+(not `anyerror!T`), and `Err(E00n)` / `Err(n)` / `Err(error.E00n)` all resolve
+to the corresponding `PillarError` member:
+
+```polyglot
+fn fail() -> Result<i64, PillarError> { Err(E003) }
+```
+
+emits:
+
+```zig
+fn fail() PillarError!i64 {
+    return error.E003;
+}
+```
+
+## Labeled-block breaks
+
+`if cond { break N; } else { M }` lowers to a labeled block expression with
+`break :blk_N N;`. The label is always untyped (`blk_N: { ... }`) because a
+type annotation belongs on the variable being assigned
+(`const v: i64 = blk: { ... }`), not on the label itself.
 
 ## Arbitrary bit-width integers
 
@@ -251,7 +310,11 @@ polyglot run examples/zig_parallel_simd.poly --backend zig
 - a `#[parallel]` scaling loop over `ctypes` arrays;
 - SIMD `splat`/`load`/`store` arithmetic;
 - SIMD horizontal reduction on the example program;
-- CLI `run` and `build` with `--backend zig`.
+- CLI `run` and `build` with `--backend zig`;
+- signed `/` and `%` lowering to `@divTrunc` / `@rem`;
+- bounds-checked slice indexing via `_zig_at` / `_zig_at_mut`;
+- labeled-block `break <value>` lowering;
+- `Result<T, PillarError>` → `PillarError!T` and `Err(E00n)` resolution.
 
 Run it directly with:
 

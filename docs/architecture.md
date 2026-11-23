@@ -76,7 +76,19 @@ wrappers. It is a separate execution mode, not a third parity backend.
   arbitrary bit-width bounds, and `zig/lowering.py` rewrites saturating
   operators for the Python fallback. The backend caches under
   `~/.cache/polyglot-zig` and loads a C-ABI dynamic library through
-  `ctypes`. See [zig.md](zig.md).
+  `ctypes`. Signed `/` and `%` lower to `@divTrunc`/`@rem`, slice indexing is
+  bounds-checked, and `Result<T, PillarError>` lowers to `PillarError!T`. See
+  [zig.md](zig.md).
+- **Language & runtime models (experimental):**
+  `compiler/gleam_style/` provides total ADTs with exhaustive-match witnesses,
+  bit-array pattern matching, and cross-target capability contracts; see
+  [gleam_style.md](gleam_style.md). `runtime/actor_otp/` provides share-nothing
+  actors, OTP supervision strategies with restart budgets, and let-it-crash
+  fault reports with bounded telemetry; see [actor_otp.md](actor_otp.md).
+  `compiler/mojo_bridge/` provides value/origin lifetimes, buffer layouts with
+  SIMD lane analysis, an honest MLIR availability probe, and CPython interop
+  with a PEP 667 hot-loop guard; see [mojo_bridge.md](mojo_bridge.md). These
+  are pure-Python models: they do not generate code or invoke native toolchains.
 - **CLI/API:** `api/cli.py` implements `run`, `build`, `check`, `compile`,
   `exec`, `visualizer`/`gui`, and `lsp`; `api/` also contains the optional
   HTTP worker/server and the dependency-free visualizer
@@ -105,6 +117,9 @@ wrappers. It is a separate execution mode, not a third parity backend.
   recorded rather than silently accepted.
 - The Zig execution mode is an opt-in experiment with its own narrow subset
   and C-ABI boundary. It does not extend the Python/native parity contract.
+- The Gleam/OTP/Mojo models are analysis and runtime layers only. They never
+  generate native code, invoke MLIR/GPU toolchains, or touch `MAP_JIT`,
+  PEP 667 frame locals, or raw addresses.
 
 See [overview.md](overview.md), [../README.md](../README.md),
 [../GUIDE.md](../GUIDE.md), [../SPECIFICATION.md](../SPECIFICATION.md), and

@@ -24,6 +24,9 @@ Python 3.14.8 or later is required.
 | [CONTRIBUTING](../CONTRIBUTING.md) | Development setup, tests, Makefile, adding error codes/examples |
 | [architecture.md](architecture.md) | ASCII pipeline diagram and layer responsibilities |
 | [zig.md](zig.md) | Experimental Zig backend: saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, and boundaries |
+| [gleam_style.md](gleam_style.md) | Gleam-inspired total ADTs, exhaustive matching with missing-pattern witnesses, bit-array patterns, and cross-target contracts |
+| [actor_otp.md](actor_otp.md) | Elixir/OTP-inspired isolated actors, supervision strategies, restart budgets, crash reports, and telemetry |
+| [mojo_bridge.md](mojo_bridge.md) | Mojo-inspired value/origin semantics, buffer layouts, SIMD lowering, MLIR probing, and CPython interop |
 | [visualizer.md](visualizer.md) | Interactive AST, monomorphization, diagnostics, and dual-backend UI |
 | [experimental_pillars.md](experimental_pillars.md) | Opt-in hot-patching, meta-compiler, synthesis, time-travel, and transmutation foundations |
 | [quantum_hotpatch.md](quantum_hotpatch.md) | Opt-in `runtime/hotpatch/` primitives, native PyO3 crate, and honesty boundaries |
@@ -74,6 +77,13 @@ Python 3.14.8 or later is required.
   than an importable extension, truncates integers to 64 bits at the Python
   boundary, and provides no parallel-loop synchronization or ordering
   guarantees. See [zig.md](zig.md) and SPEC 8.12/10.42.
+- The Gleam-inspired statics (`compiler/gleam_style/`), the OTP actor runtime
+  (`runtime/actor_otp/`), and the Mojo-inspired bridge
+  (`compiler/mojo_bridge/`) are pure-Python analysis and runtime models. They
+  do not generate code, do not invoke native MLIR/GPU toolchains, and are not
+  part of the Python/native parity contract. See
+  [gleam_style.md](gleam_style.md), [actor_otp.md](actor_otp.md), and
+  [mojo_bridge.md](mojo_bridge.md) and SPEC 8.13–8.15/10.43–10.45.
 
 ## Verifying the repository
 

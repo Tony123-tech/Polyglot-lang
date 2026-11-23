@@ -532,14 +532,68 @@ with `ctypes`. It is not an importable Python extension module, so
 ### What the Zig backend does not support
 
 The current lowering covers free functions, scalar parameters and returns,
-`let`, assignment, `while`, direct range `for`, `return`, integer casts,
-indexing, binary operations, saturating operations, arbitrary-width integers,
-parallel range loops, and the SIMD builtins above. It does **not** lower
-structs, enums, `if`, `match`, strings, `Vec`, `Option`, `Result`, or ordinary
-user-function calls. Programs outside that subset are outside the Zig
-contract; use the Python or native backend for them. See
-[docs/zig.md](docs/zig.md) for the complete feature reference, SPEC 8.12 for
-the normative rules, and SPEC 10.42 for the boundary entry.
+`let`, assignment, `while`, `loop` with `break`/`continue` (including labeled
+blocks with `break <value>`), direct range `for`, `return`, integer casts,
+indexing with bounds-checked slice access, binary operations, signed `/` and `%`
+(lowered to `@divTrunc`/`@rem`), saturating operations, arbitrary-width
+integers, `Result<T, PillarError>` lowered to `PillarError!T`, parallel range
+loops, and the SIMD builtins above. It does **not** lower structs, enums, `if`,
+`match`, strings, `Vec`, `Option`, or ordinary user-function calls. Programs
+outside that subset are outside the Zig contract; use the Python or native
+backend for them. See [docs/zig.md](docs/zig.md) for the complete feature
+reference, SPEC 8.12 for the normative rules, and SPEC 10.42 for the boundary
+entry.
+
+### Language and runtime models (experimental)
+
+Three pure-Python modules model the strongest ideas from other systems
+languages. They run inside `polyglot-lang` itself, need no external toolchain,
+and are outside the Python/native parity contract. Read them as analysis and
+runtime helpers, not as new compilers.
+
+| Model                   | Inspired by | When to reach for it                                                       | Guide |
+| ----------------------- | ----------- | -------------------------------------------------------------------------- | ----- |
+| `compiler/gleam_style/` | Gleam       | You want exhaustive `match` with concrete missing-pattern errors, or to match fixed binary protocol headers safely | [docs/gleam_style.md](docs/gleam_style.md) |
+| `runtime/actor_otp/`    | Elixir/OTP  | You want isolated actors, supervisor restart trees with budgets, and bounded crash telemetry | [docs/actor_otp.md](docs/actor_otp.md) |
+| `compiler/mojo_bridge/` | Mojo        | You want ownership/borrow lifetimes, contiguous buffer layout analysis, or an honest MLIR capability check | [docs/mojo_bridge.md](docs/mojo_bridge.md) |
+
+An exhaustive match with a concrete witness:
+
+```python
+from compiler.gleam_style import AdtDef, Variant, check_exhaustive
+
+option = AdtDef("Option", (Variant("Some", ("Int",)), Variant("None")))
+check_exhaustive(option, [("Some", ("x",))])
+# error[E002]: non-exhaustive match on 'Option'; missing patterns: None
+```
+
+A supervised actor with a restart budget:
+
+```python
+from runtime.actor_otp import RestartIntensity, Strategy, Supervisor, spawn_actor
+
+sup = Supervisor("root", Strategy.ONE_FOR_ONE, RestartIntensity(5, 60.0))
+sup.add_child("worker", lambda: spawn_actor(0, lambda s, p: s + 1 if p else s))
+assert sup.restart("worker", now=1.0).restarted == ("worker",)
+```
+
+An origin escape rejected:
+
+```python
+from compiler.mojo_bridge import Origin, OriginEnv, ValueKind, check_origin_escape
+
+env = OriginEnv()
+env.declare("ref", ValueKind.BORROW_ONLY, Origin.BORROWED)
+check_origin_escape(env, "ref", return_as_owned=True)
+# error[E001]: borrowed binding 'ref' cannot be returned as owned
+```
+
+Each module has a dedicated test file that runs without a Zig, Gleam, Elixir,
+or MLIR toolchain:
+
+```sh
+pytest -q tests/test_gleam_style.py tests/test_actor_otp.py tests/test_mojo_bridge.py
+```
 
 ## 10. Error codes
 

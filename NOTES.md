@@ -17,7 +17,7 @@
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 
-**Latest baseline:** 1902 passed, 6 skipped, 22 deselected; slow 22 passed, 1908 deselected.
+**Latest baseline:** 3224 passed, 5 skipped, 24 deselected; slow 22 passed, 1908 deselected.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -1780,3 +1780,25 @@ Several defects were caught by the focused suites during construction: the parse
 **Gate wiring:** The `research-frames` stage runs the four focused suites and an injectable in-process spec oracle between `hard-frames-parity` and `diff-fuzz`. The default oracle evaluates real frame functions without spawning native, JIT, or WASM code, and all caches stay under caller-supplied roots so `git status --short` remains clean.
 
 **Lesson:** A verifier earns trust by naming exactly what it did not prove. Bounded results with explicit `Unknown`, bound, and timeout diagnostics compose into a release gate; unconditional claims about undecidable properties do not.
+
+## Build performance — APFS zero-copy target seeding for isolated native builds
+
+**Symptom:** Default single-threaded `pytest -q` took over 21 minutes and exhausted temporary disk space because every isolated test `cache_dir` cold-compiled `pyo3` and `mio` from scratch.
+
+**Cause:** `_seed_incremental_target` only ran for `incremental=True` builds and only searched inside `self.cache_dir`, missing prebuilt dependencies in `~/.cache/polyglot-native`.
+
+**Fix:** Extended `_seed_incremental_target` to include `~/.cache/polyglot-native` as a fallback seed root and invoked it during standard `NativeBackend._build()` when `build_dir/target` is absent, cloning prebuilt dependencies via APFS `cp -Rc` (or `--reflink=auto`).
+
+**Lesson:** Content-addressed isolation still benefits from read-only dependency seeding; copy-on-write cloning cuts full test suite runtime from ~21m 53s to ~3m 06s without duplicating disk footprint.
+
+## Zig backend expansion — user calls, `if / else`, and struct field inference
+
+**Symptom:** Zig backend programs could not call user functions with narrow integer parameters (`u8`/`usize`), failed when `if` appeared without `else` in statement position, and mis-inferred `f64` struct fields as `i64` (emitting `@intCast` instead of `@intFromFloat`).
+
+**Cause:** `ZigCodegen` did not record function parameter types or struct field types during `_scan`, emitted expression-position `if` blocks without an `else` arm in statement position, and lacked `Binary` float propagation into `_emit_cast`.
+
+**Fix:** Recorded `_fn_params` and `_struct_fields` in `_scan`, added `_coerce_call_arg` for narrow integer arguments, lowered `else`-less `IfExpr` as Zig statement blocks, and propagated `f32`/`f64` through `Field` and `Binary` inference.
+
+**Lesson:** Even when structs stay internal to Zig (non-C-ABI), accurate field and parameter type tables are essential so casts and calls emit valid Zig builtins.
+
+- Covered by `tests/test_zig_backend.py::test_zig_user_fn_calls_if_else_and_struct_fields`.
