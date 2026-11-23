@@ -6,8 +6,8 @@ import pytest
 
 from backends import get_backend
 from backends.wasm.codegen import WasmCodegen, WasmUnsupportedError
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def _compile(source: str) -> dict:

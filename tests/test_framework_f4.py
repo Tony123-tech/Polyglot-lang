@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     EnumDecl,
     ImplBlock,
     LitBool,
@@ -34,8 +34,8 @@ from backends.python.framework import (
 )
 from backends.python.translator import RuntimeFailure, _Result, _ResultErrSentinel
 from framework_functions import get_function
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 SOURCES = {
     "f4_parity_native": """

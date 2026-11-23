@@ -12,13 +12,13 @@ import platform
 
 import pytest
 
-from ast_nodes import Binary
+from compiler.core.ast_nodes import Binary
 from backends import get_backend
 from backends.jit.memory import is_supported_host
-from include_expander import IncludeNotFoundError, load_program
-from lexer import lex
-from parser import parse
-from termination import TerminationError, check_function
+from compiler.core.include_expander import IncludeNotFoundError, load_program
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
+from compiler.analysis.termination import TerminationError, check_function
 
 
 def _compile(source: str, backend: str = "python"):
@@ -316,8 +316,8 @@ def test_jit_requires_apple_silicon_or_reports_unsupported():
 
 
 def test_jit_backend_composes_with_parse_and_lex_errors():
-    from lexer import LexError
-    from parser import ParseError
+    from compiler.core.lexer import LexError
+    from compiler.core.parser import ParseError
 
     with pytest.raises(LexError):
         parse(lex("fn main() -> i64 { ` }"))

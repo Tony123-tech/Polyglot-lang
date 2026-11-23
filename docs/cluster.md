@@ -18,9 +18,9 @@ view = cluster_discover_and_heartbeat(
     [Heartbeat("edge-1", 1, 100), Heartbeat("edge-2", 1, 120)],
     now_ms=150,
 )
-view.members      # ('edge-1', 'edge-2')
-view.discovered   # ('edge-2',)
-view.quorum       # 2
+view.members  # ('edge-1', 'edge-2')
+view.discovered  # ('edge-2',)
+view.quorum  # 2
 ```
 
 Rules:
@@ -49,9 +49,9 @@ rpc = cluster_route_session_typed_rpc(
     message_type="Request",
     payload={"amount": 7},
 )
-rpc.target        # one live node, chosen by hash of route_key
-rpc.session_id    # stable id for this route/direction/type/epoch
-rpc.remaining     # (('server', 'Response'),)
+rpc.target  # one live node, chosen by hash of route_key
+rpc.session_id  # stable id for this route/direction/type/epoch
+rpc.remaining  # (('server', 'Response'),)
 rpc.wire_version  # 1
 ```
 
@@ -66,9 +66,9 @@ rpc.wire_version  # 1
 
 ```python
 report = cluster_handle_partition_and_split_brain(cluster, [["a", "b"], ["c"]])
-report.decision   # 'majority'
-report.epoch      # bumped to the next fencing epoch
-report.fences     # {'c': <epoch>}
+report.decision  # 'majority'
+report.epoch  # bumped to the next fencing epoch
+report.fences  # {'c': <epoch>}
 ```
 
 - A group that reaches `total // 2 + 1` nodes is writable and clears its dead

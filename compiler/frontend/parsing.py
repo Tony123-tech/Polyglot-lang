@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from api.visualizer import SourcePrinter
 from compiler.frontend.errors import PolyglotError
 from compiler.frontend.framework import (
@@ -31,8 +31,8 @@ from compiler.frontend.framework import (
     parse_pattern_match_arms,
     parse_pratt_expr_with_precedence,
 )
-from lexer import LexError, Token, TokenType, lex
-from parser import ParseError, Parser, parse
+from compiler.core.lexer import LexError, Token, TokenType, lex
+from compiler.core.parser import ParseError, Parser, parse
 
 __all__ = [
     "parse_arm_guard_simple",

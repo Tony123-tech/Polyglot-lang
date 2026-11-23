@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from backends import get_backend
-from include_expander import load_program
+from compiler.core.include_expander import load_program
 
 PROBE = """\
 include!("std:str_utils");

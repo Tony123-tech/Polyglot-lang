@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 
-from ast_nodes import FnDecl, Node, Program
+from compiler.core.ast_nodes import FnDecl, Node, Program
 from runtime.diagnostics import PillarError
 
 # Pure source metadata: it never contains child nodes, and `source_lines` can

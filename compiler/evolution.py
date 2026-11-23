@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ast_nodes import Node
+from compiler.core.ast_nodes import Node
 from runtime.diagnostics import PillarError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -78,7 +78,7 @@ def map_ast(value: Any, transform: Any) -> Any:
 
 TEMPLATES: dict[str, str] = {
     "fold_add_zero": """\
-from ast_nodes import Binary, LitInt
+from compiler.core.ast_nodes import Binary, LitInt
 
 
 def transform(node):
@@ -90,7 +90,7 @@ def transform(node):
     return None
 """,
     "fold_mul_one": """\
-from ast_nodes import Binary, LitInt
+from compiler.core.ast_nodes import Binary, LitInt
 
 
 def transform(node):
@@ -102,7 +102,7 @@ def transform(node):
     return None
 """,
     "fold_if_literal": """\
-from ast_nodes import Block, IfExpr, LitBool
+from compiler.core.ast_nodes import Block, IfExpr, LitBool
 
 
 def transform(node):
@@ -129,7 +129,16 @@ _IDENTITY = "def transform(node):\n    return None\n"
 # security boundary: the real isolation is the fresh process used by
 # evaluate().  It rejects the obvious accidental/naive escape hatches while
 # keeping the documented template library working.
-_ALLOWED_IMPORT_ROOTS = frozenset({"ast_nodes", "math"})
+_ALLOWED_IMPORT_MODULES = frozenset(
+    {
+        "math",
+        # Both spellings are accepted: passes written before the
+        # repository-root cleanup import the bare module name, new ones
+        # use the packaged path.
+        "ast_nodes",
+        "compiler.core.ast_nodes",
+    }
+)
 _FORBIDDEN_CALL_NAMES = frozenset(
     {
         "eval",
@@ -163,7 +172,10 @@ def _validate_candidate_source(source: str) -> None:
         raise PillarError(
             "E003",
             f"candidate pass is not an auditable transform: {message}",
-            help_text="only imports of ast_nodes/math and a pure transform() are allowed",
+            help_text=(
+                "only imports of ast_nodes (or compiler.core.ast_nodes) and math, "
+                "plus a pure transform(), are allowed"
+            ),
             line=getattr(node, "lineno", 0),
             col=getattr(node, "col_offset", -1) + 1,
         )
@@ -176,7 +188,7 @@ def _validate_candidate_source(source: str) -> None:
                 else [node.module or ""]
             )
             for name in names:
-                if name.split(".")[0] not in _ALLOWED_IMPORT_ROOTS:
+                if name not in _ALLOWED_IMPORT_MODULES:
                     reject(node, f"import of {name!r} is not allowed")
         elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
             reject(node, "dunder attribute access is not allowed")
@@ -262,11 +274,11 @@ import traceback
 ROOT = sys.argv[1]
 sys.path.insert(0, ROOT)
 
-from ast_nodes import Program
+from compiler.core.ast_nodes import Program
 from backends.python.translator import PythonBackend
 from compiler.evolution import map_ast
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def identity(node):

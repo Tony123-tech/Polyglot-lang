@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from backends.hotpatch import HotpatchManager
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 from runtime.hotpatch import HotpatchError, RcuDomain, RollbackJournal, byte_offsets
 from runtime.hotpatch.framework import (

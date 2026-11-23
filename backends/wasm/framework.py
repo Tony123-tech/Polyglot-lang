@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from ast_nodes import Program
+from compiler.core.ast_nodes import Program
 from runtime.diagnostics import PillarError
 
 Span = tuple[int, int] | None
@@ -264,8 +264,8 @@ class WasmParityReport:
 
 
 def _source_to_program(target: str | Program | Any) -> tuple[Program, str, str]:
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     if isinstance(target, str):
         program = parse(lex(target))

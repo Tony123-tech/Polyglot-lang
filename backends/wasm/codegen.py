@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Assign,
     Binary,
     Block,
@@ -129,7 +129,7 @@ class WasmCodegen:
 
         # Generic containers are instantiated once, then aggregate shapes are
         # specialized into the scalar expressions the WAT emitter understands.
-        from monomorph import monomorphize
+        from compiler.analysis.monomorph import monomorphize
 
         program = lower_wasm_aggregates(monomorphize(program))
 

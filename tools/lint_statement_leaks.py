@@ -13,7 +13,7 @@ def fail(msg):
     errors.append(msg)
 
 
-p = (ROOT / "parser.py").read_text()
+p = (ROOT / "compiler" / "core" / "parser.py").read_text()
 for node in ast.walk(ast.parse(p)):
     if isinstance(node, ast.FunctionDef) and node.name == "parse_block":
         body = ast.get_source_segment(p, node) or ""

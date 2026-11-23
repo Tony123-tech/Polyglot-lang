@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from ast_nodes import FnDecl, StructDecl
-from include_expander import IncludeNotFoundError, load_program
+from compiler.core.ast_nodes import FnDecl, StructDecl
+from compiler.core.include_expander import IncludeNotFoundError, load_program
 
 ROOT = Path(__file__).resolve().parent.parent
 STDLIB = ROOT / "stdlib"

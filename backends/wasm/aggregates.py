@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
     Binary,

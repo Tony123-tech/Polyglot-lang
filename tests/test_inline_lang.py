@@ -6,11 +6,17 @@ from types import ModuleType
 
 import pytest
 
-from inline_lang import InlineLangError, compile_inline_source, inline_lang
+from compiler.core.inline_lang import (
+    InlineLangError,
+    compile_inline_source,
+    inline_lang,
+)
 
 
 def _load_inline(tmp_path: Path, body: str, name: str = "inline_case") -> ModuleType:
-    source = "from inline_lang import inline_lang\n\n" + textwrap.dedent(body)
+    source = "from compiler.core.inline_lang import inline_lang\n\n" + textwrap.dedent(
+        body
+    )
     path = tmp_path / f"{name}.py"
     path.write_text(source, encoding="utf-8")
     spec = importlib.util.spec_from_file_location(name, path)

@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import fields, is_dataclass
 from typing import Any
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Call,
     Cast,
     FnDecl,
@@ -29,7 +29,7 @@ from ast_nodes import (
 )
 from backends.errors import InvalidIntegerParseLiteralError, check_host_call_arity
 from backends.python.translator import TypeErrorForBoundary
-from termination import check_function, check_program
+from compiler.analysis.termination import check_function, check_program
 
 _INTEGER_TYPES = {
     "i8",

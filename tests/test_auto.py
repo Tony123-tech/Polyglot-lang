@@ -4,8 +4,8 @@ from typing import cast
 
 from backends import get_backend
 from backends.auto import AutoBackend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def test_auto_selects_zig_for_simd() -> None:

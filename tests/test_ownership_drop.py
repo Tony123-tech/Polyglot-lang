@@ -43,8 +43,8 @@ from pathlib import Path
 import pytest
 
 from backends.move_check import MoveError, check_moves
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 ROOT = Path(__file__).resolve().parent.parent
 

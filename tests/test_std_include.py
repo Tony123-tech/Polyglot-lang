@@ -6,16 +6,16 @@ from pathlib import Path
 
 import pytest
 
-import include_expander
-from ast_nodes import FnDecl, StructDecl
-from include_expander import (
+import compiler.core.include_expander as include_expander
+from compiler.core.ast_nodes import FnDecl, StructDecl
+from compiler.core.include_expander import (
     IncludeCycleError,
     IncludeNotFoundError,
     expand_includes,
     load_program,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def _stdlib(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:

@@ -8,8 +8,8 @@ import pytest
 from backends.errors import UnsupportedNativePatternError
 from backends.python.translator import TranslateError, compile_rust
 from backends.rust.compiler import RustCompileError
-from lexer import lex
-from parser import ParseError, parse
+from compiler.core.lexer import lex
+from compiler.core.parser import ParseError, parse
 
 SOURCES = {
     "pattern_or": """

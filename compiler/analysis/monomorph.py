@@ -18,7 +18,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from backends.errors import TranslateError
 
 MAX_MONOMORPH_DEPTH = 32

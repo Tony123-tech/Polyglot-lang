@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 import compiler.heterogeneous as hetero
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Assign,
     Binary,
     Block,
@@ -38,8 +38,8 @@ from compiler.heterogeneous import (
     accel_npu_ane_graph_compile,
     accel_zero_copy_unified_mem,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 
 _PUBLIC_FUNCTIONS = (

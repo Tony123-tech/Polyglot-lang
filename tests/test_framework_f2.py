@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 import framework_functions
 from backends import get_backend
 from compiler.types.framework import (
@@ -26,9 +26,9 @@ from compiler.types.framework import (
     typecheck_enforce_trait_bounds,
     typecheck_infer_expressions,
 )
-from lexer import lex
-from monomorph import monomorphize
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.analysis.monomorph import monomorphize
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 SOURCES = {
     "n9_result_predicates": """

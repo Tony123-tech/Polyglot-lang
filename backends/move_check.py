@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
     Await,

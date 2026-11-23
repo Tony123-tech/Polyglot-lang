@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ConstDecl,
     EnumDecl,
     FnDecl,

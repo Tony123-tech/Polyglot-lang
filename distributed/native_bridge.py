@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ast_nodes import EnumDecl, Program, StructDecl, type_display_name
+from compiler.core.ast_nodes import EnumDecl, Program, StructDecl, type_display_name
 from distributed.diagnostics import DistributedError
 from distributed.transmute import (
     NativeLayout,

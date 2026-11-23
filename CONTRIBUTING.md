@@ -8,8 +8,11 @@ the project, run tests, and submit changes.
 See [docs/architecture.md](docs/architecture.md) for the pipeline diagram
 and layer responsibilities. In short:
 
-- `lexer.py`, `parser.py`, `ast_nodes.py` — shared front end.
-- `include_expander.py` — `include!` expansion and include diagnostics.
+- `compiler/core/` — `lexer.py`, `parser.py`, `ast_nodes.py`, the shared
+  front end.
+- `compiler/core/include_expander.py` — `include!` expansion and include
+  diagnostics; `compiler/analysis/` holds `monomorph.py`, `termination.py`,
+  `struct_order.py`, `match_diagnostics.py`.
 - `backends/python/` — AST-to-Python translator and runtime.
 - `backends/rust/` — Rust/PyO3 codegen, async reactor runtime, and Cargo
   build driver.

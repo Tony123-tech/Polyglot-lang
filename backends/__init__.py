@@ -15,8 +15,8 @@ Public API:
 
 Example:
     from backends import get_backend
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     program = parse(lex("fn add(a: i64, b: i64) -> i64 { a + b }"))
     ns = get_backend("python", trusted=True).compile(program)

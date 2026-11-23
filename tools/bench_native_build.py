@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from backends.rust.compiler import NativeBackend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 SOURCE = """
 fn fib(n: i64) -> i64 {

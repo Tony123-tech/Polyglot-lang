@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from ast_nodes import FnDecl, Node, Program
+from compiler.core.ast_nodes import FnDecl, Node, Program
 from backends.python.translator import PythonBackend
 from backends.rust.compiler import NativeBackend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 from runtime.feature_gates import _walk, validate_program_features
 

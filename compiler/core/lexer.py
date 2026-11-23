@@ -1,8 +1,8 @@
 """
 Polyglot lexer v2
 
-Standalone module. Import from parser.py with:
-    from lexer import Token, TokenType, LexError, Lexer, lex
+Standalone module. Import it from compiler/core/parser.py with:
+    from compiler.core.lexer import Token, TokenType, LexError, Lexer, lex
 
 Covers roadmap layer 1:
 - keyword tokens

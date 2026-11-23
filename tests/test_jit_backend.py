@@ -35,8 +35,8 @@ from backends.jit.ir import (
 )
 from backends.jit.memory import ExecutableMemory, is_supported_host
 from backends.jit.regalloc import Location, parallel_copy
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 requires_apple_silicon = pytest.mark.skipif(
     not is_supported_host(),
@@ -656,7 +656,7 @@ def test_unit_return_and_bool_return():
 
 
 def test_internal_compile_error_has_context():
-    from ast_nodes import TypeName
+    from compiler.core.ast_nodes import TypeName
     from backends.jit.ir import type_from_ast
 
     with pytest.raises(JITUnsupportedError):

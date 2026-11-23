@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-import ast_nodes as astn
+import compiler.core.ast_nodes as astn
 from backends.python import emit as em
 from backends.python import interop as it
 from backends.python import parity as pa
@@ -31,8 +31,8 @@ from backends.python.framework import (
 from backends.python.rollout import FRAMEWORK_ROWS
 from compiler.frontend.ast_utils import ast_find_by_type
 from compiler.frontend.errors import PolyglotError
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 _SOURCE = """
 struct Point { x: i64, y: i64 }

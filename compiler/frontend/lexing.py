@@ -15,7 +15,7 @@ import string
 from typing import Any, Final, NoReturn
 
 from compiler.frontend.errors import PolyglotError
-from lexer import (
+from compiler.core.lexer import (
     KEYWORDS,
     SIMPLE_ESCAPES,
     Lexer,

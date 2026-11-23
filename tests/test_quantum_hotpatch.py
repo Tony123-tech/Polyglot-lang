@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.hotpatch import (
     CAPABILITIES,
     AstEpochManager,

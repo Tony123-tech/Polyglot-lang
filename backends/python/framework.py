@@ -31,7 +31,7 @@ from types import FrameType, MappingProxyType, ModuleType, TracebackType
 from typing import Any
 
 from api.visualizer import program_to_source
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     EnumDecl,
     FnDecl,
     ImplBlock,
@@ -55,8 +55,8 @@ from backends.python.translator import (
     _Result,
     _ResultErrSentinel,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 __all__ = [
     "FrameTraceGuard",

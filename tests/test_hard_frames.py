@@ -20,8 +20,8 @@ from compiler.types.hard import (
     types_enforce_higher_rank_bounds,
     types_expand_mutually_recursive_generics,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 from runtime.hotpatch.hard import (
     hp_rcu_reader_writer_invariants,

@@ -16,8 +16,8 @@ import pytest
 from backends.move_check import MoveError, check_moves
 from backends.python.translator import PythonBackend
 from backends.rust.compiler import NativeBackend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 # (name, source, expected return value of main)
 ALLOWED = [

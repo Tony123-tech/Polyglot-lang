@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ast_nodes import Binary, FnDecl, Program, TypeName
+from compiler.core.ast_nodes import Binary, FnDecl, Program, TypeName
 from backends.base import BackendBase
 from backends.rust.compiler import NativeBackend
 from zig.backend import ZigBackend

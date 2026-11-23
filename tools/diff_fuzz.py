@@ -951,10 +951,10 @@ def _call_exported(namespace: Mapping[str, Any], scope: str) -> Any:
 
 def _program_from_source(source: str) -> Any:
     """Parse ``source`` and expand ``include!`` items for either backend."""
-    from ast_nodes import IncludeDecl
-    from include_expander import expand_includes
-    from lexer import lex
-    from parser import parse
+    from compiler.core.ast_nodes import IncludeDecl
+    from compiler.core.include_expander import expand_includes
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     program = parse(lex(source))
     if any(isinstance(item, IncludeDecl) for item in program.items):

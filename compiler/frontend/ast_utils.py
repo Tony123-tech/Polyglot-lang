@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import fields, is_dataclass
 from typing import Any
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from compiler.frontend.errors import PolyglotError
 from compiler.frontend.framework import _ast_to_dict as _framework_ast_to_dict
 

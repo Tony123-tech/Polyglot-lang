@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from compiler.frontend import spans
 from compiler.frontend.errors import PolyglotError
-from lexer import Token, TokenType
+from compiler.core.lexer import Token, TokenType
 
 SOURCE = "aé日🙂\nb"
 

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, NoReturn
 
-from ast_nodes import Program
+from compiler.core.ast_nodes import Program
 from backends.rust.codegen import RustCodegen
 from runtime.diagnostics import ERROR_CODES, PillarError
 
@@ -402,7 +402,7 @@ def _canonical_type(text: str) -> str:
     if args:
         return f"{name}<{', '.join(args)}>"
     codegen = RustCodegen(module_name="polyglot_f5_types")
-    from ast_nodes import TypeName
+    from compiler.core.ast_nodes import TypeName
 
     return codegen.type_to_rust(TypeName(1, 1, name))
 
@@ -578,7 +578,7 @@ def _method_body_from_impl(fragments: Sequence[str], name: str) -> str | None:
 
 def _ast_param_spec(param: Any, index: int, codegen: RustCodegen) -> RsParamSpec:
     """Convert an AST parameter into a scaffold parameter, preserving receivers."""
-    from ast_nodes import PatIdent, PatRef
+    from compiler.core.ast_nodes import PatIdent, PatRef
 
     pattern = getattr(param, "pattern", None)
     name = f"arg{index}"
@@ -603,8 +603,8 @@ def _specs_from_program(
     tuple[RsTraitImplSpec, ...],
 ]:
     """Derive scaffold metadata from an AST using the real Rust codegen."""
-    from ast_nodes import EnumDecl, FnDecl, ImplBlock, StructDecl
-    from monomorph import monomorphize
+    from compiler.core.ast_nodes import EnumDecl, FnDecl, ImplBlock, StructDecl
+    from compiler.analysis.monomorph import monomorphize
 
     codegen = RustCodegen(module_name=module_name)
     codegen.generate(program)
@@ -735,8 +735,8 @@ def _specs_from_native_tests(
 ]:
     """Collect native SOURCES via the shared helper, without invoking Cargo."""
     from _native_sources import collect_sources
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
     from tools.compile_native import ROOT as COMPILE_NATIVE_ROOT
 
     tests_path = Path(tests_dir)

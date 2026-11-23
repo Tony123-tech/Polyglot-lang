@@ -116,8 +116,8 @@ def test_include_path_relative_to_including_file(tmp_path: Path):
 def test_duplicate_include_is_allowed_and_splices_twice(tmp_path: Path):
     # Textual include: the same file may be included twice. Items are spliced
     # twice; there is no de-duplication.
-    from ast_nodes import FnDecl
-    from include_expander import load_program
+    from compiler.core.ast_nodes import FnDecl
+    from compiler.core.include_expander import load_program
 
     (tmp_path / "lib.poly").write_text(
         "fn add(a: i64, b: i64) -> i64 { a + b }\n", encoding="utf-8"

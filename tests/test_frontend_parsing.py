@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from compiler.frontend import parsing
 from compiler.frontend.errors import PolyglotError
-from lexer import lex
+from compiler.core.lexer import lex
 
 
 def _expect_error(

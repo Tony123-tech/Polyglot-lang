@@ -15,9 +15,9 @@ import pytest
 from backends.errors import TranslateError
 from backends.python.translator import PythonBackend, _Option
 from backends.rust.codegen import RustCodegen
-from include_expander import load_program
-from lexer import lex
-from parser import parse
+from compiler.core.include_expander import load_program
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 SOURCES = {
     "pf_vec_list": """

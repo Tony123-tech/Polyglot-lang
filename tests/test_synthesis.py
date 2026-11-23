@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from ast_nodes import FnDecl
+from compiler.core.ast_nodes import FnDecl
 from backends import get_backend
 from proofs.synthesis import (
     I64_MAX,
@@ -191,8 +191,8 @@ def test_emission_rejects_an_unrelated_candidate():
 
 
 def test_bounds_checker_proves_literal_indices():
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     program = parse(lex("fn main() -> i64 { let xs = [1, 2, 3]; xs[0] }"))
     obligations = verify_bounds(program)
@@ -200,8 +200,8 @@ def test_bounds_checker_proves_literal_indices():
 
 
 def test_bounds_checker_flags_out_of_range_indices():
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     program = parse(lex("fn main() -> i64 { let xs = [1, 2, 3]; xs[5] }"))
     obligations = verify_bounds(program)
@@ -210,8 +210,8 @@ def test_bounds_checker_flags_out_of_range_indices():
 
 
 def test_bounds_checker_marks_dynamic_indices_unknown():
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     program = parse(lex("fn main(i: i64) -> i64 { let xs = [1, 2, 3]; xs[i] }"))
     obligations = verify_bounds(program)

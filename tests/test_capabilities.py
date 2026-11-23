@@ -128,8 +128,8 @@ def test_supported_capability_is_callable():
 
 
 def test_span_is_forwarded_to_implementations_that_accept_it():
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     program = parse(lex("fn main() -> i64 { let xs = [1, 2, 3]; xs[0] }"))
     obligations = invoke("verify_no_panics_reachable", program)
@@ -137,8 +137,8 @@ def test_span_is_forwarded_to_implementations_that_accept_it():
 
 
 def test_rejected_capability_raises_on_invoke_with_node_span():
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     node = parse(lex("fn main() -> i64 { 0 }"))
     with pytest.raises(PillarError) as excinfo:

@@ -29,11 +29,39 @@ def test_console_script_points_at_cli_entry_point():
     assert project["scripts"]["polyglot"] == "api.cli:main"
 
 
-def test_include_expander_is_shipped_as_top_level_module():
+def test_compiler_stages_ship_inside_the_package():
+    # The stages used to be top-level modules listed in `py-modules`; they now
+    # live in `compiler/core` and `compiler/analysis`, which the package finder
+    # already includes via `compiler*`.
     modules = _pyproject()["tool"]["setuptools"]["py-modules"]
-    assert "include_expander" in modules
+    includes = _pyproject()["tool"]["setuptools"]["packages"]["find"]["include"]
+    for moved in (
+        "lexer",
+        "parser",
+        "ast_nodes",
+        "include_expander",
+        "inline_lang",
+        "monomorph",
+        "termination",
+        "struct_order",
+        "match_diagnostics",
+    ):
+        assert moved not in modules, f"{moved} is still a top-level module"
+    assert "compiler*" in includes
+    assert (ROOT / "compiler" / "core" / "lexer.py").exists()
+    assert (ROOT / "compiler" / "analysis" / "monomorph.py").exists()
 
 
-def test_monomorphizer_is_shipped_as_top_level_module():
-    modules = _pyproject()["tool"]["setuptools"]["py-modules"]
-    assert "monomorph" in modules
+def test_root_directory_holds_no_compiler_stage():
+    for moved in (
+        "lexer",
+        "parser",
+        "ast_nodes",
+        "include_expander",
+        "inline_lang",
+        "monomorph",
+        "termination",
+        "struct_order",
+        "match_diagnostics",
+    ):
+        assert not (ROOT / f"{moved}.py").exists(), f"{moved}.py came back"

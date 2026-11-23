@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from backends import get_backend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def _run(src: str, backend: str, tmp_path=None):

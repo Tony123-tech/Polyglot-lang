@@ -17,7 +17,7 @@ import re
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
     Await,
@@ -112,10 +112,10 @@ from backends.errors import (
     UnsupportedNativePatternError,
     check_host_call_arity,
 )
-from match_diagnostics import warn_match_issues
-from monomorph import monomorphize
+from compiler.analysis.match_diagnostics import warn_match_issues
+from compiler.analysis.monomorph import monomorphize
 from runtime.feature_gates import validate_program_features
-from struct_order import order_struct_declarations
+from compiler.analysis.struct_order import order_struct_declarations
 
 
 class InvalidCastError(RuntimeError):
@@ -1138,7 +1138,7 @@ class RustCodegen:
         self._payload_enum_names = set()
         self.borrow_state_types = set()
 
-        from termination import check_program
+        from compiler.analysis.termination import check_program
 
         self._proven_terminating = check_program(program)
         for item in program.items:
@@ -1348,7 +1348,7 @@ class RustCodegen:
         return aliases
 
     def generate_fn(self, fn: FnDecl, *, as_method: bool) -> None:
-        from termination import check_function
+        from compiler.analysis.termination import check_function
 
         check_function(
             fn, proven_terminating=getattr(self, "_proven_terminating", None)

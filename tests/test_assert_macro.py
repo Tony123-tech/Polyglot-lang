@@ -12,8 +12,8 @@ import pytest
 
 from backends import get_backend
 from backends.python.translator import RuntimeFailure
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def _run(source: str):

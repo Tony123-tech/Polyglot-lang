@@ -22,9 +22,9 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Any, get_args
 
-import ast_nodes as ast
-from lexer import lex
-from parser import parse
+import compiler.core.ast_nodes as ast
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 __all__ = [
     "BasicBlock",

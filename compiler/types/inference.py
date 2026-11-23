@@ -19,7 +19,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, NoReturn
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from compiler.frontend.errors import PolyglotError
 
 __all__ = [

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ast_nodes import IncludeDecl, Item, Program
-from lexer import lex
-from parser import parse
+from compiler.core.ast_nodes import IncludeDecl, Item, Program
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 class IncludeError(Exception):
@@ -62,7 +62,7 @@ class IncludeNotFoundError(IncludeError):
     code = "E006"
 
 
-STDLIB_DIR = Path(__file__).resolve().parent / "stdlib"
+STDLIB_DIR = Path(__file__).resolve().parents[2] / "stdlib"
 _STD_PREFIX = "std:"
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Ident,
     MatchExpr,
     PatBinding,

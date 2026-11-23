@@ -40,7 +40,7 @@ from urllib.parse import parse_qs, urlparse
 
 from api.telemetry import collector, compare_with, list_baselines, snapshot
 from api.visualizer import analyze
-from lexer import lex
+from compiler.core.lexer import lex
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"

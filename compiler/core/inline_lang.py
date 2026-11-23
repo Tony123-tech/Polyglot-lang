@@ -12,12 +12,12 @@ import textwrap
 from collections.abc import Callable
 from typing import Any
 
-from ast_nodes import FnDecl
+from compiler.core.ast_nodes import FnDecl
 from backends import get_backend
 from backends.python.translator import TranslateError
 from backends.rust.compiler import RustCompileError
-from lexer import lex
-from parser import ParseError, parse
+from compiler.core.lexer import lex
+from compiler.core.parser import ParseError, parse
 
 
 class InlineLangError(RuntimeError):

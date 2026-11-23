@@ -30,8 +30,8 @@ restores code, class surfaces, and object state.
 
 ```python
 from backends.hotpatch import HotpatchManager
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 manager = HotpatchManager(parse(lex(old_source)))
 counter = manager.register(manager.namespace["Counter"](10))

@@ -26,10 +26,10 @@ import copy
 from dataclasses import fields, is_dataclass
 from typing import Any, Final, NoReturn
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from api.visualizer import SourcePrinter, program_to_source
-from lexer import SIMPLE_ESCAPES, Lexer, Token, TokenType, lex
-from parser import ParseError, Parser
+from compiler.core.lexer import SIMPLE_ESCAPES, Lexer, Token, TokenType, lex
+from compiler.core.parser import ParseError, Parser
 
 __all__ = [
     "ast_node_span_normalize",

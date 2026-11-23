@@ -26,7 +26,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Assign,
     Binary,
     CompoundAssign,

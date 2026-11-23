@@ -27,7 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Assign,
     Binary,
     Cast,
@@ -46,8 +46,8 @@ from ast_nodes import (
     Unary,
     While,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 from tools.diff_fuzz import normalize_error
 

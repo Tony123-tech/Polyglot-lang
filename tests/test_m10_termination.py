@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import pytest
 
-from lexer import lex
-from parser import parse
-from termination import TerminationError, check_function
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
+from compiler.analysis.termination import TerminationError, check_function
 
 SOURCES = {
     "m10_terminating_functions": """

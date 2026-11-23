@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Assign,
     Binary,
     Call,

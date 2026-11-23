@@ -10,10 +10,14 @@ project's own tooling.
 ```python
 from tools.dst import SimOp, dst_virtualize_clock_and_scheduler
 
-ops = [SimOp(10, "a", "write", "hello"), SimOp(10, "b", "write", "world"), SimOp(20, "a", "fsync")]
+ops = [
+    SimOp(10, "a", "write", "hello"),
+    SimOp(10, "b", "write", "world"),
+    SimOp(20, "a", "fsync"),
+]
 schedule = dst_virtualize_clock_and_scheduler(ops, seed=7)
-schedule.steps      # Steps with now_ms, node, kind, payload, seq
-schedule.elapsed_ms # 20
+schedule.steps  # Steps with now_ms, node, kind, payload, seq
+schedule.elapsed_ms  # 20
 ```
 
 - Operations sort by `at_ms`; ties break on a SHA-256 key over
@@ -26,8 +30,10 @@ schedule.elapsed_ms # 20
 ```python
 from tools.dst import dst_inject_byzantine_and_io_faults
 
-report = dst_inject_byzantine_and_io_faults(ops, seed=11, rates={"drop": 0.2, "torn_write": 0.1})
-report.ops       # faulted operation list
+report = dst_inject_byzantine_and_io_faults(
+    ops, seed=11, rates={"drop": 0.2, "torn_write": 0.1}
+)
+report.ops  # faulted operation list
 report.injected  # {'drop': 1, 'torn_write': 1, ...}
 ```
 
@@ -50,9 +56,9 @@ Rates outside `[0, 1]` and unknown fault names are `E003`.
 from tools.dst import dst_bisect_and_minimize_schedule
 
 report = dst_bisect_and_minimize_schedule(ops, oracle, max_probes=2000)
-report.minimal        # the smallest prefix-preserving subset that still fails
-report.probes         # how many oracle calls it took
-report.shrink_ratio   # len(minimal) / len(original)
+report.minimal  # the smallest prefix-preserving subset that still fails
+report.probes  # how many oracle calls it took
+report.shrink_ratio  # len(minimal) / len(original)
 ```
 
 The oracle is any deterministic `ops -> bool` predicate. The minimiser is delta

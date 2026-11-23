@@ -22,7 +22,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from typing import Any, Literal
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Assign,
     Binary,
     Call,
@@ -43,8 +43,8 @@ from ast_nodes import (
     Unary,
     While,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 from security.sandbox import sandbox_deterministic_fuel_meter
 

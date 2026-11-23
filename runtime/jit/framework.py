@@ -410,8 +410,8 @@ def jit_compile_hot_trace(
         if allow_native and is_supported_host():
             try:
                 from backends.jit.backend import JITBackend
-                from lexer import lex
-                from parser import parse
+                from compiler.core.lexer import lex
+                from compiler.core.parser import parse
 
                 module = JITBackend(trusted=True).compile(parse(lex(source)))
             except JITError as error:

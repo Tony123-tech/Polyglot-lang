@@ -175,8 +175,8 @@ def test_legacy_rcu_epoch_smoke() -> None:
 
 def test_legacy_backend_delegation_smoke() -> None:
     from backends.hotpatch import HotpatchManager
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
     from runtime.hotpatch.framework import hotpatch_delegate_legacy_backend
 
     program = parse(lex("fn main() -> i64 { 0 }"))

@@ -5,8 +5,8 @@ from __future__ import annotations
 import sys
 
 from backends.python.translator import compile_rust
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def _compile(src: str) -> dict:

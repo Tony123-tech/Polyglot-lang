@@ -13,10 +13,12 @@ The AST is a miniature one (`ast.py`): literals, variables, `add`, calls,
 from compiler.macro_engine import Let, Hole, Var, macro_resolve_hygienic_scopes
 
 template = Let("tmp", Hole(0), Var("limit"))
-expansion = macro_resolve_hygienic_scopes(template, scope_id=7, call_site_names=("limit",))
-expansion.template   # Let('tmp#7', Hole(0), Var('limit@7'))
-expansion.binders    # (('tmp', 'tmp#7'),)
-expansion.captured   # ('limit',)
+expansion = macro_resolve_hygienic_scopes(
+    template, scope_id=7, call_site_names=("limit",)
+)
+expansion.template  # Let('tmp#7', Hole(0), Var('limit@7'))
+expansion.binders  # (('tmp', 'tmp#7'),)
+expansion.captured  # ('limit',)
 ```
 
 - Names the template binds are renamed to `name#<scope>`.
@@ -52,7 +54,7 @@ result.holes_filled  # 2
 from compiler.macro_engine import macro_verify_backend_expansion_parity
 
 report = macro_verify_backend_expansion_parity(expanded.ast)
-report.parity   # True
+report.parity  # True
 report.opcodes  # canonical sequence, e.g. (('const.int', '1'), ('return',))
 report.digests  # per-backend digest of the emitted stream
 ```

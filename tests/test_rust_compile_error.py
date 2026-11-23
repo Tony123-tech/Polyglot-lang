@@ -5,8 +5,8 @@ import pytest
 
 from backends.rust.codegen import RustCodegen
 from backends.rust.compiler import NativeBackend, RustCompileError, _parse_cargo_error
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def test_rust_compile_error_captures_diagnostic_fields():
@@ -146,7 +146,7 @@ def test_rust_codegen_records_source_origin_for_emitted_lines():
 
 
 def test_rust_codegen_records_originating_node_for_emitted_lines():
-    from ast_nodes import FnDecl
+    from compiler.core.ast_nodes import FnDecl
 
     program = parse(lex("\nfn origin_node() -> i64 { 1 }"))
     codegen = RustCodegen()

@@ -68,8 +68,8 @@ From Python, call it through the backend:
 
 ```python
 from backends import get_backend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 source = """
 fn sat_u24(a: u24, b: u24) -> u24 { a +| b }
@@ -104,8 +104,8 @@ Python with `ctypes` arrays:
 import ctypes
 
 from backends import get_backend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 source = """
 #[parallel]

@@ -108,7 +108,7 @@ def _import(module: str) -> tuple[Any | None, str | None]:
 
 def _parse(source: str) -> Any:
     """Parse Polyglot source with the repository lexer/parser."""
-    lexer, parser = _import("lexer")[0], _import("parser")[0]
+    lexer, parser = _import("compiler.core.lexer")[0], _import("compiler.core.parser")[0]
     if lexer is None or parser is None:
         raise RuntimeError("lexer/parser are unavailable")
     return parser.parse(lexer.lex(source))
@@ -207,7 +207,7 @@ def _native_call(
 
 def _monomorph_check(source: str, required_names: tuple[str, ...]) -> dict[str, Any]:
     """Verify that generic specializations resolve without residual parameters."""
-    module, error = _import("monomorph")
+    module, error = _import("compiler.analysis.monomorph")
     if module is None:
         return {"status": "unavailable", "reason": error}
     try:
@@ -339,7 +339,7 @@ def test_trait_bounds_and_impls(
 
     bound_check: dict[str, Any] = {}
     try:
-        ast_nodes = _import("ast_nodes")[0]
+        ast_nodes = _import("compiler.core.ast_nodes")[0]
         program = _parse(F10_SOURCES["f10_box_bounds"])
         declaration = next(
             item

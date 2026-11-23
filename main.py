@@ -6,8 +6,8 @@ Run:
 """
 
 from backends.python.translator import compile_rust
-from lexer import Lexer
-from parser import Parser
+from compiler.core.lexer import Lexer
+from compiler.core.parser import Parser
 
 SRC = r"""
 fn add(a: i64, b: i64) -> i64

@@ -11,8 +11,8 @@ from backends.python.runtime import (
     get_target_width,
     set_target_width,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 SOURCES = {
     "n7_explicit_cast": """

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from ast_nodes import FnDecl
-from lexer import lex
-from parser import ParseError, parse, parse_recovering
+from compiler.core.ast_nodes import FnDecl
+from compiler.core.lexer import lex
+from compiler.core.parser import ParseError, parse, parse_recovering
 
 
 def _function_names(program) -> list[str]:

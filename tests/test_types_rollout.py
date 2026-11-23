@@ -12,7 +12,7 @@ import importlib
 
 import pytest
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from compiler.frontend.errors import PolyglotError
 from compiler.types import inference as infer
 from compiler.types import lifetimes as life
@@ -31,8 +31,8 @@ from compiler.types.framework import (
     typecheck_infer_expressions,
 )
 from compiler.types.rollout import FRAMEWORK_ROWS
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 _LEGACY_NAMES = [
     "typecheck_infer_expressions",

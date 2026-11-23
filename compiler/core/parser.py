@@ -1,8 +1,8 @@
 """
 Recursive-descent + Pratt parser for Polyglot.
 
-Imports from lexer.py:
-    from lexer import Token, TokenType
+Imports the lexer from compiler/core/lexer.py:
+    from compiler.core.lexer import Token, TokenType
 
 Covers roadmap layer 2:
 
@@ -38,7 +38,7 @@ from __future__ import annotations
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
     Attr,
@@ -131,7 +131,7 @@ from ast_nodes import (
     UseDecl,
     While,
 )
-from lexer import Token, TokenType
+from compiler.core.lexer import Token, TokenType
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -642,7 +642,7 @@ class Parser:
         return TypeAlias(tok.line, tok.col, name, ty, generics, is_pub)
 
     def parse_include_item(self):
-        from ast_nodes import IncludeDecl
+        from compiler.core.ast_nodes import IncludeDecl
 
         tok = self.expect(TokenType.IDENT)
         self.eat(TokenType.BANG)

@@ -12,8 +12,8 @@ import pytest
 
 from backends.python.translator import compile_rust
 from backends.rust.codegen import RustCodegen
-from lexer import lex
-from parser import ParseError, parse
+from compiler.core.lexer import lex
+from compiler.core.parser import ParseError, parse
 
 
 def _run_python(src: str) -> dict:

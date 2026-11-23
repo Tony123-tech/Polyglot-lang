@@ -3,7 +3,8 @@
 `polyglot-lang` compiles one `.poly` source file with two primary
 interchangeable backends (Python and native PyO3), plus experimental
 compute-only WASM and Zig backends. The front end is shared; only the
-lowering and execution stages differ.
+lowering and execution stages differ. The stage names in the diagram map to
+`compiler/core/`: `lexer.py`, `parser.py`, `ast_nodes.py`, `include_expander.py`.
 
 ```text
                     .poly source
@@ -54,9 +55,10 @@ wrappers. It is a separate execution mode, not a third parity backend.
 
 ## Layers
 
-- **Front end:** `lexer.py`, `parser.py`, `ast_nodes.py`. Parser nodes carry
+- **Front end:** `compiler/core/lexer.py`, `compiler/core/parser.py`,
+  `compiler/core/ast_nodes.py`. Parser nodes carry
   best-effort character spans used by diagnostics.
-- **Include expansion:** `include_expander.py` resolves `include!` paths
+- **Include expansion:** `compiler/core/include_expander.py` resolves `include!` paths
   relative to the including file, rejects cycles, and splices items before
   backend selection.
 - **Python backend:** `backends/python/translator.py` converts the AST to a

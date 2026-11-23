@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Any, NoReturn
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
     Await,
@@ -95,7 +95,7 @@ from ast_nodes import (
     UseDecl,
     While,
 )
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Path as AstPath,
 )
 from backends.base import BackendBase

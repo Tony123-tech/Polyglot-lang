@@ -8,7 +8,7 @@ import pytest
 
 from compiler.frontend import lexing
 from compiler.frontend.errors import PolyglotError
-from lexer import KEYWORDS, TokenType
+from compiler.core.lexer import KEYWORDS, TokenType
 
 _PUBLIC_NAMES = [
     "lex_tokenize",

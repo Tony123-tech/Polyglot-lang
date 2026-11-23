@@ -7,8 +7,8 @@ import pytest
 
 from backends.python.translator import compile_rust
 from backends.rust.compiler import RustCompileError
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 SOURCES = {
     "spec_gap_parse_dynamic": """

@@ -32,7 +32,7 @@ try:  # pragma: no cover - fcntl is unavailable on Windows
 except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
 
-from ast_nodes import Program
+from compiler.core.ast_nodes import Program
 from backends.base import BackendBase
 from backends.errors import InvalidIntegerParseLiteralError
 from backends.rust.codegen import InvalidCastError, RustCodegen

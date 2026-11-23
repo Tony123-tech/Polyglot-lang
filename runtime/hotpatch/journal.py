@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from runtime.hotpatch.errors import HotpatchError
 from runtime.hotpatch.events import emit
 

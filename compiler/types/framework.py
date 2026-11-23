@@ -31,8 +31,8 @@ from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequenc
 from dataclasses import dataclass, fields, is_dataclass
 from typing import Any
 
-import ast_nodes as ast
-import monomorph
+import compiler.core.ast_nodes as ast
+import compiler.analysis.monomorph as monomorph
 from runtime.diagnostics import PillarError
 
 _DEFAULT_TYPE = "i64"

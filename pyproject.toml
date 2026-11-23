@@ -33,18 +33,9 @@ polyglot = "api.cli:main"
 # tooling (tools/) are intentionally excluded: package discovery below only
 # includes the runtime packages, and pytest collects tests/ from the sdist tree.
 py-modules = [
-    "ast_nodes",
-    "lexer",
-    "parser",
-    "termination",
-    "inline_lang",
-    "match_diagnostics",
-    "monomorph",
-    "struct_order",
     "main",
     "_native_sources",
     "conftest",
-    "include_expander",
 ]
 
 [tool.setuptools.packages.find]

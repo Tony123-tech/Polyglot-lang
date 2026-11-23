@@ -18,7 +18,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from compiler.types.inference import (
     _canonical,
     _fail,

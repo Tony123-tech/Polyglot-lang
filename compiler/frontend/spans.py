@@ -21,7 +21,7 @@ from compiler.frontend.framework import (
     _offset_to_line_col,
     _token_end_char_offset,
 )
-from lexer import Token
+from compiler.core.lexer import Token
 
 __all__ = [
     "span_byte_to_char",

@@ -30,7 +30,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ArrayExpr,
     Binary,
     Block,
@@ -50,8 +50,8 @@ from ast_nodes import (
     TypeName,
     Unary,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 
 I64_MIN = -(1 << 63)
@@ -297,7 +297,7 @@ class Cond:
 
     def to_polyglot(self, line: int = 1, col: int = 1) -> Expr:
         if self.op in {"true", "false"}:
-            from ast_nodes import LitBool
+            from compiler.core.ast_nodes import LitBool
 
             return LitBool(line, col, self.op == "true")
         if self.op == "not":

@@ -21,11 +21,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Walk up until we find the project root (contains ast_nodes.py).
+# Walk up until we find the project root (contains compiler/core/ast_nodes.py).
 ROOT = Path(__file__).resolve().parent
-if not (ROOT / "ast_nodes.py").exists():
+if not (ROOT / "compiler" / "core" / "ast_nodes.py").exists():
     for parent in ROOT.parents:
-        if (parent / "ast_nodes.py").exists():
+        if (parent / "compiler" / "core" / "ast_nodes.py").exists():
             ROOT = parent
             break
 
@@ -96,10 +96,10 @@ def compile_sources(sources: dict[str, str]) -> dict[str, Any]:
     if not sources:
         return {}
 
-    from ast_nodes import Program
+    from compiler.core.ast_nodes import Program
     from backends import get_backend
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     # Sort by name for deterministic cache keys across callers
     # (compile_native.py vs conftest.py may see sources in different order).

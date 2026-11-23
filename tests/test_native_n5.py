@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import pytest
 
-from ast_nodes import OptionNone, OptionSome, ResultErr, ResultOk
-from lexer import lex
-from parser import parse
+from compiler.core.ast_nodes import OptionNone, OptionSome, ResultErr, ResultOk
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 SOURCES = {
     "option_some_construction": """

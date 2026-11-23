@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
     Await,
@@ -71,13 +71,13 @@ from ast_nodes import (
     Unary,
     While,
 )
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Call as AstCall,
 )
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Cast as AstCast,
 )
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     Range as RangeExpr,
 )
 from backends.jit.errors import JITCompileError, JITUnsupportedError

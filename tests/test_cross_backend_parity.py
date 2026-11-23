@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from backends import get_backend
-from include_expander import load_program
-from lexer import lex
-from parser import parse
+from compiler.core.include_expander import load_program
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from zig.features import is_zig_only_source
 
 # Anchor to the conftest.py directory, not the current working directory

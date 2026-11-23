@@ -7,11 +7,11 @@ from collections.abc import Callable
 
 import pytest
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from compiler.frontend import ast_utils
 from compiler.frontend.errors import PolyglotError
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 SOURCE = """fn main() -> i64 {
     let a = 1;

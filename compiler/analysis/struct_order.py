@@ -1,6 +1,6 @@
 """Stable dependency ordering for struct declarations."""
 
-from ast_nodes import StructDecl, TypeName
+from compiler.core.ast_nodes import StructDecl, TypeName
 
 
 def order_struct_declarations(

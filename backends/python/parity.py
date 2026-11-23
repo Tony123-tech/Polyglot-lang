@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, NoReturn
 
-import ast_nodes as astn
+import compiler.core.ast_nodes as astn
 from compiler.frontend.errors import PolyglotError
 
 __all__ = [

@@ -16,10 +16,10 @@ import re
 import time
 from typing import Any
 
-import ast_nodes as ast
-from lexer import LexError, lex
-from monomorph import MonomorphizationError, monomorphize
-from parser import ParseError, parse
+import compiler.core.ast_nodes as ast
+from compiler.core.lexer import LexError, lex
+from compiler.analysis.monomorph import MonomorphizationError, monomorphize
+from compiler.core.parser import ParseError, parse
 
 MAX_TREE_NODES = 20_000
 MAX_TREE_DEPTH = 96

@@ -39,8 +39,8 @@ api/visualizer_server.py     subprocess: python -m api.cli exec
    ▼                              └── Rust/PyO3 backend (cargo)
 api/visualizer.py
    ├── lexer + parser → JSON AST
-   ├── monomorph.py → concrete source printer
-   └── E001–E008 diagnostic + span extraction
+   ├── compiler/analysis/monomorph.py → concrete source printer
+   └── E001–E009 diagnostic + span extraction
 ```
 
 - `api/visualizer.py` is read-only. It parses, monomorphizes, serializes the

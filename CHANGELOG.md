@@ -2,6 +2,38 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Repository root cleanup: compiler stages move into `compiler/`
+
+- The five front-end stages (`lexer`, `parser`, `ast_nodes`, `include_expander`,
+  `inline_lang`) moved from the repository root to `compiler/core/`, and the four
+  analysis stages (`monomorph`, `termination`, `struct_order`,
+  `match_diagnostics`) moved to `compiler/analysis/`. The root now holds entry
+  points only: `main.py`, `conftest.py` and `_native_sources.py`.
+- 308 import statements across 126 files were rewritten with an AST-guided codemod
+  (only real `Import`/`ImportFrom` nodes, so string literals that look like imports
+  are untouched). `py-modules` drops from twelve names to three; the stages ship
+  inside the package through the existing `compiler*` finder entry.
+- Two silent path breaks were caught before they could pass unnoticed:
+  `include_expander`'s `STDLIB_DIR` resolved to `compiler/core/stdlib`, and
+  `tools/lint_statement_leaks.py` read the three-line shim instead of the real
+  `parser`, which would have made that guard permanently green.
+- The AST codemod only sees real import nodes, so a second sweep was needed for
+  imports hiding in strings: `compiler/evolution.py`'s three auditable-pass
+  templates and its generated runner script (they emit Python source that is
+  imported back, so they broke the moment the shims were deleted), the source
+  strings in `tests/test_inline_lang*.py`, the dynamic `import_module()` calls in
+  `regression/harness.py` and `tests/test_package_exports.py`, the capability
+  probe module names in `runtime/capabilities.py` (which turned monomorphization
+  and termination checks into `status: unavailable`), and the code samples in
+  `docs/advanced.md`, `docs/zig.md` and `docs/experimental_pillars.md`. The
+  evolution allowlist now accepts both `ast_nodes` and
+  `compiler.core.ast_nodes`, so passes written before the move still validate.
+- No behaviour change: the interpreter, CLI and diagnostics are identical, and the
+  fast suite still reports 3511 passed, 6 skipped. Two suites run during the
+  cleanup surfaced these string-embedded breaks (12 failures at first), and one
+  run tripped the known `-n auto` native flake
+  (`test_hashset_insert_contains_remove_len_iter_native`, passes serially).
+
 ## Unreleased — Host interpreter floor is enforced, not just declared
 
 - `diagnostics/host.py` turns SPEC 9.9 from a sentence into a check:
@@ -474,7 +506,8 @@ Version history derived from SPECIFICATION.md Section 11.
 
 ## v0.3.8 — Apple Silicon JIT backend and edge-case audit
 
-- Added a shared monomorphization pass (`monomorph.py`) that resolves generic
+- Added a shared monomorphization pass (`monomorph.py`, later moved to
+  `compiler/analysis/monomorph.py`) that resolves generic
   functions, structs, enums, and impl blocks into concrete mangled
   declarations such as `Box_i64`, `Box_String`, and `identity_i64`, with
   deduplication and a depth-32 recursion limit that rejects infinite generic

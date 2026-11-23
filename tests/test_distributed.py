@@ -66,9 +66,9 @@ from distributed.wire import (
     encode_frame,
     peek_kind,
 )
-from lexer import lex
-from monomorph import monomorphize
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.analysis.monomorph import monomorphize
+from compiler.core.parser import parse
 
 
 class FakeClock:

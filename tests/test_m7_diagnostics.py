@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -89,7 +89,7 @@ def test_every_error_class_emits_code_exactly_once():
         UnsupportedNativePatternError,
     )
     from backends.rust.compiler import RustCompileError
-    from include_expander import IncludeCycleError, IncludeNotFoundError
+    from compiler.core.include_expander import IncludeCycleError, IncludeNotFoundError
 
     errs = [
         (RustCompileError("boom"), "E004"),
@@ -106,8 +106,8 @@ def test_every_error_class_emits_code_exactly_once():
 
 def test_span_present_for_multi_token_expression():
     # Parse a simple binary expression and ensure span is set
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     program = parse(lex("fn main() -> i64 { let x = a + b; 0 }\n"))
     fn = program.items[0]
@@ -146,7 +146,7 @@ def _e001():
 
 
 def _e002():
-    from termination import TerminationError
+    from compiler.analysis.termination import TerminationError
 
     return TerminationError("f", "no proof", "add a bound", 1, 5, span=(10, 20))
 
@@ -164,13 +164,13 @@ def _e004():
 
 
 def _e005():
-    from include_expander import IncludeCycleError
+    from compiler.core.include_expander import IncludeCycleError
 
     return IncludeCycleError("cycle", "cycle", "help", "note", 1, 5, span=(10, 20))
 
 
 def _e006():
-    from include_expander import IncludeNotFoundError
+    from compiler.core.include_expander import IncludeNotFoundError
 
     return IncludeNotFoundError(
         "missing", "missing", "help", "note", 1, 5, span=(10, 20)

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-import ast_nodes as ast
+import compiler.core.ast_nodes as ast
 from compiler.frontend import framework
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 
 def test_lex_source_with_spans_utf8_bytes_and_line_columns():

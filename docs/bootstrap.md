@@ -24,9 +24,9 @@ syntax error (`E003`) with a plain explanation instead of a parser trace.
 from bootstrap import bootstrap_stage1_compile_subset
 
 artifact = bootstrap_stage1_compile_subset(source)
-artifact.ir      # '(fn add (params x y) (ret i64) (block (let sum (add (var x) (var y))) (return (var sum))))'
+artifact.ir  # '(fn add (params x y) (ret i64) (block (let sum (add (var x) (var y))) (return (var sum))))'
 artifact.digest  # sha256 of the IR text
-artifact.zig     # optional Zig rendering when emit_zig_text=True
+artifact.zig  # optional Zig rendering when emit_zig_text=True
 ```
 
 The type checker runs first: unknown variables and return mismatches are `E001`,
@@ -40,9 +40,9 @@ spacing, no source positions, so equal programs produce equal text.
 from bootstrap import bootstrap_verify_stage2_fixed_point
 
 report = bootstrap_verify_stage2_fixed_point(artifact)
-report.stable        # True
-report.rounds        # 1
-report.stage2_digest # == artifact.digest
+report.stable  # True
+report.rounds  # 1
+report.stage2_digest  # == artifact.digest
 ```
 
 `parse_ir` accepts only the shapes `emit_ir` can produce; anything else is
@@ -55,7 +55,7 @@ that stops being idempotent fails with `E004` instead of claiming self-hosting.
 from bootstrap import bootstrap_diff_stage_ir_hashes
 
 diff = bootstrap_diff_stage_ir_hashes(stage1, stage2)
-diff.equal            # True
+diff.equal  # True
 diff.first_diff_line  # None, or 1-based line of the first divergence
 ```
 

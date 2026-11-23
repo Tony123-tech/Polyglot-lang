@@ -23,9 +23,11 @@ anyone writes the impl:
 ```python
 from backends.rust.traits_ext import rste_impl_plan
 
-rste_impl_plan([
-    {"trait": "Show", "trait_local": True, "for_type": "f64", "type_local": False},
-])["emitted"]
+rste_impl_plan(
+    [
+        {"trait": "Show", "trait_local": True, "for_type": "f64", "type_local": False},
+    ]
+)["emitted"]
 # ('impl Show for f64',)
 ```
 
@@ -41,12 +43,15 @@ caller would otherwise hand-write:
 ```python
 from backends.rust.traits_ext import rste_compose
 
-plan = rste_compose([
-    {"name": "num", "requires": [], "provides": ["Num"]},
-    {"name": "fmt", "requires": ["Num"], "provides": ["Fmt"]},
-    {"name": "print", "requires": ["Fmt"], "provides": ["Printable"]},
-], target="Printable")
-plan["path"]   # ('num', 'fmt', 'print')
+plan = rste_compose(
+    [
+        {"name": "num", "requires": [], "provides": ["Num"]},
+        {"name": "fmt", "requires": ["Num"], "provides": ["Fmt"]},
+        {"name": "print", "requires": ["Fmt"], "provides": ["Printable"]},
+    ],
+    target="Printable",
+)
+plan["path"]  # ('num', 'fmt', 'print')
 ```
 
 A cycle raises `E005`; an unreachable target raises `E002` naming the bounds
@@ -61,11 +66,14 @@ dispatch stays correct as arms are added:
 ```python
 from backends.rust.traits_ext import rste_fast_path
 
-plan = rste_fast_path([
-    {"category": "primitive", "handler": "add_i64", "covers": ["i64"]},
-    {"category": "concrete", "handler": "add_widget", "covers": ["Widget"]},
-], fallback="add_generic")
-plan["arms"]                    # ('i64 => add_i64', 'Widget => add_widget', '_ => add_generic')
+plan = rste_fast_path(
+    [
+        {"category": "primitive", "handler": "add_i64", "covers": ["i64"]},
+        {"category": "concrete", "handler": "add_widget", "covers": ["Widget"]},
+    ],
+    fallback="add_generic",
+)
+plan["arms"]  # ('i64 => add_i64', 'Widget => add_widget', '_ => add_generic')
 plan["requires_specialization"]  # False
 ```
 
@@ -107,8 +115,8 @@ and the gaps, which is the argument a reviewer wants:
 
 ```python
 plan = rsbe_split_windows(10, [(0, 3), (3, 7)])
-plan["covered"]   # 7
-plan["gaps"]      # ((7, 10),)
+plan["covered"]  # 7
+plan["gaps"]  # ((7, 10),)
 ```
 
 Overlap raises `E002` naming both ranges; out-of-bounds raises `E001`.
@@ -122,13 +130,15 @@ is testable rather than asserted:
 ```python
 from backends.rust.borrow_ergo import rsbe_arena_simulate
 
-result = rsbe_arena_simulate([
-    {"op": "insert", "value": "old"},
-    {"op": "remove", "key": {"index": 0, "epoch": 0}},
-    {"op": "insert", "value": "new"},
-    {"op": "get", "key": {"index": 0, "epoch": 0}},
-])
-[entry["outcome"] for entry in result["trace"]]   # ['ok', 'ok', 'ok', 'stale']
+result = rsbe_arena_simulate(
+    [
+        {"op": "insert", "value": "old"},
+        {"op": "remove", "key": {"index": 0, "epoch": 0}},
+        {"op": "insert", "value": "new"},
+        {"op": "get", "key": {"index": 0, "epoch": 0}},
+    ]
+)
+[entry["outcome"] for entry in result["trace"]]  # ['ok', 'ok', 'ok', 'stale']
 ```
 
 The slot is alive again when the last `get` runs, and the old key still
@@ -141,7 +151,7 @@ reported `burned` instead of wrapping.
 acquisition order, so an early return and an unwind get the same cleanup:
 
 ```python
-rsbe_scope_exit(["open_file", "begin_tx"])["drop_order"]   # ('begin_tx', 'open_file')
+rsbe_scope_exit(["open_file", "begin_tx"])["drop_order"]  # ('begin_tx', 'open_file')
 ```
 
 ## Async and PyO3 boundaries (`backends.rust.async_interop`)

@@ -21,8 +21,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import fields, is_dataclass
 from typing import Any, Final
 
-import ast_nodes as ast
-import monomorph
+import compiler.core.ast_nodes as ast
+import compiler.analysis.monomorph as monomorph
 from compiler.frontend.errors import PolyglotError
 from compiler.types.inference import (
     _canonical,

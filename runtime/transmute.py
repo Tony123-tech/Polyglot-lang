@@ -31,8 +31,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, Self, runtime_checkable
 
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 
 # Honest label for the deopt cost model.  The guard itself is one tuple

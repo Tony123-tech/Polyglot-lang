@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ast_nodes import Program
+from compiler.core.ast_nodes import Program
 from zig.backend import ZigBackend, ZigCodegen, ZigCompileError
 from zig.features import int_bounds, saturating_op, wrap_arbitrary_int
 from zig.lowering import lower_zig_ast

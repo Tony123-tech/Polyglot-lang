@@ -90,8 +90,8 @@ def test_public_backends_import_without_a_native_toolchain() -> None:
     assert native_module.__all__ == ["NativeBackend"]
     backend = native_module.NativeBackend(trusted=False)
     assert backend.name == "native"
-    lexer = importlib.import_module("lexer")
-    parser = importlib.import_module("parser")
+    lexer = importlib.import_module("compiler.core.lexer")
+    parser = importlib.import_module("compiler.core.parser")
     program = parser.parse(lexer.lex("fn package_probe() -> i64 { 1 }"))
     with pytest.raises(backends.UntrustedCompileError):
         backend.compile(program)

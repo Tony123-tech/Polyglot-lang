@@ -22,10 +22,10 @@ does not match is `E008`; an unsupported version is `E007`; a missing file witho
 ## Push and pop
 
 ```python
-arena.push(b"tensor bytes")   # returns the slot index, or -1 when full
-lease = arena.pop()           # RingLease with a memoryview into the mapping
-bytes(lease.view[:13])        # b'tensor bytes'
-arena.release(lease)          # advances tail
+arena.push(b"tensor bytes")  # returns the slot index, or -1 when full
+lease = arena.pop()  # RingLease with a memoryview into the mapping
+bytes(lease.view[:13])  # b'tensor bytes'
+arena.release(lease)  # advances tail
 ```
 
 - A ring of `N` slots holds `N-1` payloads; the spare slot separates `head` from
@@ -61,8 +61,8 @@ One live lease per holder keeps the table unambiguous (`E003` on duplicates).
 from runtime.ipc import ipc_reclaim_abandoned_slots
 
 report = ipc_reclaim_abandoned_slots(arena, now_epoch=arena.epoch + 1)
-report.reclaimed      # holders evicted
-report.dropped_queued # queued slots discarded
+report.reclaimed  # holders evicted
+report.dropped_queued  # queued slots discarded
 ```
 
 Reclaim is deliberately blunt: it zeros the data region, clears leases, resets

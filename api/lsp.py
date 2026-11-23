@@ -17,7 +17,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
 from api.visualizer import diagnostic, span_to_lsp_range
-from ast_nodes import (
+from compiler.core.ast_nodes import (
     ConstDecl,
     EnumDecl,
     FnDecl,
@@ -26,13 +26,13 @@ from ast_nodes import (
     StructDecl,
     TypeAlias,
 )
-from include_expander import (
+from compiler.core.include_expander import (
     IncludeCycleError,
     IncludeNotFoundError,
     expand_includes,
 )
-from lexer import LexError, lex
-from parser import ParseError, parse, parse_recovering
+from compiler.core.lexer import LexError, lex
+from compiler.core.parser import ParseError, parse, parse_recovering
 
 COMPLETION_FUNCTION = 3
 COMPLETION_CLASS = 7

@@ -32,8 +32,8 @@ or through the backend registry:
 
 ```python
 from backends import get_backend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 namespace = get_backend("zig", trusted=True).compile(parse(lex(source)))
 ```
@@ -413,8 +413,8 @@ import ctypes
 from pathlib import Path
 
 from backends import get_backend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 
 program = parse(lex(Path("scale.poly").read_text(encoding="utf-8")))
 namespace = get_backend("zig", trusted=True).compile(program)

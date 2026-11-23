@@ -17,8 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backends.python.translator import compile_rust
-from lexer import Lexer
-from parser import Parser
+from compiler.core.lexer import Lexer
+from compiler.core.parser import Parser
 
 SRC = """
 struct Point { x: i64, y: i64 }

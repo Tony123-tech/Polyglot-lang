@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import fields, is_dataclass
 from typing import Any
 
-from ast_nodes import Binary, Call, Ident, Program
+from compiler.core.ast_nodes import Binary, Call, Ident, Program
 
 _SAT_FN_MAP = {
     "+|": "_zig_sat_add",

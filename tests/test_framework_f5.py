@@ -29,8 +29,8 @@ from backends.rust.framework import (
     rs_run_cargo_check_and_clippy,
     rs_verify_scaffold_matches_generator,
 )
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 
 # Collected by conftest.py via _native_sources; key must be globally unique.

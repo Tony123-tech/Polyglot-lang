@@ -27,17 +27,17 @@ from pathlib import Path
 from typing import Any
 
 from api.visualizer import fix_hint
-from ast_nodes import Program
+from compiler.core.ast_nodes import Program
 from backends import UntrustedCompileError, get_backend
-from include_expander import (
+from compiler.core.include_expander import (
     IncludeCycleError,
     IncludeNotFoundError,
     expand_includes,
     load_program,
 )
-from lexer import lex
-from parser import parse, parse_recovering
-from termination import TerminationError
+from compiler.core.lexer import lex
+from compiler.core.parser import parse, parse_recovering
+from compiler.analysis.termination import TerminationError
 
 # The most recently read program text.  Errors raised deep inside a command
 # reach ``main``'s generic handler without a source argument; keeping the text

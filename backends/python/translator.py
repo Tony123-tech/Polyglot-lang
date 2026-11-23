@@ -43,7 +43,55 @@ from copy import deepcopy
 from functools import cmp_to_key, reduce
 from typing import ClassVar
 
-from ast_nodes import (
+from backends.base import BackendBase
+from backends.errors import TranslateError, check_host_call_arity
+from backends.python.runtime import (
+    HOST_TARGET_WIDTH,
+    _iflet_match,
+    btreemap_contains,
+    btreemap_entry,
+    btreemap_get,
+    btreemap_get_mut,
+    btreemap_insert_with_prev,
+    btreemap_is_empty,
+    btreemap_iter,
+    btreemap_keys,
+    btreemap_len,
+    btreemap_new,
+    btreemap_remove,
+    btreemap_values,
+    cast_i8,
+    cast_i16,
+    cast_i32,
+    cast_i64,
+    cast_i128,
+    cast_isize,
+    cast_u8,
+    cast_u16,
+    cast_u32,
+    cast_u64,
+    cast_u128,
+    cast_usize,
+    get_target_width,
+    hashset_contains,
+    hashset_get_mut,
+    hashset_insert,
+    hashset_is_empty,
+    hashset_iter,
+    hashset_len,
+    hashset_new,
+    hashset_remove,
+)
+from backends.python.runtime import (
+    _Option as _RuntimeOption,
+)
+from compiler.analysis.match_diagnostics import (
+    missing_match_variants,
+    warn_match_issues,
+)
+from compiler.analysis.monomorph import monomorphize
+from compiler.analysis.struct_order import order_struct_declarations
+from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
     Await,
@@ -132,52 +180,7 @@ from ast_nodes import (
     is_isize_type,
     is_usize_type,
 )
-from backends.base import BackendBase
-from backends.errors import TranslateError, check_host_call_arity
-from backends.python.runtime import (
-    HOST_TARGET_WIDTH,
-    _iflet_match,
-    btreemap_contains,
-    btreemap_entry,
-    btreemap_get,
-    btreemap_get_mut,
-    btreemap_insert_with_prev,
-    btreemap_is_empty,
-    btreemap_iter,
-    btreemap_keys,
-    btreemap_len,
-    btreemap_new,
-    btreemap_remove,
-    btreemap_values,
-    cast_i8,
-    cast_i16,
-    cast_i32,
-    cast_i64,
-    cast_i128,
-    cast_isize,
-    cast_u8,
-    cast_u16,
-    cast_u32,
-    cast_u64,
-    cast_u128,
-    cast_usize,
-    get_target_width,
-    hashset_contains,
-    hashset_get_mut,
-    hashset_insert,
-    hashset_is_empty,
-    hashset_iter,
-    hashset_len,
-    hashset_new,
-    hashset_remove,
-)
-from backends.python.runtime import (
-    _Option as _RuntimeOption,
-)
-from match_diagnostics import missing_match_variants, warn_match_issues
-from monomorph import monomorphize
 from runtime.feature_gates import validate_program_features
-from struct_order import order_struct_declarations
 
 _SAFE_BUILTINS = frozenset(
     {
@@ -1883,7 +1886,7 @@ class Translator:
         self._method_return_types.clear()
         self.impl_blocks.clear()
         # Pass 1: collect struct / enum / impl names.
-        from termination import check_program
+        from compiler.analysis.termination import check_program
 
         self._proven_terminating = check_program(program)
         for item in program.items:
@@ -2225,7 +2228,7 @@ class Translator:
         *,
         is_method: bool = False,
     ) -> ast.FunctionDef | ast.AsyncFunctionDef:
-        from termination import check_function
+        from compiler.analysis.termination import check_function
 
         check_function(
             fn, proven_terminating=getattr(self, "_proven_terminating", None)
@@ -6739,9 +6742,9 @@ class Translator:
     def _translate_macro(self, m: MacroCall) -> ast.expr:
         if m.path == "vec":
             if isinstance(m.args, str):
-                from lexer import TokenType
-                from lexer import lex as _lex
-                from parser import Parser as _Parser
+                from compiler.core.lexer import TokenType
+                from compiler.core.lexer import lex as _lex
+                from compiler.core.parser import Parser as _Parser
 
                 tokens = _lex(m.args)
                 parser = _Parser(tokens)
