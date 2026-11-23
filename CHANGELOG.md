@@ -2,6 +2,36 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — comprehension pass, CLI commands, native cache fix
+
+- Split `GUIDE.md` into a beginner path and `docs/advanced.md`; the guide now
+  stops at Option/Result and the native backend, while Zig, SIMD, `#[parallel]`,
+  telemetry, release gates, fuzzing and the formal frames moved to the advanced
+  reference.
+- Added `polyglot new <dir>` (starter `main.poly` and README, refuses a
+  non-empty directory) and `polyglot explain [E00n]` (meaning, wrong/right
+  examples and a tip for `E001`–`E008`). `polyglot exec` and
+  `polyglot compile` now expand `include!`, matching `run` and `build`.
+- Hardened `stdlib`: `reverse_text`, `is_palindrome` and `pad_left`/`pad_right`
+  operate on Unicode scalars instead of byte offsets, `read_lines` was added to
+  `std:fs`, and `Counter::top_key` returns the most frequent key or `None`.
+- Added `examples/csv_sum.poly`, `word_count.poly`, `cli_report.poly` and
+  `examples/README.md`; the README now states the positioning, the three
+  backend tiers (python + native parity baseline, best-effort WASM, research
+  JIT/Zig) and two known limitations (move-checking parity and the call-heavy
+  Python backend).
+- Added `benchmarks/` with three workloads, a CPython comparison, and a
+  generated `RESULTS.md` that reports `n/a` below 0.5 ms instead of a
+  meaningless ratio.
+- Fixed the native backend reusing artifacts it did not build: cache entries
+  seeded with another build's `target/` looked complete, which turned 14
+  pattern/spec-conformance tests into "DID NOT RAISE". `_is_built` now requires
+  a matching `.polyglot-manifest.json`, validated by
+  `tests/test_native_cache_manifest.py`.
+- Recorded all four defects with Symptom/Cause/Fix/Lesson entries in `NOTES.md`.
+- Verified baseline: 3224 passed, 6 skipped, 28 deselected (`pytest -q`);
+  28 passed, 3235 deselected (`pytest -q -m slow`).
+
 ## Unreleased — Zig 0.17.1 codegen and language/runtime models
 
 - Upgraded the Zig backend for Zig 0.17.1: signed `/` and `%` now lower to

@@ -623,8 +623,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 3224 passed, 5 skipped, 24 deselected.
-- `pytest -q -m slow`: 24 passed, 3152 deselected.
+- `pytest -q`: 3224 passed, 6 skipped, 28 deselected.
+- `pytest -q -m slow`: 28 passed, 3235 deselected.
 
 The four previously failing Zig SIMD/parallel C-ABI cases in `tests/test_zig_backend.py` and `tests/test_auto.py` now pass: the generated wrappers use `extern struct` vector parameters/returns, the `std` import is emitted once, and stale zero-byte dylibs are evicted and rebuilt. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints), the 100-function framework registry with its ten frame test suites, the differential fuzzer / release gate / telemetry / packaging suites, the completed 1,000-function rollout (all ten batches, 1000 functions), the speculative JIT / WASM production / hard compiler-runtime frames with their focused suites, WASM compile-time aggregate specialization with shared `E001`–`E008` preflight diagnostics, the full three-way parity matrix (12/12 cases on all three backends with zero skips), and the `hard-frames-parity` release-gate stage, replacing the earlier stale baseline.
 

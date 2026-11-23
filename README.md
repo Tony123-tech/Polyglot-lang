@@ -291,8 +291,8 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3224 passed, 5 skipped, 24 deselected (`pytest -q`);
-24 passed, 3152 deselected (`pytest -q -m slow`).
+**Current test status:** 3224 passed, 6 skipped, 28 deselected (`pytest -q`);
+28 passed, 3235 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
 bounds-checked slice indexing, labeled-block `break <value>`, and
