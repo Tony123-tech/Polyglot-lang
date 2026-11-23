@@ -17,14 +17,47 @@
 - Runtime failures: located `E002` guards on both backends, IEEE 754 float division
 - Ownership: explicit `drop(x)`, borrow-vs-move conflicts, bounded NLL, loop fixpoint
 - Rust ergonomics: trait coherence/composition/dispatch plans, arena handles, async boundaries
+- Host interpreter: 3.14.8 floor checked at the CLI door, refusal as `error:`/`help:`, PEP 649 reason
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3498 passed, 6 skipped, 31 deselected (fast suite, after the Rust ergonomics batch).
+**Latest baseline:** 3511 passed, 6 skipped, 31 deselected (fast suite, after the host-interpreter floor batch); slow suite 31 passed, 3517 deselected.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
+
+## Host interpreter — a requirement nothing actually checked
+
+**Symptom:** SPEC 9.9 said "Python 3.14.8 or later", `pyproject.toml` said
+`requires-python = ">=3.14.8"`, and README repeated it. None of that had any
+effect on a running interpreter. On 3.12 the suite failed with
+`NameError: name 'i64' is not defined` from three inline-language tests, with no
+message pointing at the host version, and a user on 3.11 would have seen the same
+thing and reasonably concluded the language was broken rather than the interpreter.
+
+**Cause:** The front end depends on PEP 649 deferred annotation evaluation, which
+became the default in 3.14. Before it, annotations are evaluated at definition time,
+so `def add(a: i64) -> i64` raises before the `@inline_lang` decorator is reached —
+the failure is in annotation evaluation, not in the interpreter's ability to run the
+transpiler. Declaring a floor in metadata only refuses at `pip install` time; an
+already-installed package, a source checkout, or a `python -m` run never hits it.
+
+**Fix:** `diagnostics/host.py` holds the floor once (`MIN_VERSION`, plus
+`require_supported_python` and `is_supported`), and `api/cli.py::main` calls it before
+`build_parser()`, exiting 2 with one `error:` line naming both versions and one
+`help:` line naming PEP 649 and the README section. SPEC 9.9.1 states the reason and
+the condition for lowering it (a compatibility layer plus a recorded host-version
+matrix); 9.9.2 states the refusal contract, including that it may not surface as a
+traceback. README has a `Host interpreter` section above Quick Start. 10.57 states
+what is *not* claimed: no 3.11–3.13 run is recorded, and the refusal is the only part
+that a test proves.
+
+**Lesson:** A version floor that only exists in metadata is a comment. The useful
+question is not "did we document the requirement" but "what does the first line of
+output say when the requirement is violated". Two lines at the door cost less than
+one `NameError` three layers deep — and the boundary stays honest, because the
+refusal is tested while the wider range is not.
 
 ## Rust ergonomics — plans that answer a decision, not code that pretends
 

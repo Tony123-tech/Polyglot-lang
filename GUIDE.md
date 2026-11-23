@@ -18,8 +18,12 @@ SIMD vectors) and the pure-Python Gleam/Elixir/Mojo models are documented in
 pip install polyglot-lang
 ```
 
-Python 3.14.8 or later is required. The Python backend has no native
-dependencies. You can run `.poly` files immediately.
+Python 3.14.8 or later is required, and older interpreters are refused rather
+than partially supported: the front end relies on PEP 649 deferred annotations,
+which is the 3.14 default, so on 3.11-3.13 a `.poly` declaration fails with
+`NameError` before the inline language decorators run. `polyglot` checks the
+floor first and exits 2 with an `error:`/`help:` pair (SPEC 9.9). The Python
+backend has no native dependencies. You can run `.poly` files immediately.
 
 For the native backend, you also need a Rust toolchain:
 

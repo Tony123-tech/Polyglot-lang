@@ -47,6 +47,29 @@ language changes, and problems in them are handled as research rather than
 product bugs. No `Cargo.toml` or `pyproject.toml` scaffolding is needed for a
 single-file program.
 
+## Host interpreter
+
+**Python 3.14.8 or later. Nothing older, on any backend.**
+
+The front end depends on PEP 649 deferred annotation evaluation, which became the
+default only in Python 3.14. On 3.11–3.13 annotations are evaluated at definition
+time, so a declaration like `def add(a: i64) -> i64` raises
+`NameError: name 'i64' is not defined` before the decorator that implements an
+inline language can run. That is a host behaviour the project does not paper over.
+
+So the CLI checks the floor before it parses arguments. On an older interpreter it
+prints two lines and exits 2, without a traceback:
+
+```
+error: polyglot-lang requires Python 3.14.8 or later; this interpreter is Python 3.12.4
+  help: the front end relies on PEP 649 deferred annotation evaluation, ...
+```
+
+This is a declared requirement, not a tested range: no 3.11–3.13 run is recorded,
+and widening the floor to 3.11–3.14 is a plan for a later release rather than a
+shipped behaviour (SPEC 9.9, 10.57). The refusal itself is tested in
+`tests/test_host_interpreter.py`.
+
 ## Quick Start
 
 Install:
@@ -323,8 +346,8 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3498 passed, 6 skipped, 31 deselected (`pytest -q`);
-31 passed, 3504 deselected (`pytest -q -m slow`).
+**Current test status:** 3511 passed, 6 skipped, 31 deselected (`pytest -q`);
+31 passed, 3517 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
 unchecked slice indexing, labeled-block `break <value>`, and

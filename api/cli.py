@@ -965,6 +965,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The host interpreter floor (SPEC 9.9) is checked before argument parsing
+    # so an unsupported Python never reaches the lexer or a decorator that
+    # fails with a confusing `NameError`.
+    from diagnostics.host import UnsupportedInterpreterError, require_supported_python
+
+    try:
+        require_supported_python()
+    except UnsupportedInterpreterError as error:
+        print(f"error: {error.message}", file=sys.stderr)
+        print(f"  help: {error.help_text}", file=sys.stderr)
+        return 2
+
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

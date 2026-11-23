@@ -2,6 +2,30 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Host interpreter floor is enforced, not just declared
+
+- `diagnostics/host.py` turns SPEC 9.9 from a sentence into a check:
+  `MIN_VERSION = (3, 14, 8)`, `UnsupportedInterpreterError` carrying both versions
+  and the reason, `require_supported_python()` and `is_supported()`. The floor is
+  not arbitrary: the front end depends on PEP 649 deferred annotations, the 3.14
+  default, and on 3.11–3.13 a `def add(a: i64)` fails with
+  `NameError: name 'i64' is not defined` before the inline-language decorators run.
+- `api/cli.py::main` checks the floor before it parses arguments and exits 2 with
+  one `error:` line and one `help:` line, so an older interpreter never reaches the
+  lexer, a backend, or a traceback. `--help` and `--error-format` do not get a chance
+  to fail first.
+- SPEC adds 9.9.1 (why the floor exists and that lowering it needs a compatibility
+  layer plus a host-version matrix) and 9.9.2 (the CLI's refusal contract). 10.57
+  records the honest side: the floor is a declared requirement, not a tested range,
+  and no 3.11–3.13 run is claimed.
+- README gains a `Host interpreter` section before Quick Start (the reason, the two
+  printed lines, and the later-release goal); GUIDE's install paragraph says older
+  interpreters are refused rather than partially supported.
+- `tests/test_host_interpreter.py` (13 cases) pins the floor, the refusal message,
+  agreement with `pyproject.toml`'s `requires-python`, the CLI's exit code and
+  stderr shape, and the README/SPEC/GUIDE text.
+- Fast baseline moves to 3511.
+
 ## Unreleased — Rust ergonomics plans: traits, borrow splitting, async boundaries
 
 - `backends/rust/traits_ext` plans coherent extension (`rste_impl_plan`: orphan
