@@ -477,10 +477,16 @@ class NativeBackend(BackendBase):
         if target.exists():
             return
         candidates: list[tuple[float, Path]] = []
-        try:
-            children = list(self.cache_dir.iterdir())
-        except OSError:
-            return
+        search_roots = [self.cache_dir]
+        default_cache = Path.home() / ".cache" / "polyglot-native"
+        if default_cache != self.cache_dir and default_cache.is_dir():
+            search_roots.append(default_cache)
+        children: list[Path] = []
+        for root in search_roots:
+            try:
+                children.extend(root.iterdir())
+            except OSError:
+                continue
         for child in children:
             if child == scope_dir:
                 continue
@@ -545,6 +551,8 @@ class NativeBackend(BackendBase):
         first_build = not build_dir.exists()
         if first_build:
             build_dir.mkdir(parents=True)
+        if not (build_dir / "target").is_dir():
+            self._seed_incremental_target(build_dir)
 
         (build_dir / "Cargo.toml").write_text(
             self._cargo_toml(module_name), encoding="utf-8"
