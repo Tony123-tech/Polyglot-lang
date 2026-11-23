@@ -2,6 +2,23 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Runtime failures carry a code, a position, and a fix hint
+
+- Runtime guards now report `error[E002]: <message>` with `note: runtime failure`
+  and `at: line N, column M` instead of leaking the host exception's name and
+  printing `at: <unknown>`. The Python backend raises `RuntimeFailure` (exported
+  from `backends.python`) from integer `/` and `%`, bounds-checked indexing,
+  `panic!`, and the assert helpers; the CLI prints it in the five-line format.
+  Adds SPEC 2.9.
+- The Zig backend prints the same first line and the same location line through
+  `_zig_fail`, `_zig_div`, `_zig_rem`, and `_zig_assert`, then exits non-zero.
+  Same source, same `error[E002]` line, same `at: line N, column M`.
+- Fixed: `1.0 / 0.0` raised `ZeroDivisionError` in the Python backend. Rust
+  floats follow IEEE 754, so it now yields a signed infinity and `0.0 / 0.0`
+  yields NaN.
+- Adds `tests/test_runtime_failures.py` (16 cases) and SPEC 10.54 for what the
+  guards deliberately do not cover. Fast baseline: 3390 passed.
+
 ## Unreleased — Zig overflow reports, rotations, conversions, byte buffers
 
 - Added `add_with_overflow!` / `mul_with_overflow!` (yielding the `i64` flag) and

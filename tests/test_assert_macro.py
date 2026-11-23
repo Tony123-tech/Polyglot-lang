@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from backends import get_backend
+from backends.python.translator import RuntimeFailure
 from lexer import lex
 from parser import parse
 
@@ -36,7 +37,7 @@ fn main() -> i64 {
 
 
 def test_assert_macro_raises_when_the_condition_fails():
-    with pytest.raises(AssertionError):
+    with pytest.raises(RuntimeFailure):
         _run(
             """
 fn main() -> i64 {
@@ -49,7 +50,7 @@ fn main() -> i64 {
 
 
 def test_assert_macro_formats_the_message():
-    with pytest.raises(AssertionError, match="x was 3"):
+    with pytest.raises(RuntimeFailure, match="x was 3"):
         _run(
             """
 fn main() -> i64 {
@@ -62,7 +63,7 @@ fn main() -> i64 {
 
 
 def test_assert_macro_accepts_a_literal_message():
-    with pytest.raises(AssertionError, match="unreachable"):
+    with pytest.raises(RuntimeFailure, match="unreachable"):
         _run(
             """
 fn main() -> i64 {

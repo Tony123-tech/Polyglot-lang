@@ -612,6 +612,25 @@ fn _zig_optional(value: anytype) ?@TypeOf(value) {
 fn _zig_bitcast(comptime T: type, value: anytype) T {
     return @bitCast(value);
 }
+
+fn _zig_fail(code: []const u8, message: []const u8, line: u32, col: u32) noreturn {
+    std.debug.print("error[{s}]: {s}\\n  at: line {d}, column {d}\\n", .{ code, message, line, col });
+    std.process.exit(1);
+}
+
+fn _zig_div(a: anytype, b: anytype, line: u32, col: u32) @TypeOf(a) {
+    if (b == 0) _zig_fail("E002", "division by zero", line, col);
+    return @divTrunc(a, b);
+}
+
+fn _zig_rem(a: anytype, b: anytype, line: u32, col: u32) @TypeOf(a) {
+    if (b == 0) _zig_fail("E002", "remainder by zero", line, col);
+    return @rem(a, b);
+}
+
+fn _zig_assert(condition: bool, message: []const u8, line: u32, col: u32) void {
+    if (!condition) _zig_fail("E002", message, line, col);
+}
 """
         self.lines.append(helper)
 
@@ -1268,10 +1287,16 @@ fn _zig_bitcast(comptime T: type, value: anytype) T {
                 "*|": "_zig_sat_mul",
             }[expr.op]
             return f"{helper}({left}, {right})"
-        if expr.op in {"/", "%"} and self._infer_type(expr.left).startswith(
-            ("i", "isize")
-        ):
-            return f"@{'divTrunc' if expr.op == '/' else 'rem'}({left}, {right})"
+        integer = self._infer_type(expr.left)
+        is_integer = integer in {"isize", "usize"} or (
+            integer[:1] in {"i", "u"} and integer[1:].isdigit()
+        )
+        if expr.op in {"/", "%"} and is_integer:
+            helper = "_zig_div" if expr.op == "/" else "_zig_rem"
+            return (
+                f"{helper}({left}, {right}, "
+                f"{getattr(expr, 'line', 0) or 0}, {getattr(expr, 'col', 0) or 0})"
+            )
         operator = {"&&": "and", "||": "or"}.get(expr.op, expr.op)
         return f"({left} {operator} {right})"
 
@@ -1322,7 +1347,7 @@ fn _zig_bitcast(comptime T: type, value: anytype) T {
             if name in {"print", "println", "eprintln"}:
                 return f"std.debug.print({args})"
             if name == "panic":
-                return f"@panic({args})"
+                return self._emit_fail(expr, args)
             base = ".".join(segments)
             if func.generic_args:
                 type_args = ", ".join(self._zig_type(arg) for arg in func.generic_args)
@@ -1340,9 +1365,9 @@ fn _zig_bitcast(comptime T: type, value: anytype) T {
             if name in {"print", "println", "eprintln"}:
                 return f"std.debug.print({args})"
             if name == "panic":
-                return f"@panic({args})"
+                return self._emit_fail(expr, args)
             if name in {"assert"}:
-                return f"std.debug.assert({args})"
+                return self._emit_assert(expr)
             return f"{name}({args})"
         if isinstance(func, Field):
             receiver = self._emit_expr(func.receiver)
@@ -1468,11 +1493,37 @@ fn _zig_bitcast(comptime T: type, value: anytype) T {
         if expr.path in MEMORY_INTRINSICS:
             return self._emit_memory_intrinsic(expr)
         args = ", ".join(self._emit_expr(arg) for arg in expr.args)
+        if expr.path == "panic":
+            return self._emit_fail(expr, args)
+        if expr.path == "assert":
+            return self._emit_assert(expr)
         if expr.path in {"println", "print"}:
             return f"std.debug.print({args})"
         if expr.path == "vec":
             return f".{{ {args} }}"
         return f"@{expr.path}({args})"
+
+    def _emit_fail(self, expr: MacroCall, args: str) -> str:
+        """Lower ``panic!`` onto the guarded failure helper."""
+        message = args or '"panic called"'
+        return self._fail_call(message, expr)
+
+    def _fail_call(self, message: str, expr: Any) -> str:
+        line = getattr(expr, "line", 0) or 0
+        col = getattr(expr, "col", 0) or 0
+        return f'_zig_fail("E002", {message}, {line}, {col})'
+
+    def _emit_assert(self, expr: MacroCall) -> str:
+        """Lower ``assert!`` onto the guarded helper so it reports a position."""
+        if not expr.args or isinstance(expr.args, str):
+            return '_zig_assert(false, "assertion failed", 0, 0)'
+        condition = self._emit_expr(expr.args[0])
+        message = '"assertion failed"'
+        if len(expr.args) >= 2:
+            message = self._emit_expr(expr.args[1])
+        line = getattr(expr, "line", 0) or 0
+        col = getattr(expr, "col", 0) or 0
+        return f"_zig_assert({condition}, {message}, {line}, {col})"
 
     def _emit_value_intrinsic(self, expr: MacroCall) -> str:
         """Lower popcount!/clz!/ctz!/bswap!/bitreverse! onto Zig builtins."""

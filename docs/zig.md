@@ -90,7 +90,7 @@ The current lowering covers:
 | Direct range `for` | ✅ | `start..end` and `start..=end` |
 | `return` and block tails | ✅ | Function result |
 | Signed `/` and `%` | ✅ | Lowered to `@divTrunc` / `@rem` (truncate toward zero) |
-| Slice bounds checks | ✅ | `items[i]` lowers to `_zig_at` with `std.debug.assert` |
+| Slice bounds checks | ❌ | `items[i]` is raw Zig indexing; `ReleaseFast` disables the check (10.54) |
 | `Result<T, PillarError>` | ✅ | Lowers to `PillarError!T`; `Err(E00n)` → `error.E00n` |
 | Integer casts | ✅ | `as` to integer types |
 | Indexing | ✅ | Pointer/slice indexing |
@@ -144,29 +144,49 @@ truncating builtins so signed arithmetic keeps C-like semantics:
 
 | Source | Lowering |
 | ------ | -------- |
-| `a / b` (signed) | `@divTrunc(a, b)` |
-| `a % b` (signed) | `@rem(a, b)` |
+| `a / b` | `_zig_div(a, b, line, col)` → `@divTrunc` |
+| `a % b` | `_zig_rem(a, b, line, col)` → `@rem` |
 
 `@divTrunc` truncates toward zero, so `-7 / 2` is `-3` (not `-4` as floor
-division would give), and `@rem` produces a signed remainder.
+division would give), and `@rem` produces a signed remainder. Both helpers
+first check the divisor, so an integer division or remainder by zero reports
+`error[E002]: division by zero` with the source position instead of Zig's own
+trap message.
 
-## Bounds-checked slice indexing
+## Slice indexing is unchecked
 
-`items[i]` on a slice lowers to a call to `_zig_at` (immutable) or
-`_zig_at_mut` (mutable), which asserts `i < items.len` before indexing:
+`items[i]` lowers to plain Zig indexing:
 
 ```zig
-fn _zig_at(comptime T: type, items: []const T, index: usize) T {
-    std.debug.assert(index < items.len);
-    return items[index];
+items[i]
+```
+
+There is no bounds check behind it, and that is deliberate rather than an
+oversight in the lowering. Two facts combine:
+
+- a `&[T]` parameter lowers to the many-item pointer `[*]T`, which carries no
+  length (`.`len` on it emits a `@compileError`);
+- the library is built with `-O ReleaseFast`, which disables Zig's own runtime
+  safety checks.
+
+So an out-of-range read is undefined behaviour: in a probe it segfaulted
+instead of reporting. If you index a buffer from the C ABI, pass the length as
+a separate `usize` parameter and compare before indexing:
+
+```polyglot
+fn take(items: &[i64], n: usize) -> i64 {
+    let mut i: usize = 0;
+    let mut total: i64 = 0;
+    while i < n {
+        total += items[i];
+        i = i + 1;
+    }
+    total
 }
 ```
 
-Many-item pointers (`[*]T`, produced by `&[T]` parameters) have no `.len`
-field in Zig. Reading `.len` on such a pointer emits a `@compileError` with a
-clear message — pass the length explicitly as a separate `usize` argument,
-matching the `#[parallel]` convention.
-
+The Python backend does report out-of-bounds reads as a located `E002`
+failure; the Zig backend cannot, and the difference is recorded in SPEC 10.54.
 ## Structured error unions
 
 `Result<T, PillarError>` lowers to the typed error union `PillarError!T`
@@ -357,7 +377,7 @@ fn fast_sum(a: i64, b: i64) -> i64 { a + b }
 The backend emits `@setRuntimeSafety(false);` as the first statement of that
 function only. Overflow and integer-range checks in that body become wrapping
 behaviour instead of a trap; everything else in the module stays checked, and
-the explicit `std.debug.assert` guards from `_zig_at` are unaffected. Do not use
+indexing has no bounds guard to disable, so the attribute only affects arithmetic. Do not use
 it to silence a real error — it is for hot loops where the bounds were already
 proven at the call site.
 
@@ -465,6 +485,28 @@ Run `main()` with:
 polyglot run examples/zig_parallel_simd.poly --backend zig
 ```
 
+## Runtime failures
+
+A guard that fails while the program runs prints two lines to standard error and
+then exits with status 1:
+
+```text
+error[E002]: division by zero
+  at: line 4, column 20
+```
+
+The first line is identical to what the Python backend prints for the same
+source, and the `at:` line carries the same line and column, so a Zig run and a
+Python run of the same program agree on both. The exit is deliberate: the
+failure has to stop execution, and the process hosting the CLI is the one that
+must stop. The helpers involved are `_zig_fail`, `_zig_div`, `_zig_rem`, and
+`_zig_assert`; `panic!` lowers to `_zig_fail("E002", <message>, line, col)` and
+`assert!` to `_zig_assert(<condition>, <message>, line, col)`.
+
+See SPEC 2.9 for the portable rule and SPEC 10.54 for what this exit means (a
+Zig failure cannot be caught by the caller the way a Python `RuntimeFailure`
+can).
+
 ## Tests
 
 `tests/test_zig_backend.py` is skipped when `zig` is not installed. It covers:
@@ -476,9 +518,13 @@ polyglot run examples/zig_parallel_simd.poly --backend zig
 - SIMD horizontal reduction on the example program;
 - CLI `run` and `build` with `--backend zig`;
 - signed `/` and `%` lowering to `@divTrunc` / `@rem`;
-- bounds-checked slice indexing via `_zig_at` / `_zig_at_mut`;
+- slice indexing (unchecked; the guard-free shape is asserted by a ctypes read test);
 - labeled-block `break <value>` lowering;
 - `Result<T, PillarError>` → `PillarError!T` and `Err(E00n)` resolution.
+
+`tests/test_runtime_failures.py` runs the failure cases through the CLI with
+`--backend zig`, asserting the same `error[E002]` first line and the same
+`at: line N, column M` line as the Python backend.
 
 `tests/test_zig_special.py` covers the Zig-exclusive surface: `popcount!`,
 `clz!`, `ctz!`, `bswap!`, `bitreverse!`, `rotl!`/`rotr!` and the overflow pair
@@ -507,6 +553,12 @@ toolchain.
 - Overflow is reported, not prevented, and the conversions are unchecked:
   `int_from_float!` does not range-check, `float_from_int!` rounds into `f64`,
   and `memcpy_bytes!` does not detect overlapping regions. See SPEC 10.53.
+- A runtime failure terminates the process, so it cannot be caught in-process
+  and cannot participate in a parity assertion beyond the two printed lines.
+- Indexing is not bounds-checked: `[*]T` parameters carry no length and
+  `ReleaseFast` disables Zig's safety check, so an out-of-range read is
+  undefined behaviour rather than a reported failure. See SPEC 8.12.12 and
+  10.54.
 - Requires `zig` on `PATH`.
 - Narrow AST subset; unsupported constructs are not covered.
 - C-ABI artifact; not importable as a Python extension.

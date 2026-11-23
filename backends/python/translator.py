@@ -363,15 +363,68 @@ MACRO_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _runtime_panic(msg: str = "") -> None:
-    raise RuntimeError(msg or "panic")
+RUNTIME_FAILURE_CODE = "E002"
+"""Diagnostic code used for failures detected while the program runs.
+
+The public code set stops at E008 and no runtime-specific code is reserved,
+so runtime failures reuse E002 ("semantic proof or termination obligation"):
+a guard that fails at run time means the proof the compiler assumed could not
+be discharged.  Sharing the code keeps one diagnostic pipeline for callers.
+"""
+
+
+class RuntimeFailure(Exception):
+    """A failure detected while a translated program runs.
+
+    The object carries everything the CLI five-line format needs — a public
+    diagnostic code, the source position, and a fix hint — so runtime failures
+    are reported exactly like compile-time diagnostics instead of leaking the
+    host language's exception names.
+    """
+
+    runtime_failure = True
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        line: int | None = None,
+        col: int | None = None,
+        code: str = RUNTIME_FAILURE_CODE,
+        help_text: str = "fix the reported error and try again",
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.line = line
+        self.col = col
+        self.help_text = help_text
+
+
+def _runtime_panic(
+    msg: str = "",
+    *,
+    line: int | None = None,
+    col: int | None = None,
+) -> None:
+    raise RuntimeFailure(
+        str(msg) or "panic called",
+        line=line,
+        col=col,
+        help_text="remove the panic, or make the failing branch unreachable",
+    )
 
 
 def _runtime_non_exhaustive_match(scrutinee_type: str) -> None:
     raise RuntimeError(f"non-exhaustive {scrutinee_type} match reached at runtime")
 
 
-def _runtime_assert(condition, *args) -> None:
+def _runtime_assert(
+    condition,
+    *args,
+    line: int | None = None,
+    col: int | None = None,
+) -> None:
     if condition:
         return
     message = "assertion failed"
@@ -385,17 +438,45 @@ def _runtime_assert(condition, *args) -> None:
                 message = str(fmt)
         else:
             message = str(fmt)
-    raise AssertionError(message)
+    raise RuntimeFailure(
+        message,
+        line=line,
+        col=col,
+        help_text="check the condition, or fix the assumption it encodes",
+    )
 
 
-def _runtime_assert_eq(a, b) -> None:
+def _runtime_assert_eq(a, b, *, line: int | None = None, col: int | None = None) -> None:
     if a != b:
-        raise AssertionError(f"{a!r} != {b!r}")
+        raise RuntimeFailure(
+            f"{a!r} != {b!r}",
+            line=line,
+            col=col,
+            help_text="check which side of the comparison is wrong",
+        )
 
 
-def _runtime_assert_ne(a, b) -> None:
+def _runtime_assert_ne(a, b, *, line: int | None = None, col: int | None = None) -> None:
     if a == b:
-        raise AssertionError(f"{a!r} == {b!r}")
+        raise RuntimeFailure(
+            f"{a!r} == {b!r}",
+            line=line,
+            col=col,
+            help_text="check which side of the comparison is wrong",
+        )
+
+
+def _runtime_at(container, index, line: int | None = None, col: int | None = None):
+    """Index with a checked bound so failures carry a source position."""
+    try:
+        return container[index]
+    except IndexError:
+        raise RuntimeFailure(
+            f"index {index} out of bounds for length {len(container)}",
+            line=line,
+            col=col,
+            help_text="check the index against len() of the container",
+        ) from None
 
 
 def _runtime_rust_len(value) -> int:
@@ -1101,7 +1182,9 @@ def _runtime_cast(value, ty, *, target_width: int | None = None):
     return number
 
 
-def _runtime_int_div(left, right):
+def _runtime_int_div(
+    left, right, line: int | None = None, col: int | None = None
+):
     """Rust integer division truncates toward zero; floats divide normally."""
     if (
         isinstance(left, int)
@@ -1109,12 +1192,28 @@ def _runtime_int_div(left, right):
         and not isinstance(left, bool)
         and not isinstance(right, bool)
     ):
+        if right == 0:
+            raise RuntimeFailure(
+                "division by zero",
+                line=line,
+                col=col,
+                help_text="check the divisor is non-zero before dividing",
+            )
         quotient = abs(left) // abs(right)
         return quotient if (left < 0) == (right < 0) else -quotient
-    return left / right
+    try:
+        return left / right
+    except ZeroDivisionError:
+        # Rust floats follow IEEE 754 here: x/0 is a signed infinity and 0/0
+        # is NaN. Python raises instead, so mirror the hardware result.
+        if left == 0:
+            return math.nan
+        return math.copysign(math.inf, left) * math.copysign(1.0, right)
 
 
-def _runtime_int_rem(left, right):
+def _runtime_int_rem(
+    left, right, line: int | None = None, col: int | None = None
+):
     """Rust `%` keeps the dividend's sign; floats use C `fmod`."""
     if (
         isinstance(left, int)
@@ -1122,6 +1221,13 @@ def _runtime_int_rem(left, right):
         and not isinstance(left, bool)
         and not isinstance(right, bool)
     ):
+        if right == 0:
+            raise RuntimeFailure(
+                "remainder by zero",
+                line=line,
+                col=col,
+                help_text="check the divisor is non-zero before taking a remainder",
+            )
         quotient = abs(left) // abs(right)
         quotient = quotient if (left < 0) == (right < 0) else -quotient
         return left - quotient * right
@@ -2042,6 +2148,7 @@ class Translator:
             ns[f"_cast_{_name}"] = _fn
         ns["_div"] = _runtime_int_div
         ns["_mod"] = _runtime_int_rem
+        ns["_at"] = _runtime_at
 
         # Register the namespace as a module so @dataclass can look it up
         # via sys.modules[cls.__module__]. A unique name avoids clobbering
@@ -2420,6 +2527,14 @@ class Translator:
             args=[value, ast.Constant(value=ty)],
             keywords=[],
         )
+
+    @staticmethod
+    def _position_args(node) -> list[ast.expr]:
+        """Two constants carrying ``line`` and ``col`` for a runtime guard."""
+        return [
+            ast.Constant(value=getattr(node, "line", None)),
+            ast.Constant(value=getattr(node, "col", None)),
+        ]
 
     def _binary_with_op(
         self,
@@ -6023,7 +6138,11 @@ class Translator:
                 getattr(e.index, "span", None),
             )
             idx = self.translate_expr(e.index)
-            return ast.Subscript(value=recv, slice=idx, ctx=ast.Load())
+            return ast.Call(
+                func=ast.Name(id="_at", ctx=ast.Load()),
+                args=[recv, idx, *self._position_args(e)],
+                keywords=[],
+            )
         if isinstance(e, TupleExpr):
             elts: list[ast.expr] = [self.translate_expr(x) for x in e.elems]
             return ast.Tuple(elts=elts, ctx=ast.Load())
@@ -6164,13 +6283,13 @@ class Translator:
         if e.op == "/":
             return ast.Call(
                 func=ast.Name(id="_div", ctx=ast.Load()),
-                args=[left, right],
+                args=[left, right, *self._position_args(e)],
                 keywords=[],
             )
         if e.op == "%":
             return ast.Call(
                 func=ast.Name(id="_mod", ctx=ast.Load()),
-                args=[left, right],
+                args=[left, right, *self._position_args(e)],
                 keywords=[],
             )
         if e.op == "==":
@@ -6640,13 +6759,18 @@ class Translator:
                 m.line,
                 m.col,
             )
-        if m.path == "assert":
+        if m.path in ("assert", "assert_eq", "assert_ne", "panic"):
             # ``_runtime_assert`` formats the message itself, so the generic
-            # print-style ``.format`` rewrite below must not run here.
+            # print-style ``.format`` rewrite below must not run here.  The
+            # trailing keywords carry the source position of the macro call so
+            # a failure can report where it happened.
             return ast.Call(
                 func=ast.Name(id=target, ctx=ast.Load()),
                 args=[self.translate_expr(a) for a in m.args],
-                keywords=[],
+                keywords=[
+                    ast.keyword(arg="line", value=ast.Constant(value=m.line)),
+                    ast.keyword(arg="col", value=ast.Constant(value=m.col)),
+                ],
             )
         args: list[ast.expr] = [self.translate_expr(a) for a in m.args]
         if m.path in ("println", "print", "eprintln", "eprint", "format"):

@@ -226,7 +226,7 @@ with `ctypes`. It is not an importable Python extension module, so
 The current lowering covers free functions, scalar parameters and returns,
 `let`, assignment, `while`, `loop` with `break`/`continue` (including labeled
 blocks with `break <value>`), direct range `for`, `return`, integer casts,
-indexing with bounds-checked slice access, binary operations, signed `/` and `%`
+indexing (unchecked), binary operations, signed `/` and `%`
 (lowered to `@divTrunc`/`@rem`), saturating operations, arbitrary-width
 integers, `Result<T, PillarError>` lowered to `PillarError!T`, parallel range
 loops, the SIMD builtins above, user-function calls, `if`/`else`, struct
@@ -237,6 +237,37 @@ outside that subset are outside the Zig contract; use the Python or native
 backend for them. See [docs/zig.md](zig.md) for the complete feature
 reference, SPEC 8.12 for the normative rules, and SPEC 10.42 / 10.52 for the
 boundary entries.
+
+### Runtime failures on both backends
+
+A guard that fails while the program runs reports the same way on the Python
+and Zig backends: the code, the message, and the source position of the failing
+expression. Nothing about it is Zig-specific, so this section applies to normal
+programs too.
+
+```text
+$ polyglot run div.poly
+error[E002]: division by zero
+  reason: division by zero
+  help: check the divisor is non-zero before dividing
+  note: runtime failure
+  at: line 4, column 20
+
+$ polyglot run div.poly --backend zig
+error[E002]: division by zero
+  at: line 4, column 20
+```
+
+The Python backend raises `RuntimeFailure` with `code`, `line`, `col`, and
+`help_text`; the Zig backend prints the same two lines and exits non-zero, so
+the lines are identical even though the exit tears down the CLI process. The
+guarded operations are integer `/` and `%` by zero, `panic!`, `assert!`,
+`assert_eq!`, and `assert_ne!` on both backends, plus out-of-bounds reads of a
+`Vec`/array/slice on the Python backend. The Zig backend cannot guard indexing:
+a `&[T]` parameter is a `[*]T` with no length, and the release build disables
+Zig's safety check. Float division by zero is not guarded, because IEEE 754
+defines it (`1.0/0.0` is infinity, `0.0/0.0` is NaN). See SPEC 2.9 and the
+boundary in SPEC 10.54.
 
 ### Language and runtime models (experimental)
 

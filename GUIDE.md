@@ -399,6 +399,26 @@ an `E001` type mismatch adds an `as <type>` text edit. `polyglot exec
 Some diagnostics carry a message only, because the correct edit cannot be
 derived from the diagnostic alone.
 
+### Runtime failures
+
+A guard that fails while the program runs uses the same five-line format and
+the same code, `E002`. The message says what failed, the note says it failed
+while running, and the location line points at the expression that failed:
+
+```text
+$ polyglot run div.poly
+error[E002]: division by zero
+  reason: division by zero
+  help: check the divisor is non-zero before dividing
+  note: runtime failure
+  at: line 4, column 20
+```
+
+The guarded operations are integer `/` and `%` with a zero divisor,
+out-of-bounds indexing of a `Vec`, array, or slice, `panic!`, `assert!`,
+`assert_eq!`, and `assert_ne!`. Float division by zero is not an error: `x / 0`
+is infinity and `0 / 0` is NaN, matching Rust. See SPEC 2.9.
+
 ## 10. What to do when you get stuck
 
 1. Read the error message. It usually tells you what to write.

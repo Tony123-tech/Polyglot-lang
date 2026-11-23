@@ -105,6 +105,8 @@ def _format_five_line(error: Exception) -> str:
     reason = message.splitlines()[0] if message else error.__class__.__name__
     help_text = "fix the reported error and try again"
     note = error.__class__.__name__
+    runtime_failure = getattr(error, "runtime_failure", False)
+    code = getattr(error, "code", None) if runtime_failure else None
     if isinstance(error, FileNotFoundError):
         help_text = "check that the path exists and is readable"
     elif isinstance(error, (IncludeCycleError, IncludeNotFoundError)):
@@ -113,14 +115,19 @@ def _format_five_line(error: Exception) -> str:
         help_text = "run compilation in a trusted context"
     elif "parse" in note.lower() or "syntax" in note.lower():
         help_text = "check the source syntax near the reported location"
+    if runtime_failure:
+        # Runtime guards ship their own fix hint and a stable note.
+        help_text = getattr(error, "help_text", help_text)
+        note = "runtime failure"
 
     loc = (
         f"at: line {line}, column {col}"
         if line is not None and col is not None
         else "at: <unknown>"
     )
+    head = f"error[{code}]: {reason}" if code else f"error: {reason}"
     return (
-        f"error: {reason}\n"
+        f"{head}\n"
         f"  reason: {reason}\n"
         f"  help: {help_text}\n"
         f"  note: {note}\n"

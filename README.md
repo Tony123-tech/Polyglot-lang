@@ -169,7 +169,7 @@ Opt-in (`--backend zig` on `run`, `build`, `exec`, `compile`, or
 `get_backend("zig")`); not part of the Python/native parity contract. The tested
 subset covers top-level functions, `let`/assignment, `while`/`loop`/range `for`,
 `return`, binary and cast expressions, signed `/`/`%` (`@divTrunc`/`@rem`),
-bounds-checked slice indexing, labeled-block `break <value>`,
+unchecked slice indexing, labeled-block `break <value>`,
 `Result<T, PillarError>` → `PillarError!T`, saturating arithmetic, arbitrary
 bit-width `uN`/`iN` (`0..=65535`), `#[parallel]` range-loop splitting, and
 `SimdN<T>` builtins, user-function calls, `if`/`else`, struct declarations and
@@ -234,7 +234,7 @@ Every diagnostic carries a stable code:
 | Code | Raised by | Meaning |
 |------|-----------|---------|
 | `E001` | `TypeErrorForBoundary` | Implicit conversion between different integer types; add an explicit `as` cast. SPEC 2.4.6–2.4.7. |
-| `E002` | `TerminationError` | `#[terminates]` function has no supported termination proof. SPEC 2.8. |
+| `E002` | `TerminationError`, `RuntimeFailure` | A `#[terminates]` function has no supported termination proof, or a runtime guard failed (division by zero, index out of bounds, `panic!`, a failed `assert!`). SPEC 2.8, 2.9. |
 | `E003` | `TranslateError` | AST-to-backend translation failure (unsupported construct, invalid pattern). Python backend only; native reports `E004` or `E007`. |
 | `E004` | `RustCompileError` | Generated Rust failed to compile; original source location included when available. |
 | `E005` | `IncludeCycleError` | Cyclic `include!` chain; the full chain is printed. SPEC 9.2. |
@@ -320,11 +320,11 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3374 passed, 6 skipped, 31 deselected (`pytest -q`);
-31 passed, 3380 deselected (`pytest -q -m slow`).
+**Current test status:** 3390 passed, 6 skipped, 31 deselected (`pytest -q`);
+31 passed, 3396 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
-bounds-checked slice indexing, labeled-block `break <value>`, and
+unchecked slice indexing, labeled-block `break <value>`, and
 `Result<T, PillarError>` → `PillarError!T`), and three pure-Python language/
 runtime models were added: `compiler/gleam_style/`, `runtime/actor_otp/`, and
 `compiler/mojo_bridge/`.

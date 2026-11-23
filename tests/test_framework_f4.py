@@ -32,7 +32,7 @@ from backends.python.framework import (
     py_marshal_result_and_errors,
     py_run_parity_harness,
 )
-from backends.python.translator import _Result, _ResultErrSentinel
+from backends.python.translator import RuntimeFailure, _Result, _ResultErrSentinel
 from framework_functions import get_function
 from lexer import lex
 from parser import parse
@@ -204,7 +204,7 @@ def test_macro_expansions_produce_executable_python_expressions():
     failing = py_emit_macro_expansions(
         [MacroCall(1, 0, "assert", [LitBool(1, 0, False)])]
     )
-    with pytest.raises(AssertionError):
+    with pytest.raises(RuntimeFailure):
         exec(  # noqa: S102
             compile(
                 py_emit_module_header() + "\n" + failing,

@@ -14,14 +14,112 @@
 - M5: Async extensions (Send-aware PyFuture, async impl methods, cancellation, timeout)
 - F1: Deliverable CLI
 - Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries, intrinsics, `#[packed]`, `#[unchecked]`, overflow reports/rotations/conversions/buffers
+- Runtime failures: located `E002` guards on both backends, IEEE 754 float division
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3374 passed, 6 skipped, 31 deselected (fast suite, after the second Zig-exclusive intrinsics batch).
+**Latest baseline:** 3390 passed, 6 skipped, 31 deselected (fast suite, after the runtime-failure reporting batch).
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
+
+## Runtime failures — a located guard instead of a host exception
+
+**Goal:** make a failure that happens *while* a program runs look like every
+other diagnostic: a code, a message, and the position of the expression that
+failed. Before this batch, four different failures on the same program printed
+`at: <unknown>` and a `note:` naming whatever Python class raised.
+
+**What the probe found.** Running real programs through the CLI (not the
+lowering functions) showed the actual shapes:
+
+```text
+% polyglot run /tmp/rz.poly
+error: division by zero
+  note: ZeroDivisionError
+  at: <unknown>
+```
+
+`v[5]` on a three-element `Vec` printed `IndexError: list index out of range`,
+and `panic!`/`assert!` printed the same generic help line. Two probes looked
+like defects and were **not**: `panic("boom")` without the `!` is an ordinary
+call to an undefined function, so `NameError` is correct there, and `u8 250 +
+20` returning 14 is the wrapping behaviour of SPEC 2.4.9. Both were dropped
+after checking the source rather than reporting them.
+
+**Design choice: reuse `E002`.** The public code set stops at `E008` and there
+is no runtime-specific code, so a guard failure reuses `E002` ("semantic proof
+or termination obligation") — a guard that fails at run time means the
+obligation the compiler assumed could not be discharged. No new code, no
+parallel namespace.
+
+**Position source: the AST node, not the exception.** `_translate_binary_raw`
+and the `Index` branch already hold the node, so `/`, `%`, and indexing emit
+`_div(left, right, line, col)`, `_mod(...)`, and `_at(container, index, line,
+col)`; the macro branch appends `line=`/`col=` keywords to `panic!` and the
+assert family. The CLI needed almost nothing: it already read `.line`/`.col`,
+so giving the exception object those attributes fixed `at: <unknown>`. The only
+CLI change is the head line (`error[E002]: …` when the object declares
+`runtime_failure = True`) and `note: runtime failure`.
+
+**Watch out: `assert!` used to raise `AssertionError`.** Three tests and one
+framework test expected that, and `vec_sort([])` expected `IndexError` because
+the *user* code indexed an empty vec. All four were updated to the new
+contract rather than keeping a compatibility inheritance, because a guard that
+ghosts its own position is the bug being fixed.
+
+**Bug found while writing the float test — `1.0 / 0.0` raised.** Rust floats
+follow IEEE 754 (`x/0` is a signed infinity, `0/0` is NaN); Python raises. The
+helper now catches the zero case and returns the IEEE result, which also
+removes a silent Python/parity divergence.
+
+### Bug 1 — float division by zero raised instead of returning infinity
+
+**Symptom:** `fn main() -> f64 { 1.0 / 0.0 }` exited 1 with
+`error: division by zero` / `note: ZeroDivisionError`. A native Rust build
+returns `inf`.
+**Cause:** `_runtime_int_div` fell through to Python's `left / right` for any
+non-integer operand, and Python raises for floats too.
+**Fix:** catch `ZeroDivisionError` for the float path, return
+`copysign(inf, left) * copysign(1.0, right)`, and NaN for `0/0`.
+**Lesson:** "integer-only guard" was an assumption about the host, not a
+checked fact. The parity suite had no float-division-by-zero case, so nothing
+failed.
+
+### Bug 3 — the documented bounds check never existed, and an out-of-range read segfaults
+
+**Symptom:** `fn pick(items: &[i64]) -> i64 { items[5] }` on a three-element
+buffer printed nothing and died with `Segmentation fault: 11` (exit 139).
+SPEC 8.12.12 and `docs/zig.md` both claimed `_zig_at`/`_zig_at_mut` helpers that
+`std.debug.assert(i < len)`.
+**Cause:** two separate gaps. `&[i64]` lowers to the many-item pointer
+`[*]const i64`, which has no `.len`, so the claimed helper could not have
+compiled against a real parameter; and the library is built with
+`-O ReleaseFast`, which turns Zig's own bounds check off. The claim had lived in
+the docs since 11.25 without a failing test to contradict it, because the
+existing "bounds-checked indexing" test only read in-range.
+**Fix:** the claim is withdrawn rather than papered over. SPEC 8.12.12 now states
+that indexing lowers to raw Zig access, that a `[*]T` parameter carries no
+length, and that an out-of-range read is undefined behaviour; 10.54 records the
+asymmetry, `docs/zig.md` documents the "pass the length and compare" pattern,
+and the stale ✅ row is now ❌ with the release-mode reason. Guarding reads
+through a helper was tried and reverted: it cannot compile for `[*]T`.
+**Lesson:** a ✅ in a feature table needs a test that would fail if the feature
+were absent. In-range reads never prove a bounds check.
+
+### Bug 2 — the generated Zig print broke the build
+
+**Symptom:** every `--backend zig` failure printed
+`error: Zig build-lib failed:` with no detail.
+**Cause:** the helper block is a Python triple-quoted string, so `\n` inside
+the Zig format string became a real newline and produced an invalid Zig string
+literal — a compile error, not a runtime failure, which is why the real cause
+was swallowed.
+**Fix:** escape the newline as `\\n` in the Python source; the failure path
+then prints the two intended lines.
+**Lesson:** generated-source helpers need a smoke build for the *failure* path
+too, not just the happy path.
 
 ## Zig backend — an opt-in execution mode
 

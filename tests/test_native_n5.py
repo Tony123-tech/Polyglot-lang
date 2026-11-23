@@ -1784,5 +1784,7 @@ def test_sandbox_allows_exceptions():
     }
     """)
     assert ns["safe"](5) == 5
-    with pytest.raises(RuntimeError, match="negative"):
+    from backends.python.translator import RuntimeFailure
+
+    with pytest.raises(RuntimeFailure, match="negative"):
         ns["safe"](-1)

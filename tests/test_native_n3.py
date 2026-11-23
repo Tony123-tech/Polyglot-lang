@@ -2,7 +2,7 @@
 
 import pytest
 
-from backends.python.translator import compile_rust
+from backends.python.translator import RuntimeFailure, compile_rust
 from lexer import lex
 from parser import parse
 
@@ -817,8 +817,11 @@ fn vec_slice(values: Vec<i64>) -> Vec<i64> {
         namespace["vec_slice"]([10, 20, 30, 40])
 
 
-def test_python_vec_sort_empty_panics():
+def test_python_vec_sort_empty_reports_a_located_failure():
+    """Indexing an empty vec fails through the located runtime guard."""
     program = parse(lex(SOURCES["vec_sort"]))
     namespace = compile_rust(program)
-    with pytest.raises(IndexError):
+    with pytest.raises(RuntimeFailure) as caught:
         namespace["vec_sort"]([])
+    assert str(caught.value) == "index 0 out of bounds for length 0"
+    assert (caught.value.line, caught.value.col) == (4, 11)
