@@ -1,0 +1,8 @@
+// Tight integer loop: measures per-iteration overhead.
+fn main() -> i64 {
+    let mut total = 0;
+    for i in 0..5000000 {
+        total = total + i;
+    }
+    total
+}

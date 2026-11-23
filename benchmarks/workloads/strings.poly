@@ -1,0 +1,11 @@
+// String churn: repeated replace + count over a generated buffer.
+include!("std:str_utils");
+
+fn main() -> i64 {
+    let text = repeat("abc", 50);
+    let mut hits = 0;
+    for i in 0..20000 {
+        hits = hits + count_substring(replace_all(text.clone(), "a", "b"), "b");
+    }
+    hits
+}
