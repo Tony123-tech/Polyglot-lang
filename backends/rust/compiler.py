@@ -278,7 +278,7 @@ class NativeBackend(BackendBase):
         key = hashlib.sha256(source.encode()).hexdigest()[:16]
         build_dir = self.cache_dir / key
 
-        if self._is_built(build_dir):
+        if self._is_built(build_dir, module_name):
             self.last_build = {
                 "source_hash": key,
                 "reused": True,
@@ -311,10 +311,29 @@ class NativeBackend(BackendBase):
 
     # ---- build steps -------------------------------------------------------
 
-    def _is_built(self, build_dir: Path) -> bool:
-        if _find_extension_path(build_dir) is not None:
-            return True
-        return _find_extension_path(build_dir / "target" / "release") is not None
+    def _is_built(self, build_dir: Path, module_name: str) -> bool:
+        """True only when this cache entry was built for ``module_name``.
+
+        The build directory is seeded with another build's ``target/`` to keep
+        dependencies warm, so an extension file may exist without belonging to
+        this source. The manifest written after a successful build is the only
+        trustworthy signal.
+        """
+        manifest_path = build_dir / ".polyglot-manifest.json"
+        manifest = _read_json(manifest_path)
+        if not isinstance(manifest, dict):
+            return False
+        if manifest.get("module") != module_name:
+            return False
+        if manifest.get("source_hash") != build_dir.name:
+            return False
+        extension = manifest.get("extension")
+        if not isinstance(extension, str) or not extension:
+            return False
+        for base in (build_dir, build_dir / "target" / "release"):
+            if (base / extension).is_file():
+                return True
+        return False
 
     # ---- incremental build -------------------------------------------------
 
@@ -349,7 +368,7 @@ class NativeBackend(BackendBase):
             # Another process may have finished this exact build while we
             # waited for the lock.
             build_dir = self.cache_dir / key
-            if self._is_built(build_dir):
+            if self._is_built(build_dir, module_name):
                 self.last_build = {
                     "source_hash": key,
                     "reused": True,
@@ -592,6 +611,22 @@ class NativeBackend(BackendBase):
                 source,
                 line_map,
                 source_line_text_map,
+            )
+
+        # Record that this cache entry really belongs to this source and module.
+        # Without it a seeded ``target/`` directory can masquerade as a finished
+        # build and hand back another program's extension module.
+        extension = _find_extension_path(
+            build_dir, module_name
+        ) or _find_extension_path(build_dir / "target" / "release", module_name)
+        if extension is not None:
+            _write_json(
+                build_dir / ".polyglot-manifest.json",
+                {
+                    "source_hash": build_dir.name,
+                    "module": module_name,
+                    "extension": extension.name,
+                },
             )
 
     def _cargo_toml(self, module_name: str = "polyglot_native") -> str:
