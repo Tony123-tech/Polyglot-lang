@@ -19,7 +19,7 @@
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3258 passed, 6 skipped, 31 deselected (fast suite, after the native cache fix).
+**Latest baseline:** 3340 passed, 6 skipped, 31 deselected (fast suite, after the expansion frontier batch).
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -1902,6 +1902,124 @@ tighten that path's contract for callers that already relied on it.
 - Full fast suite: **3258 passed, 6 skipped, 31 deselected.**
 - Native pattern and spec-conformance failures: 14 → 0.
 - All three bugs are covered by tests that fail if the behaviour returns.
+
+## Expansion frontier — five bounded models, no overclaiming
+
+The challenge asked for five surfaces: cluster/location-transparent actors,
+deterministic simulation testing, a hygienic cross-backend macro engine, a
+zero-copy shared-memory arena, and a self-hosted compiler core. Each landed as a
+model with a written limit (SPEC 10.47–10.51) instead of a claim, because each
+full version needs infrastructure this repository does not have (sockets and
+persistence, a real preemption model, a surface macro syntax, a second compiler
+generation).
+
+**Why models still earn their place:** they make the *decision logic* testable.
+Quorum election, epoch fencing, seeded tie-breaking, capture avoidance, FIFO
+release and digest fixed points are all properties you can break with a small
+change, and now each has a named test file. When the heavier version arrives, the
+tests describe the behaviour it must keep.
+
+**Deliberate choices:**
+
+- The cluster module reuses `Cluster`, `LeaseManager` (`bump_epoch`/`fencing`),
+  `wire.encode_frame`/`decode_frame` and `DistributedError` rather than building
+  a second transport. Heartbeat state is kept on the cluster so two calls form
+  one timeline.
+- Freezing on a split is the default. A minority that keeps accepting writes is
+  the failure mode split-brain names, so no quorum means no writable group and
+  no epoch change.
+- DST ties break on a hash of the seed rather than `random.shuffle`, so the same
+  seed reproduces the same trace across processes and Python versions.
+- Reclaim is whole-arena and requires an epoch that advances. Being blunt and
+  explicit is better than a per-slot free list that can be wrong silently.
+- Stage 2 re-reads only canonical IR shapes. If it accepted anything, the
+  fixed-point check could pass by re-printing garbage that proves nothing.
+
+### Bug 1 — `Sorted` comparisons on dataclass payloads
+
+**Symptom:** the first scheduler draft used `sorted(key=(at_ms, tie_key))` with
+the operation object as the last tuple element. Python compares tuples
+element-wise, so equal keys reached the `SimOp` dataclass and raised
+`TypeError`.
+
+**Cause:** the sort key carried the object itself instead of a total order over
+keys.
+
+**Fix:** include the original index before the operation, making the tuple
+totally ordered without ever comparing payloads.
+
+**Lesson:** a deterministic scheduler needs a *total* key, not a mostly-unique
+one.
+
+### Bug 2 — `PillarError` has no `context` keyword
+
+**Symptom:** five DST tests failed with
+`PillarError.__init__() got an unexpected keyword argument 'context'`.
+
+**Cause:** the signature in `runtime/diagnostics.py` is
+`(code, message, *, reason, help_text, note, line, col, span)`; the DST module
+invented a `context=` argument from memory of a different codebase.
+
+**Fix:** dropped the keyword and moved the extra detail into the message.
+
+**Lesson:** read the diagnostic constructor before writing new call sites; the
+five-line format is the contract, not a suggestion.
+
+### Bug 3 — the ring holds `N-1`, and the test assumed `N`
+
+**Symptom:** `test_full_ring_refuses_the_push` expected the second push into a
+three-slot ring to fail; it succeeded.
+
+**Cause:** the classic ring-buffer invariant: with `head == tail` meaning empty,
+one slot must stay unused to distinguish empty from full.
+
+**Fix:** the test now pushes `N-1` payloads before expecting `-1`, and the
+docstring in `arena.push` states the invariant.
+
+**Lesson:** document capacity as `slots - 1` at the API, or every caller will
+assume `slots`.
+
+### Bug 4 — exported memoryviews block `mmap.close()`
+
+**Symptom:** `BufferError: cannot close exported pointers exist` when a test
+closed an arena with an outstanding `RingLease`.
+
+**Cause:** `pop` returned a `memoryview` over the mapping and nothing tracked it;
+`mmap.close()` refuses while any view is exported.
+
+**Fix:** the arena keeps a list of live views, drops each on `release`, and
+`close` releases them all first.
+
+**Lesson:** zero-copy hands out a lifetime; whoever hands it out must own the
+release bookkeeping.
+
+### Bug 5 — the IR reader assumed one top-level form
+
+**Symptom:** a two-function program failed stage 2 with
+`IR has trailing tokens after the program`.
+
+**Cause:** `parse_ir` read a single root and then demanded end-of-input, but
+`emit_ir` writes one line per function.
+
+**Fix:** read top-level forms until the token stream is exhausted.
+
+**Lesson:** a canonical printer and its reader must share the same notion of
+"program"; one-form and many-form are different grammars.
+
+### Bug 6 — the subset tokenizer had no `=`
+
+**Symptom:** `let sum = x + y;` failed with `unexpected character at offset 34: ' '`.
+
+**Cause:** the token regex listed `==` but not the single `=` used by `let`, so
+`re.match` failed at the space before it and reported the whitespace.
+
+**Fix:** add `=` to the token alternation; the parser already required it.
+
+**Lesson:** a tokenizer error pointing at whitespace usually means the *next*
+character is unrecognised.
+
+**Baseline after this batch:** 3340 passed, 6 skipped, 31 deselected (fast
+suite); the five new test files add 82 tests and no new error codes.
 
 ## Ownership checking (E009) — parity by construction
 

@@ -2,6 +2,52 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — expansion frontier (cluster, DST, macros, IPC, bootstrap)
+
+- Added `distributed/frontier.py`: `cluster_discover_and_heartbeat`,
+  `cluster_route_session_typed_rpc`, and `cluster_handle_partition_and_split_brain`.
+  Unknown senders are discovered, stale/backwards heartbeats are separated (the
+  latter is `E001`), silent members are evicted by TTL, RPCs are routed by a
+  deterministic hash through the existing `encode_frame`/`decode_frame` codec
+  (`E007` for an unsupported version, `E006` for an empty cluster), and a
+  partition either elects a writable quorum at a bumped epoch or freezes. Adds
+  SPEC 8.17 and 10.47.
+- Added `tools/dst/`: `dst_virtualize_clock_and_scheduler`,
+  `dst_inject_byzantine_and_io_faults`, `dst_bisect_and_minimize_schedule`. Tie
+  order is a SHA-256 key over `(seed, at_ms, seq, node, kind)`, six faults are
+  drawn in a fixed order from `random.Random(seed)`, and delta debugging shrinks
+  a failing schedule against a caller-supplied oracle under a hard probe budget.
+  Adds SPEC 8.18 and 10.48.
+- Added `compiler/macro_engine/`: `macro_resolve_hygienic_scopes`,
+  `macro_expand_typed_ast_splice`, `macro_verify_backend_expansion_parity`.
+  Binders become `name#scope`, template free names resolve to `name@scope` and
+  are reported when a call-site name would have captured them, holes are filled
+  once with `i64`/`str`/`bool` checking, and the three backends must agree on the
+  lowered opcode stream (`E004` on the first divergence). Adds SPEC 8.19 and
+  10.49.
+- Added `runtime/ipc/`: `ipc_map_shared_ring_arena`, `ipc_enforce_epoch_borrow_lease`,
+  `ipc_reclaim_abandoned_slots`. A file-backed `mmap` ring with a 56-byte header
+  shares cursors across mappings, `pop` returns a zero-copy `memoryview` while a
+  lease is outstanding (so a producer gets `-1` instead of overwriting), leases
+  release in FIFO order, and reclaim zeroes abandoned slots and fences stale
+  leases by advancing the epoch. Adds SPEC 8.20 and 10.50.
+- Added `bootstrap/`: `bootstrap_stage1_compile_subset`,
+  `bootstrap_verify_stage2_fixed_point`, `bootstrap_diff_stage_ir_hashes`. The
+  subset front end type-checks and lowers to one-line canonical IR; `parse_ir`
+  accepts only canonical shapes (`E008` otherwise) and stage 2 must reproduce the
+  stage-1 digest. Adds SPEC 8.21 and 10.51.
+- Added `docs/cluster.md`, `docs/dst.md`, `docs/macros.md`, `docs/ipc_arena.md`,
+  and `docs/bootstrap.md`, each stating its bounded model, plus an "Expansion
+  frontier" table in the README.
+- Cleaned duplicate `[tool.setuptools.packages.find]` include entries
+  (`tools.abi_contract*` and `tools.provenance*` appeared twice) and added
+  `bootstrap*`/`tools.dst*` so the new packages install.
+- New tests: `tests/test_cluster_frontier.py` (12), `tests/test_dst.py` (19),
+  `tests/test_macro_engine.py` (19), `tests/test_ipc_arena.py` (18),
+  `tests/test_bootstrap.py` (14).
+- Fixed two lint findings left in `benchmarks/run_benchmarks.py` (missing
+  `check=False` on `subprocess.run`, non-executable shebang).
+
 ## Unreleased — comprehension pass, CLI commands, native cache fix
 
 - Split `GUIDE.md` into a beginner path and `docs/advanced.md`; the guide now

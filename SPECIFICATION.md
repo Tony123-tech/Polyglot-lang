@@ -512,6 +512,71 @@ This section defines the platform differences permitted by this specification. E
 - `tests/test_move_parity.py` runs the same case table through both backends and asserts identical outcomes: allowed programs run with the same return value, rejected programs raise the same `E009` headline with the same line pair.
 - `tests/test_m7_diagnostics.py` covers `E001`–`E008` formatting; `E009` uses the same five-line form and prints a character span when the node has one.
 
+### 8.17 Cluster membership, session routing, and split brain
+
+- **8.17.1** `cluster_discover_and_heartbeat` MUST process a heartbeat batch in `(node, seq)` order, MUST join an unknown sender as a discovered member, and MUST ignore a repeated or older `seq` from the same node, reporting it as stale.
+- **8.17.2** A heartbeat whose timestamp moves backwards MUST raise `E001`; a member silent longer than `ttl_ms` MUST be evicted from the membership view, marked dead, and reported. A non-positive `ttl_ms` MUST raise `E001`.
+- **8.17.3** `cluster_route_session_typed_rpc` MUST reject a message whose role or type is not the first step of the supplied protocol (`E001`), a `schema_version` outside the supported set (`E007`), and an empty cluster (`E006`). The payload MUST round-trip through `encode_frame`/`decode_frame`; a mismatch MUST raise `E004`.
+- **8.17.4** Routing MUST be deterministic: the target is selected by a hash of `route_key` over the sorted live node set, and the session id by a hash of `(route_key, direction, message_type, epoch)`.
+- **8.17.5** `cluster_handle_partition_and_split_brain` MUST mark the largest group that reaches `total // 2 + 1` nodes writable, fence the remaining groups at a bumped epoch, and freeze the whole cluster (no epoch change, no writable group) when no group reaches quorum. Unknown nodes, overlapping groups, and an empty cluster MUST raise `E001`/`E002`.
+- **8.17.6** A change to this section MUST follow the versioning rule in 11.1 and MUST record the resulting boundary in Section 10.
+
+**Acceptance criteria**
+
+- `tests/test_cluster_frontier.py` covers discovery, stale and backwards heartbeats, TTL eviction, route determinism, out-of-turn messages, unsupported codec versions, an empty cluster, majority fencing, frozen splits, overlapping partitions, and unknown nodes.
+
+### 8.18 Deterministic simulation testing
+
+- **8.18.1** `dst_virtualize_clock_and_scheduler` MUST order operations by logical time and break ties with a key derived from the seed, so the same operations and seed always produce the same trace.
+- **8.18.2** The virtual clock MUST be monotonic. A negative timestamp or an operation scheduled before `start_ms` MUST raise `E001`.
+- **8.18.3** `dst_inject_byzantine_and_io_faults` MUST draw its faults in a fixed order from a seeded generator, so the faulted operation list is a pure function of `(ops, seed, rates)`. Rates outside `[0, 1]` and unknown fault kinds MUST raise `E003`.
+- **8.18.4** The supported faults MUST be `drop`, `duplicate`, `reorder`, `torn_write`, `lost_fsync`, and `bitflip`, and the report MUST count each injected fault.
+- **8.18.5** `dst_bisect_and_minimize_schedule` MUST shrink a failing schedule by removing contiguous chunks while a caller-supplied deterministic oracle still fails, MUST return the probe count, and MUST stop at a hard probe budget instead of looping.
+- **8.18.6** A change to this section MUST follow the versioning rule in 11.1 and MUST record the resulting boundary in Section 10.
+
+**Acceptance criteria**
+
+- `tests/test_dst.py` covers seed reproducibility, seed-dependent tie order, elapsed time, rejected timestamps, per-fault effects, rate validation, culprit isolation, the non-failing case, and the probe budget.
+
+### 8.19 Hygienic cross-backend macros
+
+- **8.19.1** `macro_resolve_hygienic_scopes` MUST rename template binders to `name#<scope>` and resolve template free references at the definition site as `name@<scope>`.
+- **8.19.2** A free name that also exists at the call site MUST be recorded as captured and MUST be qualified, so a call-site binding cannot capture it. Unbound globals MUST stay bare.
+- **8.19.3** `macro_expand_typed_ast_splice` MUST fill every hole exactly once, MUST reject an arity mismatch and an unfilled hole with `E002`, and MUST reject a concrete type mismatch with `E001`. `unknown` MUST be accepted for names.
+- **8.19.4** Expansion depth MUST be capped; exceeding the cap MUST raise `E002` rather than overflow the stack.
+- **8.19.5** `macro_verify_backend_expansion_parity` MUST lower the expanded tree on every requested backend, compare canonical opcode streams, and raise `E004` naming the divergent backend and the first divergent opcode. An unregistered backend MUST raise `E004`.
+- **8.19.6** A change to this section MUST follow the versioning rule in 11.1 and MUST record the resulting boundary in Section 10.
+
+**Acceptance criteria**
+
+- `tests/test_macro_engine.py` covers binder renaming, definition-site qualification, capture reporting, bare globals, determinism, block scoping, hole filling, arity and type rejection, depth limits, parity success, divergence detection, and unfilled-hole rejection.
+
+### 8.20 Shared-memory arena and borrow leases
+
+- **8.20.1** `ipc_map_shared_ring_arena` MUST create a file-backed ring with a fixed header (magic, version, slots, slot size, next slot, head, tail, epoch, inflight). A foreign magic MUST raise `E008`, an unsupported version `E007`, a missing file without `create=True` `E006`, and a slot-count mismatch `E003`.
+- **8.20.2** `push` MUST copy the payload into the next slot and return its index, MUST return `-1` when the ring is full or a lease is outstanding, and MUST raise `E003` for a payload larger than a slot.
+- **8.20.3** `pop` MUST return a zero-copy `memoryview` into the mapping and MUST register it as in-flight until released; leases MUST release in FIFO order (`E003` otherwise).
+- **8.20.4** `ipc_enforce_epoch_borrow_lease` MUST accept a lease only when its epoch equals the arena epoch, MUST raise `E002` for a stale epoch, and MUST allow one live lease per holder (`E003` on duplicates).
+- **8.20.5** `ipc_reclaim_abandoned_slots` MUST require an epoch that advances past the current one (`E002` otherwise), MUST zero abandoned slot bytes, clear leases, reset the ring, and report evicted holders and dropped slots.
+- **8.20.6** A change to this section MUST follow the versioning rule in 11.1 and MUST record the resulting boundary in Section 10.
+
+**Acceptance criteria**
+
+- `tests/test_ipc_arena.py` covers header initialisation, push/pop round-trip, zero-copy views, empty and full rings, lease-blocked overwrite, FIFO release, oversized payloads, two mappings sharing one ring, foreign files, missing files, slot-count mismatch, lease grant/release, duplicate holders, stale epochs, reclaim effects, and zeroed bytes on disk.
+
+### 8.21 Bootstrapped compiler core
+
+- **8.21.1** `bootstrap_stage1_compile_subset` MUST parse a subset of integer functions with `let`, `return`, `if`/`else`, calls, and `+ - * / < > ==`, type-check it, and lower it to canonical IR whose digest is a hash of the IR text.
+- **8.21.2** Syntax errors and duplicate names MUST raise `E003`; unknown variables and return-type mismatches MUST raise `E001`; calls to undefined functions MUST raise `E006`.
+- **8.21.3** `parse_ir` MUST accept only the canonical shapes `emit_ir` can produce and MUST raise `E008` otherwise, so the fixed-point check cannot pass by re-printing malformed IR.
+- **8.21.4** `bootstrap_verify_stage2_fixed_point` MUST re-read and re-emit the IR and MUST require the digest to repeat within a bounded number of rounds; failing to reach a fixed point MUST raise `E004`.
+- **8.21.5** `bootstrap_diff_stage_ir_hashes` MUST report digest equality and, when they differ, the first differing IR line.
+- **8.21.6** A change to this section MUST follow the versioning rule in 11.1 and MUST record the resulting boundary in Section 10.
+
+**Acceptance criteria**
+
+- `tests/test_bootstrap.py` covers canonical lowering, digest stability, syntax/type/undefined-function errors, duplicate parameters, the Zig demonstration emitter and its documented limit, IR round-tripping, the fixed point, malformed IR, digest diffing, and whitespace-insensitive parsing.
+
 ## 9. Toolchain and Delivery
 
 - **9.1** The toolchain MUST include a lexer, a parser, an AST, both backends, diagnostics that map native errors to source positions, and a module mechanism.
@@ -597,6 +662,12 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.44** `runtime/actor_otp/` is a deterministic, pure-Python runtime model outside the Python/native parity contract. It provides share-nothing actors, OTP supervision strategies with restart budgets, and let-it-crash fault reports with bounded telemetry. It does not spawn OS threads, does not provide real BEAM/OTP semantics, and does not replace the `distributed/` actor runtime. See 8.15 and `docs/actor_otp.md`.
 - **10.45** `compiler/mojo_bridge/` is a pure-Python analysis layer outside the Python/native parity contract. It models value/origin lifetimes, contiguous buffer layouts with SIMD lane analysis, an honest MLIR availability probe, and CPython interop with a PEP 667 hot-loop guard. It does not generate native code, does not invoke MLIR/GPU toolchains, and does not provide real Mojo compilation. See 8.14 and `docs/mojo_bridge.md`.
 
+- **10.47** The cluster frontier is a single-process model. Membership, leases, and codecs live in memory; there is no socket layer, gossip, or persistence, and no claim of multi-host location transparency. See 8.17.
+- **10.48** The DST harness models time, ordering, and six I/O/network faults over a list of operations. It has no thread preemption model, no address-space simulation, and no durable disk; the minimiser is chunk-based and not a proof of 1-minimality. See 8.18.
+- **10.49** The macro engine proves hygiene, typed splicing, and opcode parity on a miniature AST with three naive emitters. It does not parse surface syntax and does not know the real backend IRs, so it is not a claim that the three compilers agree on everything. See 8.19.
+- **10.50** The IPC arena is single-host with fixed-size byte slots and a per-process holder table. It does not claim lock-free multi-threaded safety, Arrow awareness, or tensor transport; `push` copies once, while `pop` is zero-copy. See 8.20.
+- **10.51** Stage 2 of the bootstrap is the same Python implementation driven from printed IR, and the Zig demonstration emitter handles only return-only functions. What is verified is canonicality and digest stability, not machine-code self-hosting. See 8.21.
+
 - **10.46** Ownership checking is a bounded syntactic pass, not a borrow checker: it tracks direct local bindings with a statically known type, follows straight-line blocks, `if`/`else`, `if let`, `match` arms and loop bodies, and treats a diverging branch as unreachable. It does not model partial moves of struct fields, moves through references, `RefCell`-style interior mutability, or method semantics it does not know, and it does not add lifetime or borrow tracking. Those cases remain the native backend's responsibility, so `E009` coverage is not guaranteed to be complete across both backends for programs that rely on unmodelled constructs. See 8.16.
 
 ## 11. Versioning
@@ -628,6 +699,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.24** v0.3.9+++ adds 9.21 and 13.3.8: research frames H–K (bounded formal methods, termination/variant proofs, hard-state migration/replay, and adversarial verification) with explicit `Unknown`/bound/timeout boundaries and no WASM or JIT changes. The release gate gains a `research-frames` stage with an injectable in-process spec-oracle runner, and the wheel package list includes `tools.adversarial*`.
 - **11.25** v0.3.9++++ upgrades the Zig backend for Zig 0.17.1 and adds three pure-Python language/runtime models. The Zig changes add 8.12.11–8.12.14: signed `/` and `%` lower to `@divTrunc`/`@rem`, slice indexing is bounds-checked via `_zig_at`/`_zig_at_mut`, `Result<T, PillarError>` lowers to `PillarError!T`, and labeled-block `break <value>` uses an untyped label. The new models add 8.13 (`compiler/gleam_style/`: total ADTs with exhaustive-match witnesses, bit-array patterns with checked bounds, cross-target capability contracts), 8.14 (`compiler/mojo_bridge/`: value/origin lifetimes, contiguous layouts with SIMD lane analysis, an honest MLIR probe, PEP 667-safe CPython interop), and 8.15 (`runtime/actor_otp/`: share-nothing actors, OTP supervision with restart budgets, let-it-crash fault reports and bounded telemetry). They add 10.43–10.45 and are outside the Python/native parity contract.
 - **11.26** v0.3.9+ records shared ownership checking: `backends/move_check.py` runs before both backends and raises `E009` (8.16), `stdlib` was made Unicode-safe with `read_lines` and `Counter::top_key`, the CLI gained `polyglot new` and `polyglot explain`, and `examples/` gained three task-oriented programs plus a benchmark suite. It adds 8.16, 10.46, and moves the one native diagnostic that used `E009` for an out-of-range cast literal to `E008`, restoring the E001–E008 pillar surface.
+- **11.27** v0.3.9++ records the expansion frontier: `distributed/frontier.py` (8.17), `tools/dst/` (8.18), `compiler/macro_engine/` (8.19), `runtime/ipc/` (8.20), and `bootstrap/` (8.21). Each is a bounded model whose limit is recorded in 10.47–10.51, and each reuses the project's existing E001–E008 diagnostic surface rather than adding codes. They add five named test files to the fast suite and sit outside the Python/native parity contract.
 
 ## 12. Conformance Status
 
@@ -639,8 +711,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 3258 passed, 6 skipped, 31 deselected.
-- `pytest -q -m slow`: 31 passed, 3264 deselected.
+- `pytest -q`: 3340 passed, 6 skipped, 31 deselected.
+- `pytest -q -m slow`: 31 passed, 3346 deselected.
 
 The four previously failing Zig SIMD/parallel C-ABI cases in `tests/test_zig_backend.py` and `tests/test_auto.py` now pass: the generated wrappers use `extern struct` vector parameters/returns, the `std` import is emitted once, and stale zero-byte dylibs are evicted and rebuilt. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints), the 100-function framework registry with its ten frame test suites, the differential fuzzer / release gate / telemetry / packaging suites, the completed 1,000-function rollout (all ten batches, 1000 functions), the speculative JIT / WASM production / hard compiler-runtime frames with their focused suites, WASM compile-time aggregate specialization with shared `E001`–`E008` preflight diagnostics, the full three-way parity matrix (12/12 cases on all three backends with zero skips), and the `hard-frames-parity` release-gate stage, replacing the earlier stale baseline.
 
