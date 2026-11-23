@@ -138,6 +138,35 @@ fn main() -> i64 {
 This is the biggest difference from Python: **you must say `mut` when
 you want to change a value.** The compiler enforces it.
 
+### Moving, borrowing, and dropping
+
+Owned values behave like Rust values: passing a `String` or a `Vec` by value
+*moves* it, and the old name stops working.
+
+```polyglot
+fn take(s: String) -> i64 { s.len() as i64 }
+
+fn main() -> i64 {
+    let text: String = "hi";
+    take(text);
+    println!("{}", text);   // error[E009]: use of moved value: `text`
+    0
+}
+```
+
+Two other names for the same thing:
+
+- `&text` borrows it instead of moving it. You cannot move or `drop` a value
+  while a borrow is alive, and you cannot assign to it either.
+- `drop(text)` releases it early. Reading it afterwards is an error, and
+  dropping it twice is an error.
+
+Copying is free for `i64`, `f64`, `bool`, `char`, and references, so none of
+this applies to them. All of it is checked before either backend generates
+code, so the Python and native backends reject the same programs; the Python
+backend simply ignores `drop`, because Python already owns the object. See
+SPEC 8.16 for the rule and SPEC 10.55 for the limits of the model.
+
 ## 4. Control flow
 
 ### If
@@ -390,6 +419,9 @@ in the [README's error code table](README.md#error-codes):
 - `E006`: missing `include!` file.
 - `E007`: unsupported native pattern (e.g. Box pattern).
 - `E008`: invalid integer literal.
+- `E009`: ownership — a value was used after it was moved, borrowed while being
+  moved or dropped, or dropped twice. See "Moving, borrowing, and dropping" in
+  section 3.
 
 When available, a diagnostic includes a deterministic fix hint. For example,
 an `E001` type mismatch adds an `as <type>` text edit. `polyglot exec

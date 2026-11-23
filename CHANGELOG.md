@@ -2,6 +2,36 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Explicit `drop`, borrow conflicts, and a loop fixpoint
+
+- `drop(x)` is now a checked language operation rather than a name that did not
+  exist. It releases an owned value early, is a no-op on `Copy` values, literals,
+  and references, is rejected when the value was already moved
+  (`kind = "moved"`), and is rejected when it releases the same value twice
+  (`kind = "double-drop"`, with the earlier drop line in the message). A read
+  after release reports `kind = "drop"`. Adds SPEC 8.16.6-8.16.7.
+- A move, an `drop`, or an assignment to a value that is currently borrowed
+  reports `E009` with `kind = "borrow"` and names the holder, which is the
+  analogue of rustc's `E0505`/`E0506`. Because the borrow is the reason the
+  operation is illegal, the borrow pass now runs before the move pass. Adds
+  SPEC 8.16.8.
+- Borrows die at their last use inside the function, so a `drop` or a move after
+  that point is accepted (bounded NLL). Loop bodies are checked to a header
+  fixpoint instead of a single pass, which stops rejecting a value that is
+  reassigned before it is used inside the loop. Adds SPEC 8.16.9-8.16.10.
+- Fixed: `check_moves` treated every call as an owning expression, so
+  `stdlib/random.poly` was rejected with a false "use of moved value" on a `u64`
+  accumulator. Owned-ness now follows the declared return type, and an unknown
+  callee is treated as non-owning.
+- Fixed: the host-seam arity check ran after ownership, so the fuzz template
+  `__fs_read_text(p, p)` reported `use of moved value` instead of `E003`. The
+  arity scan now runs first inside `check_moves`, which is the single ownership
+  entry point that both backends and the native code generator call.
+- The Python backend registers a no-op `drop` runtime hook, so a program that
+  passes the checker stays runnable instead of raising `NameError`.
+- `tests/test_ownership_drop.py` adds 21 cases; fast baseline moves to 3411.
+  The model's limits are recorded in SPEC 10.55.
+
 ## Unreleased — Runtime failures carry a code, a position, and a fix hint
 
 - Runtime guards now report `error[E002]: <message>` with `note: runtime failure`

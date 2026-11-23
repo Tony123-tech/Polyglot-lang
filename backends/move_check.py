@@ -21,7 +21,8 @@ never invents an error that rustc would accept.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
+from typing import Any
 
 from ast_nodes import (
     ArrayExpr,
@@ -959,6 +960,50 @@ def _merge(
     return merged
 
 
+def _check_host_arity(node: Any) -> None:
+    """Report a malformed host-seam call before ownership is considered.
+
+    Arity is a signature error, so it has to win over a move diagnostic: the
+    fuzz template `__fs_read_text(p, p)` passes `p` twice, which the borrow
+    pass would happily call a use-after-move. `E003` is the real problem there,
+    and the native backend has to agree with Python on the code, so every
+    caller of `check_moves` runs this scan first.
+    """
+    from backends.errors import HOST_CALL_ARITIES, check_host_call_arity
+
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            _check_host_arity(item)
+        return
+    if not is_dataclass(node) or isinstance(node, type):
+        return
+    if isinstance(node, Call) and isinstance(node.func, Ident):
+        name = node.func.name
+        if name in HOST_CALL_ARITIES:
+            check_host_call_arity(
+                name,
+                node.args,
+                line=getattr(node, "line", 0),
+                col=getattr(node, "col", 0),
+                span=getattr(node, "span", None),
+            )
+    for f in fields(node):
+        if f.name in {"line", "col", "span"}:
+            continue
+        _check_host_arity(getattr(node, f.name))
+
+
 def check_moves(program: Program) -> None:
-    """Raise `MoveError` on the first provable use of a moved value."""
+    """Raise `MoveError` on the first provable ownership violation.
+
+    Two passes share this entry point so every backend reports the same `E009`.
+    The borrow/drop pass (`backends/borrow_checker.py`) runs first because it
+    knows whether the value is still borrowed: moving or dropping a borrowed
+    value is a borrow conflict (rustc's E0505), not a plain use-after-move.
+    The move checker then adds its partial-move and field diagnostics.
+    """
+    from backends.borrow_checker import check_program_borrows
+
+    _check_host_arity(program)
+    check_program_borrows(program)
     MoveChecker(program).check(program)

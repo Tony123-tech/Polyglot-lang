@@ -15,14 +15,142 @@
 - F1: Deliverable CLI
 - Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries, intrinsics, `#[packed]`, `#[unchecked]`, overflow reports/rotations/conversions/buffers
 - Runtime failures: located `E002` guards on both backends, IEEE 754 float division
+- Ownership: explicit `drop(x)`, borrow-vs-move conflicts, bounded NLL, loop fixpoint
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3390 passed, 6 skipped, 31 deselected (fast suite, after the runtime-failure reporting batch).
+**Latest baseline:** 3411 passed, 6 skipped, 31 deselected (fast suite, after the `drop`/borrow batch).
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
+
+## Explicit release and borrow conflicts — one ownership pass, five states
+
+**Goal:** make `drop(x)` a real operation with Rust semantics instead of a name
+that raised `NameError`, and make the ownership pass reject the four mistakes a
+move checker alone cannot see: use after release, double release, use after
+move, and a move or assignment while a value is borrowed — with the same code
+and the same line pair on the Python and native backends.
+
+**Where the code lives.** `backends/borrow_checker.py` holds the borrow/drop
+pass, and `backends/move_check.py::check_moves` is the single entry point that
+runs it. That placement was argued, not assumed: `backends/rust/__init__.py`'s
+first line imports `NativeBackend`, so a checker under `backends/rust/` would be
+unreachable from the Python backend, and the Python backend is the one that has
+to produce the same diagnostic. The class names and messages keep Rust
+vocabulary (`BorrowError`, `kind`, `moved_at`), which was the compromise.
+
+**Five states, four `kind` values.** A binding is `alive`, `moved`, or
+`dropped`, and the pass records the line where each transition happened so the
+diagnostic can point at both ends. `kind` says which rule fired:
+`"moved"` (use or drop after a move), `"drop"` (use after release),
+`"double-drop"` (a second release), `"borrow"` (a move, drop, or assignment to a
+borrowed value). `BorrowError` subclasses `MoveError` and keeps `code = "E009"`,
+so `pytest.raises(MoveError)`, the CLI's error formatter, and SPEC 8.16 all agree
+that ownership is one language rule rather than two.
+
+**Why the borrow pass runs first.** Moving a borrowed value is rejected by both
+passes; which one reports it decides the message. Reporting `use of moved value`
+would describe the symptom, while the borrow is the cause, so the borrow pass
+runs first and reports `cannot move \`s\` because it is borrowed by \`r\``
+(the shape of rustc's `E0505`). A move that leaves nothing borrowed falls
+through to the move pass unchanged.
+
+**Bounded NLL.** A borrow is dead once its holder is never read again, so
+`let r = &s; println!("{}", r); drop(s);` is legal. The model is one dictionary
+of last-read lines per function, gathered by a generic AST walk, and a live
+borrow is "last read after this line". Borrows that escape (into a returned
+value, a field, a closure) are outside it, which is the honest direction:
+the pass would rather miss a violation than reject a correct program.
+
+**Loops are a fixpoint, not a single pass.** The earlier shape of the check -
+run the body once, then compare the tail state against the entry state and
+report every binding that went from `alive` to `moved`/`dropped` - is wrong for
+the most common loop in the repository:
+
+```polyglot
+let mut mixer = seed;
+while i < 4 {
+    mixer = _wadd(mixer, 0x9E3779B97F4A7C15);   // reassigned first
+    state.push(_splitmix(mixer));               // then read
+    i = i + 1;
+}
+```
+
+The body now runs from the entry state, the entry and tail states are joined
+(`dropped` over `moved` over `alive`), and the body runs again from the joined
+state. Only the second pass can prove a violation, because only it starts
+every iteration where the first one ended.
+
+### Bug 1 — every call looked like it produced an owned value
+
+**Symptom:** the full suite failed during collection with
+`error[E009]: use of moved value: \`mixer\`` at `stdlib/random.poly`, a file with
+no moves in it. `_wadd` returns `u64`.
+
+**Cause:** `_is_owned` answered `True` for any `Call` except `drop`. `mixer`
+is declared without an annotation (`let mut mixer = seed`), so the pass learned
+its owned-ness from the initializer, saw a call, and marked it owned. The next
+read of `mixer` was then a use of a moved value — a false positive produced by
+an over-approximation, not by the program.
+
+**Fix:** owned-ness follows a declared return type. `check_program_borrows`
+collects every `FnDecl`/method name with its return type and hands it to the
+per-function checker; `_is_owned` marks a call owned only when that return type
+is known and non-`Copy`. An unknown callee is treated as non-owning, and
+reassignment clears owned-ness when the new value is `Copy`.
+
+**Lesson:** an ownership pass reads types or it guesses. Guessing "this call
+returns something owned" turns every numeric helper in the stdlib into a move.
+
+### Bug 2 — the arity error lost to the ownership error
+
+**Symptom:** `tests/test_diff_fuzz.py` failed on the seed-2026 E003 template
+`__fs_read_text(p, p)`: the diagnostic was `use of moved value: \`p\`` instead of
+`__fs_read_text expects 1 argument, got 2`, and the Python/wasm parity case
+diverged because the Python backend reported `E009` while wasm reported `E003`.
+
+**Cause:** two ordering mistakes. `check_moves` ran before the translator's
+host-seam arity check, and `RustCodegen.generate` called the borrow pass
+directly, so the native path skipped the shared entry point entirely. Passing
+`p` twice is genuinely a use-after-move — the call is what is wrong, and
+signature errors outrank ownership.
+
+**Fix:** a program-wide arity scan runs first inside `check_moves`, using the
+same `HOST_CALL_ARITIES` table and the same span, and `RustCodegen.generate`
+calls `check_moves` instead of the borrow pass so no backend can take a
+different order.
+
+**Lesson:** "the check is shared" is only true if every entry point is the
+`shared` one. The duplicate call site looked harmless because it was
+idempotent, and it was - it was just in the wrong place.
+
+### Bug 3 — the headline described the pass, not the mistake
+
+**Symptom:** `polyglot check` printed
+`error[E009]: borrow check failed in \`main\`` for a use-after-drop; the test
+that pinned "the first line names the violation" failed.
+
+**Cause:** `format()` put the function name in the headline and the specific
+reason on the `reason:` line, which is the opposite of the five-line contract
+in the rest of the project: the headline is the message, the `note:` carries
+the context.
+
+**Fix:** the headline is the reason (`error[E009]: use of dropped value: \`s\``),
+and the function name moved to `note: ownership and borrow rules enforced in
+\`main\` before lowering`.
+
+**Lesson:** a shared error formatter is a contract. Reusing `E009` while
+inventing a new headline shape extends the surface that every CLI test has to
+pin.
+
+**What is deliberately not pinned.** `tests/test_ownership_drop.py` does not
+pin three adjacent behaviours, because the model does not claim them yet:
+reassigning after a drop, dropping a projection such as `drop(payload.name)`,
+and a `drop` inside a closure. They are
+listed in the module docstring so a future change is a decision rather than an
+accident.
 
 ## Runtime failures — a located guard instead of a host exception
 

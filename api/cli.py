@@ -580,18 +580,23 @@ _ERROR_EXPLAINERS: dict[str, dict[str, str]] = {
         "tip": "Separators go between digits, never next to each other.",
     },
     "E009": {
-        "title": "use of moved value",
+        "title": "ownership violation",
         "meaning": (
-            "An owned value (String, Vec, struct or enum) was moved earlier and "
-            "is used again. Integers, floats, bool, char and references are "
-            "copied, so this never applies to them."
+            "An owned value (String, Vec, struct or enum) was moved, dropped, or "
+            "borrowed: it is used after a move, used or released after drop(x), "
+            "dropped twice, or moved/assigned while a borrow on it is still live. "
+            "Integers, floats, bool, char and references are copied, so this "
+            "never applies to them."
         ),
         "wrong": "fn take(s: String) -> i64 { s.len() as i64 }\n"
         "let text = String::from(\"hi\");\n"
         "take(text);\n"
         "println!(\"{}\", text);",
         "right": "take(text.clone());  // or: take(text); and never use text again",
-        "tip": "The message prints the line where the value moved and the line that reused it.",
+        "tip": (
+            "The message prints both lines: where the value moved, was dropped, "
+            "or got borrowed, and where it was used again."
+        ),
     },
 }
 

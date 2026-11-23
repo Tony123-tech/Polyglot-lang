@@ -415,6 +415,17 @@ def _runtime_panic(
     )
 
 
+def _runtime_drop(*values) -> None:
+    """`drop(x)` on the Python backend.
+
+    The checker has already proved the value is not used again, so there is
+    nothing to free: Python owns the object. The hook exists so the call site
+    is a real function instead of a `NameError`, and so a future backend can
+    attach real cleanup.
+    """
+    return
+
+
 def _runtime_non_exhaustive_match(scrutinee_type: str) -> None:
     raise RuntimeError(f"non-exhaustive {scrutinee_type} match reached at runtime")
 
@@ -446,7 +457,9 @@ def _runtime_assert(
     )
 
 
-def _runtime_assert_eq(a, b, *, line: int | None = None, col: int | None = None) -> None:
+def _runtime_assert_eq(
+    a, b, *, line: int | None = None, col: int | None = None
+) -> None:
     if a != b:
         raise RuntimeFailure(
             f"{a!r} != {b!r}",
@@ -456,7 +469,9 @@ def _runtime_assert_eq(a, b, *, line: int | None = None, col: int | None = None)
         )
 
 
-def _runtime_assert_ne(a, b, *, line: int | None = None, col: int | None = None) -> None:
+def _runtime_assert_ne(
+    a, b, *, line: int | None = None, col: int | None = None
+) -> None:
     if a == b:
         raise RuntimeFailure(
             f"{a!r} == {b!r}",
@@ -1182,9 +1197,7 @@ def _runtime_cast(value, ty, *, target_width: int | None = None):
     return number
 
 
-def _runtime_int_div(
-    left, right, line: int | None = None, col: int | None = None
-):
+def _runtime_int_div(left, right, line: int | None = None, col: int | None = None):
     """Rust integer division truncates toward zero; floats divide normally."""
     if (
         isinstance(left, int)
@@ -1211,9 +1224,7 @@ def _runtime_int_div(
         return math.copysign(math.inf, left) * math.copysign(1.0, right)
 
 
-def _runtime_int_rem(
-    left, right, line: int | None = None, col: int | None = None
-):
+def _runtime_int_rem(left, right, line: int | None = None, col: int | None = None):
     """Rust `%` keeps the dividend's sign; floats use C `fmod`."""
     if (
         isinstance(left, int)
@@ -2146,6 +2157,7 @@ class Translator:
             "u128": cast_u128,
         }.items():
             ns[f"_cast_{_name}"] = _fn
+        ns["drop"] = _runtime_drop
         ns["_div"] = _runtime_int_div
         ns["_mod"] = _runtime_int_rem
         ns["_at"] = _runtime_at

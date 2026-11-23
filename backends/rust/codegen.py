@@ -1098,6 +1098,13 @@ class RustCodegen:
     def generate(self, program: Program) -> str:
         validate_program_features(program)
         program = monomorphize(program)
+        # `check_moves` is the one ownership entry point (host arity scan ->
+        # borrow/drop pass -> move pass), so a direct call to the borrow pass
+        # here would let E009 preempt the E003 arity diagnostic. Re-running it
+        # is idempotent and keeps the order identical to the Python backend.
+        from backends.move_check import check_moves
+
+        check_moves(program)
         self.lines = []
         self.fragments = {}
         self.fragment_hashes = {}

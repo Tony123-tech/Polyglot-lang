@@ -241,7 +241,7 @@ Every diagnostic carries a stable code:
 | `E006` | `IncludeNotFoundError` | `include!` target missing or unreadable; `std:` paths escaping `stdlib/` also report this. SPEC 9.2. |
 | `E007` | `UnsupportedNativePatternError` | Source pattern cannot be represented by stable Rust (also reserved `#[gpu]`/`#[npu]`). SPEC 8.3. |
 | `E008` | `InvalidIntegerParseLiteralError`, `InvalidCastError` | A literal integer could not be parsed, or a literal cannot be represented in the type it is cast to. |
-| `E009` | `MoveError` | An owned value (`String`, `Vec`, struct, enum) is used after it was moved; the message names the binding and both lines. SPEC 8.16. |
+| `E009` | `MoveError`, `BorrowError` | An ownership violation: an owned value (`String`, `Vec`, struct, enum) is used after it was moved, used or released after `drop(x)`, dropped twice, or moved/assigned while borrowed. The message names the binding and both lines. SPEC 8.16. |
 
 Fix hints are local and deterministic (currently an edit only for implicit `as`
 casts under `E001`). The language server publishes at most one diagnostic per
@@ -320,8 +320,8 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3390 passed, 6 skipped, 31 deselected (`pytest -q`);
-31 passed, 3396 deselected (`pytest -q -m slow`).
+**Current test status:** 3411 passed, 6 skipped, 31 deselected (`pytest -q`);
+31 passed, 3417 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
 unchecked slice indexing, labeled-block `break <value>`, and
