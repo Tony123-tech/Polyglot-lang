@@ -170,6 +170,12 @@ Eight calls exist only on this backend, each lowering onto a Zig builtin:
 | `bswap!(x)` / `bitreverse!(x)` | `@byteSwap` / `@bitReverse` | operand's own type |
 | `bitcast!(x, T)` | `@bitCast` | `T`, equal bit count required |
 | `bitsizeof!(T)` / `sizeof!(T)` | `@bitSizeOf` / `@sizeOf` | `i64` bits / bytes |
+| `alignof!(T)` | `@alignOf` | `i64` alignment |
+| `add_with_overflow!(a, b)` / `mul_with_overflow!(a, b)` | `@addWithOverflow` / `@mulWithOverflow` | `i64` overflow flag |
+| `wrapping_add!(a, b)` / `wrapping_mul!(a, b)` | same builtins | wrapped value |
+| `rotl!(x, n)` / `rotr!(x, n)` | `std.math.rotl` / `rotr` | operand's own type |
+| `int_from_float!(x)` / `float_from_int!(x)` | `@intFromFloat` / `@floatFromInt` | `i64` / `f64` |
+| `memcpy_bytes!(dst, src, n)` / `memset_bytes!(dst, v, n)` | `@memcpy` / `@memset` | copies / fills `n` bytes |
 
 ```polyglot
 #[packed]
@@ -180,11 +186,13 @@ fn header_bits() -> i64 { bitsizeof!(FrameHeader) }  // 9
 fn float_pattern(x: f32) -> u32 { bitcast!(x, u32) } // 1.0 -> 0x3F800000
 ```
 
-`#[unchecked]` on a free function emits `@setRuntimeSafety(false)` for that
-body, so its arithmetic wraps instead of trapping; the bounds-check
-`std.debug.assert` guards stay. Widths come from the inferred polyglot type
+`Simd::reduce_and` / `reduce_or` / `reduce_xor` complete the vector family. `#[unchecked]`
+on a free function emits `@setRuntimeSafety(false)` for that body, so its arithmetic
+wraps instead of trapping; the bounds-check `std.debug.assert` guards stay. Widths come from the inferred polyglot type
 (`usize`/`isize` are 64-bit, an unannotated identifier is `i64`), and a width
-that cannot be inferred is `E001` rather than a guess. `sizeof!` reports
+that cannot be inferred is `E001` rather than a guess. Overflow is *reported*
+(`add_with_overflow!`) rather than prevented, rotations trap on an out-of-range
+count, and the conversions are unchecked — see SPEC 10.53. `sizeof!` reports
 `@sizeOf`, which rounds up to the backing integer's alignment; use
 `bitsizeof!` for an exact count.
 

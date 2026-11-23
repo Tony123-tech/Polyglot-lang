@@ -108,9 +108,18 @@ from zig.build import (
     zig_available,
 )
 from zig.intrinsics import (
+    CONVERSION_INTRINSICS,
+    MEMORY_INTRINSICS,
+    OVERFLOW_INTRINSICS,
+    ROTATE_INTRINSICS,
+    TYPE_INTRINSICS,
+    WRAPPING_INTRINSICS,
     IntrinsicError,
     bit_width,
     is_float,
+    require_arithmetic_operand,
+    require_float_operand,
+    require_matching_operands,
     require_type_operand,
     require_value_operand,
     shape_for,
@@ -1353,12 +1362,23 @@ fn _zig_bitcast(comptime T: type, value: anytype) T {
                 f"{self._emit_expr(args[0])}[{self._emit_expr(args[1])}..]"
                 f"[0..{self._emit_expr(args[2])}].* = {self._emit_expr(args[3])}"
             )
-        if method in {"reduce_add", "reduce_mul", "reduce_min", "reduce_max"}:
+        if method in {
+            "reduce_add",
+            "reduce_mul",
+            "reduce_min",
+            "reduce_max",
+            "reduce_and",
+            "reduce_or",
+            "reduce_xor",
+        }:
             op = {
                 "reduce_add": ".Add",
                 "reduce_mul": ".Mul",
                 "reduce_min": ".Min",
                 "reduce_max": ".Max",
+                "reduce_and": ".And",
+                "reduce_or": ".Or",
+                "reduce_xor": ".Xor",
             }[method]
             return f"@reduce({op}, {self._emit_expr(args[0])})"
         return f"Simd.{method}()"
@@ -1437,8 +1457,16 @@ fn _zig_bitcast(comptime T: type, value: anytype) T {
             return self._emit_value_intrinsic(expr)
         if expr.path == "bitcast":
             return self._emit_bitcast(expr)
-        if expr.path in {"bitsizeof", "sizeof"}:
+        if expr.path in TYPE_INTRINSICS:
             return self._emit_type_intrinsic(expr)
+        if expr.path in OVERFLOW_INTRINSICS or expr.path in WRAPPING_INTRINSICS:
+            return self._emit_overflow_intrinsic(expr)
+        if expr.path in ROTATE_INTRINSICS:
+            return self._emit_rotate_intrinsic(expr)
+        if expr.path in CONVERSION_INTRINSICS:
+            return self._emit_conversion_intrinsic(expr)
+        if expr.path in MEMORY_INTRINSICS:
+            return self._emit_memory_intrinsic(expr)
         args = ", ".join(self._emit_expr(arg) for arg in expr.args)
         if expr.path in {"println", "print"}:
             return f"std.debug.print({args})"
@@ -1486,12 +1514,13 @@ fn _zig_bitcast(comptime T: type, value: anytype) T {
         if len(expr.args) != 1:
             _fail("E003", f"{expr.path}! takes exactly one type, got {len(expr.args)}")
         type_name = self._type_argument(expr.args[0], expr.path)
-        if type_name not in self._struct_names and type_name not in self._enum_names:
+        if type_name in self._struct_names or type_name in self._enum_names:
+            builtin = TYPE_INTRINSICS[expr.path]
+        else:
             try:
-                require_type_operand(expr.path, type_name)
+                builtin = require_type_operand(expr.path, type_name)
             except IntrinsicError as error:
                 _fail("E001", str(error))
-        builtin = "@bitSizeOf" if expr.path == "bitsizeof" else "@sizeOf"
         return f"@as(i64, {builtin}({type_name}))"
 
     def _emit_bitcast(self, expr: MacroCall) -> str:
@@ -1519,6 +1548,105 @@ fn _zig_bitcast(comptime T: type, value: anytype) T {
                 help_text="both sides of a bit cast must have the same bit count",
             )
         return f"_zig_bitcast({target}, {self._emit_expr(expr.args[0])})"
+
+    def _emit_overflow_intrinsic(self, expr: MacroCall) -> str:
+        """Lower add_with_overflow!/mul_with_overflow!/wrapping_add!/wrapping_mul!.
+
+        `@addWithOverflow` returns a tuple `.{ value, flag }`. Struct
+        construction is not part of this backend's subset, so the two entry
+        points index the tuple directly instead of returning a struct.
+        """
+        name = expr.path
+        if len(expr.args) != 2:
+            _fail("E003", f"{name}! takes two operands, got {len(expr.args)}")
+        left_type = self._infer_type(expr.args[0])
+        right_type = self._infer_type(expr.args[1])
+        try:
+            require_matching_operands(name, left_type, right_type)
+            require_arithmetic_operand(name, left_type)
+        except IntrinsicError as error:
+            _fail("E001", str(error))
+        builtin = OVERFLOW_INTRINSICS.get(name) or WRAPPING_INTRINSICS[name]
+        operands = (
+            f"@as({left_type}, {self._emit_expr(expr.args[0])}), "
+            f"@as({left_type}, {self._emit_expr(expr.args[1])})"
+        )
+        if name in WRAPPING_INTRINSICS:
+            # The wrapped value keeps the operand width.
+            return f"{builtin}({operands})[0]"
+        # The overflow flag is a u1; widen it to the documented i64 result.
+        return f"@as(i64, @intCast({builtin}({operands})[1]))"
+
+    def _emit_rotate_intrinsic(self, expr: MacroCall) -> str:
+        """Lower rotl!/rotr! onto `std.math.rotl`/`rotr`, keeping the width."""
+        name = expr.path
+        if len(expr.args) != 2:
+            _fail("E003", f"{name}! takes a value and a count, got {len(expr.args)}")
+        value_type = self._infer_type(expr.args[0])
+        count_type = self._infer_type(expr.args[1])
+        try:
+            require_arithmetic_operand(name, value_type)
+            require_arithmetic_operand(f"{name} count", count_type)
+        except IntrinsicError as error:
+            _fail("E001", str(error))
+        function = f"std.math.{ROTATE_INTRINSICS[name]}"
+        value = f"@as({value_type}, {self._emit_expr(expr.args[0])})"
+        # The count must be the operand's own integer type; a negative or
+        # over-wide count traps on @intCast rather than rotating silently.
+        count = (
+            f"@as({value_type}, @intCast({self._emit_expr(expr.args[1])}))"
+        )
+        return f"{function}({value_type}, {value}, {count})"
+
+    def _emit_conversion_intrinsic(self, expr: MacroCall) -> str:
+        """Lower int_from_float! (-> i64) and float_from_int! (-> f64)."""
+        name = expr.path
+        if len(expr.args) != 1:
+            _fail("E003", f"{name}! takes exactly one operand, got {len(expr.args)}")
+        operand_type = self._infer_type(expr.args[0])
+        try:
+            if name == "int_from_float":
+                require_float_operand(name, operand_type)
+            else:
+                require_arithmetic_operand(name, operand_type)
+        except IntrinsicError as error:
+            _fail("E001", str(error))
+        builtin = CONVERSION_INTRINSICS[name]
+        result = "i64" if name == "int_from_float" else "f64"
+        return f"@as({result}, {builtin}({self._emit_expr(expr.args[0])}))"
+
+    def _emit_memory_intrinsic(self, expr: MacroCall) -> str:
+        """Lower memcpy_bytes!/memset_bytes! onto `@memcpy`/`@memset`."""
+        name = expr.path
+        if len(expr.args) != 3:
+            _fail(
+                "E003",
+                f"{name}! takes a destination, a "
+                f"{'source' if name == 'memcpy_bytes' else 'byte value'} "
+                f"and a count, got {len(expr.args)}",
+            )
+        destination = self._emit_expr(expr.args[0])
+        destination_type = self._infer_type(expr.args[0])
+        if "*" not in destination_type and "[" not in destination_type:
+            _fail(
+                "E001",
+                f"{name}! needs a pointer or slice destination, "
+                f"got {destination_type!r}",
+                help_text="pass a &mut [u8], a *u8, or another byte buffer",
+            )
+        count = self._emit_expr(expr.args[2])
+        destination_view = f"({destination})[0..{count}]"
+        if name == "memcpy_bytes":
+            source = self._emit_expr(expr.args[1])
+            source_type = self._infer_type(expr.args[1])
+            if "*" not in source_type and "[" not in source_type:
+                _fail(
+                    "E001",
+                    f"{name}! needs a pointer or slice source, got {source_type!r}",
+                )
+            return f"@memcpy({destination_view}, ({source})[0..{count}])"
+        value = self._emit_expr(expr.args[1])
+        return f"@memset({destination_view}, @as(u8, @intCast({value})))"
 
     # ------------------------------------------------------------------
     # Control-flow expressions

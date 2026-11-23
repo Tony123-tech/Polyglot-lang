@@ -2,6 +2,36 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Zig overflow reports, rotations, conversions, byte buffers
+
+- Added `add_with_overflow!` / `mul_with_overflow!` (yielding the `i64` flag) and
+  `wrapping_add!` / `wrapping_mul!` (yielding the wrapped value at the operand
+  width), all lowering to `@addWithOverflow` / `@mulWithOverflow`. The builtin's
+  tuple is indexed directly because struct construction is outside the subset.
+  Adds SPEC 8.12.19.
+- Added `rotl!` / `rotr!` lowering to `std.math.rotl` / `std.math.rotr`, with the
+  rotation bounded by the declared width. Adds SPEC 8.12.20.
+- Added `int_from_float!` (→ `i64`, truncating toward zero) and
+  `float_from_int!` (→ `f64`), each rejecting the other operand family. Adds
+  SPEC 8.12.21.
+- Added `alignof!` → `@alignOf`, which completes the layout trio with
+  `bitsizeof!` and `sizeof!` (a 9-bit packed struct reports 2, matching
+  `sizeof!`). Adds SPEC 8.12.22.
+- Added `memcpy_bytes!` / `memset_bytes!` → `@memcpy` / `@memset` over
+  `dst[0..count]` and `src[0..count]`, rejecting a non-pointer destination and
+  stating that overlapping regions are not detected. Adds SPEC 8.12.23.
+- Added `Simd::reduce_and` / `reduce_or` / `reduce_xor` → `@reduce(.And/.Or/.Xor, v)`
+  to 8.12.8.
+- `zig/intrinsics.py` gained `int_shape`, `require_arithmetic_operand`,
+  `require_matching_operands`, `require_float_operand`, `mirror_overflow`
+  (returns the wrapped value and the flag) and `mirror_rotate`.
+- New tests: 15 more in `tests/test_zig_special.py` (34 total); the example
+  `examples/zig_intrinsics.poly` now also checks `rotl!`, an overflow flag,
+  `int_from_float!`, and `alignof!`.
+- Boundary: SPEC 10.53 records that overflow is reported rather than prevented,
+  rotate counts trap on `@intCast`, conversions are unchecked, `memcpy_bytes!`
+  does not detect overlap, and `offsetof!` is deliberately absent.
+
 ## Unreleased — Zig-exclusive intrinsics, packed structs, unchecked bodies
 
 - Added `zig/intrinsics.py`, the single authority table for the Zig-only

@@ -15,7 +15,13 @@ from lexer import lex
 from parser import parse
 from zig import compile_zig
 from zig.backend import ZigCodegen
-from zig.intrinsics import IntrinsicError, bit_width, mirror
+from zig.intrinsics import (
+    IntrinsicError,
+    bit_width,
+    mirror,
+    mirror_overflow,
+    mirror_rotate,
+)
 
 pytestmark = pytest.mark.skipif(
     shutil.which("zig") is None, reason="zig toolchain not installed"
@@ -240,3 +246,217 @@ def test_checked_function_keeps_runtime_safety() -> None:
         parse(lex("fn checked_add(a: i64, b: i64) -> i64 { a + b }"))
     )
     assert "@setRuntimeSafety(false);" not in code
+
+
+# -- overflow reports -----------------------------------------------------
+
+
+_OVERFLOW_SOURCE = """
+fn add_flag(x: u8, y: u8) -> i64 { add_with_overflow!(x, y) }
+fn mul_flag(x: u8, y: u8) -> i64 { mul_with_overflow!(x, y) }
+fn wrap_add(x: u8, y: u8) -> u8 { wrapping_add!(x, y) }
+fn wrap_mul(x: u8, y: u8) -> u8 { wrapping_mul!(x, y) }
+fn wide_add(x: u64, y: u64) -> i64 { add_with_overflow!(x, y) }
+"""
+
+
+def test_add_with_overflow_reports_flag_and_wrapped_value() -> None:
+    ns = _namespace(_OVERFLOW_SOURCE)
+    assert ns["add_flag"](200, 100) == 1
+    assert ns["add_flag"](10, 20) == 0
+    assert ns["wrap_add"](200, 100) == 44
+    assert ns["wide_add"](0xFFFFFFFFFFFFFFFF, 1) == 1
+    assert ns["wide_add"](5, 6) == 0
+    value, flag = mirror_overflow("add_with_overflow", 200, 100, "u8")
+    assert (value, flag) == (44, 1)
+
+
+def test_mul_with_overflow_reports_flag_and_wrapped_value() -> None:
+    ns = _namespace(_OVERFLOW_SOURCE)
+    assert ns["mul_flag"](20, 20) == 1
+    assert ns["mul_flag"](10, 10) == 0
+    assert ns["wrap_mul"](20, 20) == 144
+    assert ns["wrap_mul"](3, 7) == 21
+    value, flag = mirror_overflow("mul_with_overflow", 20, 20, "u8")
+    assert (value, flag) == (144, 1)
+
+
+def test_overflow_requires_matching_operand_types() -> None:
+    with pytest.raises(PolyglotError) as error:
+        ZigCodegen("t").generate(
+            parse(lex("fn f(x: u8, y: i64) -> i64 { add_with_overflow!(x, y) }"))
+        )
+    assert error.value.code == "E001"
+    assert "same type" in error.value.diagnostic.message
+
+
+def test_overflow_rejects_a_bool_operand() -> None:
+    with pytest.raises(PolyglotError) as error:
+        ZigCodegen("t").generate(
+            parse(lex("fn f(x: bool, y: bool) -> i64 { add_with_overflow!(x, y) }"))
+        )
+    assert error.value.code == "E001"
+    assert "bool" in error.value.diagnostic.message
+
+
+def test_overflow_arity_is_checked() -> None:
+    with pytest.raises(PolyglotError) as error:
+        ZigCodegen("t").generate(
+            parse(lex("fn f(x: u8) -> i64 { wrapping_add!(x) }"))
+        )
+    assert error.value.code == "E003"
+
+
+# -- rotations ------------------------------------------------------------
+
+
+def test_rotate_matches_the_python_mirror() -> None:
+    source = """
+    fn left32(x: u32, n: u32) -> u32 { rotl!(x, n) }
+    fn right32(x: u32, n: u32) -> u32 { rotr!(x, n) }
+    fn left8(x: u8, n: u8) -> u8 { rotl!(x, n) }
+    """
+    ns = _namespace(source)
+    for value in (0, 1, 0x12345678, 0x80000000):
+        for count in (0, 1, 5, 31):
+            assert ns["left32"](value, count) == mirror_rotate(
+                "rotl", value, count, "u32"
+            )
+            assert ns["right32"](value, count) == mirror_rotate(
+                "rotr", value, count, "u32"
+            )
+    # The width decides the wrap-around point, so a u8 rotates inside 8 bits.
+    assert ns["left8"](0x81, 1) == 0x03
+    assert ns["left8"](0x0F, 4) == 0xF0
+
+
+def test_rotate_rejects_a_float_operand() -> None:
+    with pytest.raises(PolyglotError) as error:
+        ZigCodegen("t").generate(
+            parse(lex("fn f(x: f64, n: u32) -> f64 { rotl!(x, n) }"))
+        )
+    assert error.value.code == "E001"
+
+
+# -- float and integer conversions ---------------------------------------
+
+
+def test_int_from_float_truncates_toward_zero() -> None:
+    source = """
+    fn to_int(x: f64) -> i64 { int_from_float!(x) }
+    fn to_int32(x: f32) -> i64 { int_from_float!(x) }
+    """
+    ns = _namespace(source)
+    assert ns["to_int"](1.9) == 1
+    assert ns["to_int"](-1.9) == -1
+    assert ns["to_int"](2.0) == 2
+    assert ns["to_int32"](3.5) == 3
+
+
+def test_float_from_int_widens_to_f64() -> None:
+    source = """
+    fn to_float(x: u32) -> f64 { float_from_int!(x) }
+    fn to_float8(x: u8) -> f64 { float_from_int!(x) }
+    """
+    ns = _namespace(source)
+    assert ns["to_float"](7) == 7.0
+    assert ns["to_float"](4294967295) == 4294967295.0
+    assert ns["to_float8"](255) == 255.0
+
+
+def test_conversions_reject_the_wrong_operand_family() -> None:
+    with pytest.raises(PolyglotError) as error:
+        ZigCodegen("t").generate(parse(lex("fn f(x: u32) -> i64 { int_from_float!(x) }")))
+    assert error.value.code == "E001"
+    assert "float operand" in error.value.diagnostic.message
+    with pytest.raises(PolyglotError) as error:
+        ZigCodegen("t").generate(parse(lex("fn f(x: f64) -> f64 { float_from_int!(x) }")))
+    assert error.value.code == "E001"
+    assert "integer operand" in error.value.diagnostic.message
+
+
+# -- alignment ------------------------------------------------------------
+
+
+def test_alignof_reports_the_packed_alignment() -> None:
+    source = """
+    #[packed]
+    struct Flags { a: u3, b: u5, c: bool }
+
+    fn flags_align() -> i64 { alignof!(Flags) }
+    fn byte_align() -> i64 { alignof!(u8) }
+    fn word_align() -> i64 { alignof!(u64) }
+    fn flags_bytes() -> i64 { sizeof!(Flags) }
+    """
+    ns = _namespace(source)
+    # A 9-bit packed struct is backed by a 2-byte integer, so its alignment is
+    # 2 and matches sizeof!; alignof! and sizeof! can be compared directly.
+    assert ns["flags_align"]() == 2
+    assert ns["flags_align"]() == ns["flags_bytes"]()
+    assert ns["byte_align"]() == 1
+    assert ns["word_align"]() == 8
+
+
+# -- byte buffers ---------------------------------------------------------
+
+
+def test_memcpy_and_memset_write_through_pointers() -> None:
+    import ctypes
+
+    source = """
+    fn copy(dst: &mut [u8], src: &[u8], n: usize) { memcpy_bytes!(dst, src, n); }
+    fn fill(dst: &mut [u8], value: u8, n: usize) { memset_bytes!(dst, value, n); }
+    """
+    ns = _namespace(source)
+    destination = (ctypes.c_ubyte * 4)()
+    source_bytes = (ctypes.c_ubyte * 4)(1, 2, 3, 4)
+    ns["copy"](destination, source_bytes, 4)
+    assert list(destination) == [1, 2, 3, 4]
+    ns["fill"](destination, 0xAB, 2)
+    assert list(destination) == [0xAB, 0xAB, 3, 4]
+
+
+def test_memory_intrinsics_require_a_pointer_destination() -> None:
+    with pytest.raises(PolyglotError) as error:
+        ZigCodegen("t").generate(
+            parse(lex("fn f(dst: u8, src: &[u8], n: usize) { memcpy_bytes!(dst, src, n); }"))
+        )
+    assert error.value.code == "E001"
+    assert "pointer or slice destination" in error.value.diagnostic.message
+
+
+def test_memory_intrinsic_arity_is_checked() -> None:
+    with pytest.raises(PolyglotError) as error:
+        ZigCodegen("t").generate(
+            parse(lex("fn f(dst: &mut [u8], n: usize) { memset_bytes!(dst, n); }"))
+        )
+    assert error.value.code == "E003"
+
+
+# -- vector boolean reductions -------------------------------------------
+
+
+def test_simd_boolean_reductions() -> None:
+    source = """
+    fn and_all(a: i32, b: i32) -> i32 {
+        let v: Simd4<i32> = Simd::splat(a);
+        let u: Simd4<i32> = Simd::splat(b);
+        Simd::reduce_and(v | u)
+    }
+    fn or_all(a: i32, b: i32) -> i32 {
+        let v: Simd4<i32> = Simd::splat(a);
+        let u: Simd4<i32> = Simd::splat(b);
+        Simd::reduce_or(v | u)
+    }
+    fn xor_all(a: i32, b: i32) -> i32 {
+        let v: Simd4<i32> = Simd::splat(a);
+        let u: Simd4<i32> = Simd::splat(b);
+        Simd::reduce_xor(v ^ u)
+    }
+    """
+    ns = _namespace(source)
+    # Four copies of the same lane: AND/OR are idempotent, XOR cancels.
+    assert ns["and_all"](0b0110, 0b0011) == 0b0111
+    assert ns["or_all"](0b0100, 0b0001) == 0b0101
+    assert ns["xor_all"](0b1100, 0b1010) == 0
+    assert ns["and_all"](0, 0) == 0

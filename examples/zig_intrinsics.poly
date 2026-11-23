@@ -1,9 +1,11 @@
-// Zig-exclusive special functions (SPEC 8.12.15-8.12.18).
+// Zig-exclusive special functions (SPEC 8.12.15-8.12.22).
 // Run with: polyglot run --backend zig examples/zig_intrinsics.poly
 //
 // These do not exist on the Python or native backends: every call lowers onto
-// a Zig builtin (@popCount, @clz, @ctz, @byteSwap, @bitReverse, @bitCast,
-// @bitSizeOf, @sizeOf) and therefore belongs to the opt-in Zig execution mode.
+// a Zig builtin or std.math helper (@popCount, @clz, @ctz, @byteSwap,
+// @bitReverse, @bitCast, @bitSizeOf, @sizeOf, @alignOf, @addWithOverflow,
+// @mulWithOverflow, @intFromFloat, @floatFromInt, @memcpy, @memset,
+// std.math.rotl) and therefore belongs to the opt-in Zig execution mode.
 
 #[packed]
 struct FrameHeader {
@@ -36,6 +38,22 @@ fn float_pattern(x: f32) -> u32 {
     bitcast!(x, u32)
 }
 
+fn rotate_left(x: u32, count: u32) -> u32 {
+    rotl!(x, count)
+}
+
+fn add_overflow_flag(x: u8, y: u8) -> i64 {
+    add_with_overflow!(x, y)
+}
+
+fn truncated(x: f64) -> i64 {
+    int_from_float!(x)
+}
+
+fn header_alignment() -> i64 {
+    alignof!(FrameHeader)
+}
+
 fn main() -> i64 {
     let pattern: u32 = float_pattern(1.0);
     if pattern != 0x3F800000 {
@@ -55,6 +73,20 @@ fn main() -> i64 {
     }
     if reversed_byte(1) != 128 {
         return 6;
+    }
+    if rotate_left(0x12345678, 5) != 0x468ACF02 {
+        return 7;
+    }
+    if add_overflow_flag(200, 100) != 1 {
+        return 8;
+    }
+    if truncated(1.9) != 1 {
+        return 9;
+    }
+    // A 9-bit packed struct is backed by a 2-byte integer, so alignment and
+    // sizeof! agree even though sizeof! rounds up from 9 bits.
+    if header_alignment() != 2 {
+        return 10;
     }
     255
 }

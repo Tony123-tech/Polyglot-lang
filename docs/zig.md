@@ -102,7 +102,10 @@ The current lowering covers:
 | User-function calls, `if`/`else` | ✅ | Top-level `fn` calls with scalar arguments |
 | Struct declarations and field access | ✅ | `#[packed]` gives a `packed struct` |
 | Zig intrinsics | ✅ | `popcount!`, `clz!`, `ctz!`, `bswap!`, `bitreverse!` |
-| `bitcast!`, `bitsizeof!`, `sizeof!` | ✅ | Bit-level reinterpretation and layout queries |
+| `bitcast!`, `bitsizeof!`, `sizeof!`, `alignof!` | ✅ | Bit-level reinterpretation and layout queries |
+| Overflow reports, wrapping, rotations | ✅ | `add_with_overflow!`, `wrapping_add!`, `rotl!` and friends |
+| Float/integer conversion intrinsics | ✅ | `int_from_float!` → `i64`, `float_from_int!` → `f64` |
+| `memcpy_bytes!`, `memset_bytes!` | ✅ | Pointer or slice views over `count` bytes |
 | `#[unchecked]` functions | ✅ | `@setRuntimeSafety(false)` for that body |
 | Struct construction, enums, `match` | ⬜ | Not lowered |
 | Strings, `Vec`, `Option` | ⬜ | Not lowered |
@@ -221,6 +224,17 @@ available as macro-style calls and lower 1:1 onto Zig builtins:
 | `bitcast!(x, T)` | `@bitCast` | `T`, same bit count required |
 | `bitsizeof!(T)` | `@bitSizeOf` | `i64` exact bit count |
 | `sizeof!(T)` | `@sizeOf` | `i64` byte count, alignment included |
+| `alignof!(T)` | `@alignOf` | `i64` alignment |
+| `add_with_overflow!(a, b)` | `@addWithOverflow` | `i64` flag, `1` when it overflowed |
+| `mul_with_overflow!(a, b)` | `@mulWithOverflow` | `i64` flag |
+| `wrapping_add!(a, b)` | `@addWithOverflow` | wrapped value, operand's own type |
+| `wrapping_mul!(a, b)` | `@mulWithOverflow` | wrapped value |
+| `rotl!(x, n)` | `std.math.rotl` | operand's own type, rotated left |
+| `rotr!(x, n)` | `std.math.rotr` | operand's own type, rotated right |
+| `int_from_float!(x)` | `@intFromFloat` | `i64`, truncated toward zero |
+| `float_from_int!(x)` | `@floatFromInt` | `f64` |
+| `memcpy_bytes!(dst, src, n)` | `@memcpy` | copies `n` bytes |
+| `memset_bytes!(dst, value, n)` | `@memset` | fills `n` bytes |
 
 ```polyglot
 fn density(x: u32) -> i64 { popcount!(x) }        // 0b1011 -> 3
@@ -236,6 +250,57 @@ with `let` when the width matters. A float operand is rejected with `E001`
 (use `bitcast!`), and `bswap!` requires a byte-sized width. The counting
 intrinsics widen to `i64`; `bswap!` and `bitreverse!` keep the operand type so a
 `u64` result is not truncated.
+
+## Overflow reports
+
+Zig exposes the overflow bit of an addition or multiplication, which no other
+backend in this project can express — Python integers simply grow.
+
+```polyglot
+fn add_flag(x: u8, y: u8) -> i64 { add_with_overflow!(x, y) }  // 200 + 100 -> 1
+fn wrap_add(x: u8, y: u8) -> u8 { wrapping_add!(x, y) }         // 200 + 100 -> 44
+fn mul_flag(x: u8, y: u8) -> i64 { mul_with_overflow!(x, y) }   // 20 * 20 -> 1
+```
+
+Both operands must have the same integer type (`E001` otherwise, including
+`bool` and floats). The reporting pair yields `i64` — the flag, not the value —
+and the wrapping pair yields the wrapped value at the operand's width. Three
+arithmetic modes therefore coexist: checked (`+`, traps), wrapping
+(`wrapping_add!`/`#[unchecked]`), and saturating (`+|`, `*|`).
+
+## Rotations
+
+```polyglot
+fn left(x: u32, n: u32) -> u32 { rotl!(x, n) }   // 0x12345678, 5 -> 0x468ACF02
+fn right(x: u32, n: u32) -> u32 { rotr!(x, n) }  // 0x12345678, 5 -> 0xC091A2B3
+```
+
+The rotation happens inside the declared width, so a `u8` wraps at 8 bits. The
+count is converted to the operand type, which means a negative or over-wide
+count traps instead of silently rotating.
+
+## Float and integer conversions
+
+```polyglot
+fn to_int(x: f64) -> i64 { int_from_float!(x) }   // 1.9 -> 1, -1.9 -> -1
+fn to_float(x: u32) -> f64 { float_from_int!(x) } // 7 -> 7.0
+```
+
+`int_from_float!` truncates toward zero and returns `i64`; `float_from_int!`
+returns `f64`. Neither range-checks: an out-of-range float is undefined in
+`ReleaseFast`, and a 64-bit integer may lose precision in `f64`. Each rejects
+the wrong operand family with `E001`.
+
+## Byte buffers
+
+```polyglot
+fn copy(dst: &mut [u8], src: &[u8], n: usize) { memcpy_bytes!(dst, src, n); }
+fn fill(dst: &mut [u8], value: u8, n: usize) { memset_bytes!(dst, value, n); }
+```
+
+Both views are `[0..n]`, so the lengths always agree; the regions must not
+overlap, because `@memcpy` treats an overlap as an assertion failure. A
+non-pointer, non-slice destination is `E001`.
 
 ## Bit casts
 
@@ -261,6 +326,7 @@ struct FrameHeader { version: u3, flags: u5, compressed: bool }
 
 bitsizeof!(FrameHeader)  // 9 bits
 sizeof!(FrameHeader)     // 2 bytes
+alignof!(FrameHeader)    // 2, the backing integer's alignment
 ```
 
 Rules:
@@ -273,7 +339,8 @@ Rules:
   comptime parameter;
 - `bitsizeof!` is exact, while `sizeof!` rounds up to the backing integer's
   ABI alignment (`u3+u5+bool` → 2 bytes, `u12+u12` → 4 bytes). Report the
-  exact number with `bitsizeof!`.
+  exact number with `bitsizeof!`, and use `alignof!` when the question is the
+  alignment rather than the size.
 
 The generated source carries a comment with the computed bit total, so a layout
 change shows up in the emitted Zig as well as in the tests.
@@ -354,6 +421,9 @@ name, for example `Simd4<f64>` or `Simd8<f32>`.
 | `Simd::reduce_mul(v)` | `@reduce(.Mul, v)` | Horizontal product |
 | `Simd::reduce_min(v)` | `@reduce(.Min, v)` | Horizontal minimum |
 | `Simd::reduce_max(v)` | `@reduce(.Max, v)` | Horizontal maximum |
+| `Simd::reduce_and(v)` | `@reduce(.And, v)` | Bitwise AND of all lanes |
+| `Simd::reduce_or(v)` | `@reduce(.Or, v)` | Bitwise OR of all lanes |
+| `Simd::reduce_xor(v)` | `@reduce(.Xor, v)` | Bitwise XOR of all lanes |
 
 Example:
 
@@ -365,7 +435,9 @@ fn simd_dot4(a: &[f64], b: &[f64]) -> f64 {
 }
 ```
 
-There is no masking, gather/scatter, or general vector type inference.
+The three boolean reductions are bitwise, so they apply to integer lanes;
+their result is the lane type, not a `bool`. There is no masking,
+gather/scatter, or general vector type inference.
 
 The runnable example combines SIMD, `#[parallel]`, and saturating arithmetic:
 
@@ -409,10 +481,12 @@ polyglot run examples/zig_parallel_simd.poly --backend zig
 - `Result<T, PillarError>` → `PillarError!T` and `Err(E00n)` resolution.
 
 `tests/test_zig_special.py` covers the Zig-exclusive surface: `popcount!`,
-`clz!`, `ctz!`, `bswap!`, `bitreverse!` (cross-checked against a Python
-mirror), `bitcast!` in both directions including width-mismatch rejection,
-`#[packed]` bit/byte sizes with field-type rejection, `bitsizeof!`/`sizeof!`,
-and `#[unchecked]`. The worked example is
+`clz!`, `ctz!`, `bswap!`, `bitreverse!`, `rotl!`/`rotr!` and the overflow pair
+(cross-checked against Python mirrors), `bitcast!` in both directions including
+width-mismatch rejection, `#[packed]` bit/byte sizes and alignment with
+field-type rejection, `bitsizeof!`/`sizeof!`/`alignof!`, `int_from_float!`/
+`float_from_int!`, `memcpy_bytes!`/`memset_bytes!` through `ctypes` buffers,
+`Simd::reduce_and`/`or`/`xor`, and `#[unchecked]`. The worked example is
 [examples/zig_intrinsics.poly](../examples/zig_intrinsics.poly).
 
 Run them directly with:
@@ -430,6 +504,9 @@ toolchain.
 - The intrinsics model operand widths from the inferred polyglot type: an
   unannotated identifier is `i64`, and `usize`/`isize` are 64-bit. A width the
   backend cannot infer is reported (`E001`) rather than guessed.
+- Overflow is reported, not prevented, and the conversions are unchecked:
+  `int_from_float!` does not range-check, `float_from_int!` rounds into `f64`,
+  and `memcpy_bytes!` does not detect overlapping regions. See SPEC 10.53.
 - Requires `zig` on `PATH`.
 - Narrow AST subset; unsupported constructs are not covered.
 - C-ABI artifact; not importable as a Python extension.

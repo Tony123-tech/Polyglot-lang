@@ -13,13 +13,13 @@
 - M10: Termination checking
 - M5: Async extensions (Send-aware PyFuture, async impl methods, cancellation, timeout)
 - F1: Deliverable CLI
-- Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries, intrinsics, `#[packed]`, `#[unchecked]`
+- Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries, intrinsics, `#[packed]`, `#[unchecked]`, overflow reports/rotations/conversions/buffers
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3359 passed, 6 skipped, 31 deselected (fast suite, after the Zig-exclusive intrinsics batch).
+**Latest baseline:** 3374 passed, 6 skipped, 31 deselected (fast suite, after the second Zig-exclusive intrinsics batch).
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -2154,3 +2154,75 @@ backend never promised to resolve.
 **Lesson:** when a query wraps a platform rule, assert the platform rule in the
 test and name it in the docs, rather than adjusting the implementation until it
 matches an assumption.
+
+## Zig-exclusive surface, second batch — overflow, rotation, conversion, buffers
+
+The first batch gave the Zig backend a bit-level and layout surface. The second
+batch fills the gaps that first batch left in the *arithmetic* story, and adds
+the two things the subset table had admitted were missing: float/integer
+conversion and byte-buffer memory operations.
+
+**What landed:** `add_with_overflow!`/`mul_with_overflow!` (flag as `i64`),
+`wrapping_add!`/`wrapping_mul!` (wrapped value at the operand width), `rotl!`/
+`rotr!`, `int_from_float!`/`float_from_int!`, `alignof!`, `memcpy_bytes!`/
+`memset_bytes!`, and `Simd::reduce_and`/`or`/`xor`. All of them were probed with
+`zig test` on 0.17.1 before any lowering was written, so the emitted shapes
+(`@addWithOverflow(...)[1]`, `std.math.rotl(u32, x, @as(u32, @intCast(n)))`,
+`@memcpy(dst[0..n], src[0..n])`) are the ones the compiler actually accepts.
+
+**Deliberate choices:**
+
+- The overflow report splits into two names instead of returning a struct.
+  `@addWithOverflow` produces a `.{ value, flag }` tuple, and struct
+  construction is not lowered (8.12.9), so a two-field return type would have
+  forced a half-finished struct feature into an intrinsics batch. Two entry
+  points that index the tuple keep the batch honest and small.
+- Three arithmetic modes now exist side by side: checked `+` (traps), wrapping
+  (`wrapping_add!` or `#[unchecked]`), and saturating (`+|`). Naming the middle
+  one explicitly is the point: before this batch, "wrap instead of trap" was
+  only reachable by dropping safety for a whole function body.
+- `rotl!` casts the count with `@intCast`, so an out-of-range count traps. The
+  alternative — masking the count modulo width — hides a caller bug behind a
+  plausible answer.
+- `alignof!` was added instead of `offsetof!`. That is not an arbitrary
+  preference: probing showed `@offsetOf` on a `packed struct` reports `0` for
+  every field (the fields share one backing integer) and on a plain struct the
+  fields may be reordered. An `offsetof!` would therefore answer `0` or a
+  non-declaration order, and both are wrong for the question "where is this
+  field". `offsetof!` is skipped and the reason is written into SPEC 10.53.
+- `memcpy_bytes!` takes one `count` and builds both views from it, so the two
+  lengths cannot disagree; overlap is documented instead of detected.
+
+### Bug 1 — the examples runner and the parity suite each had their own marker list
+
+**Symptom:** the first batch's new example was picked up by the slow
+cross-backend parity suite as a Python/native case, because that suite's list of
+"Zig-only" markers still named only `+|`/`SimdN<`/`#[parallel]`.
+
+**Cause:** two tests kept two copies of the same list. The fast-suite failure
+(`zig_intrinsics.poly is not listed in examples/README.md`) was the visible half;
+the slow-suite misclassification was the half that would only appear in a slow
+run.
+
+**Fix:** `zig/features.py` now owns `ZIG_ONLY_SOURCE_MARKERS` and
+`is_zig_only_source()`, and both `tests/test_f1_cli.py` and
+`tests/test_cross_backend_parity.py` call it.
+
+**Lesson:** when two test files need the same "which programs does this backend
+own" answer, the list belongs next to the backend, not next to one test.
+
+### Bug 2 — a rotate expectation was wrong, not the lowering
+
+**Symptom:** the first `zig test` probe failed on `rotl(0x12345678, 5)`, and the
+value the test expected was `0x91A2B3C0`.
+
+**Cause:** the expectation was arithmetic I had done in my head; the real answer
+is `0x468ACF02` (the low five bits `0x18` land at the top). The lowering was
+already correct.
+
+**Fix:** recompute against the mirror formula, then assert the mirror value in
+the test instead of a hand-computed constant. `mirror_rotate` exists so the test
+and the emitted code cannot both be wrong in the same way.
+
+**Lesson:** a failing probe is evidence about *someone's* arithmetic, not
+necessarily the compiler's. Cross-check before editing the lowering.

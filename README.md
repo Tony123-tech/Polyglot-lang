@@ -179,10 +179,13 @@ loaded with `ctypes`, not an importable Python extension. See
 [docs/zig.md](docs/zig.md) and SPEC 8.12.
 
 Zig also carries a **Zig-exclusive surface** the other backends cannot model:
-`popcount!`, `clz!`, `ctz!`, `bswap!`, `bitreverse!`, `bitcast!(value, T)`,
-`bitsizeof!(T)` and `sizeof!(T)`, a `#[packed]` struct layout, and an
-`#[unchecked]` function that drops Zig's runtime safety checks for that body
-(SPEC 8.12.15–8.12.18, boundary in 10.52).
+`popcount!`, `clz!`, `ctz!`, `bswap!`, `bitreverse!`, `rotl!`/`rotr!`,
+`bitcast!(value, T)`, `bitsizeof!`/`sizeof!`/`alignof!`, overflow reports
+(`add_with_overflow!`, `mul_with_overflow!`, `wrapping_add!`, `wrapping_mul!`),
+float/integer conversions (`int_from_float!`, `float_from_int!`), byte buffers
+(`memcpy_bytes!`, `memset_bytes!`), `Simd::reduce_and`/`or`/`xor`, a `#[packed]`
+struct layout, and an `#[unchecked]` function that drops Zig's runtime safety
+checks for that body (SPEC 8.12.15–8.12.23, boundaries in 10.52–10.53).
 
 ```polyglot
 fn main() -> i64 { (250 as u8 +| 20 as u8) as i64 }
@@ -317,8 +320,8 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3359 passed, 6 skipped, 31 deselected (`pytest -q`);
-31 passed, 3365 deselected (`pytest -q -m slow`).
+**Current test status:** 3374 passed, 6 skipped, 31 deselected (`pytest -q`);
+31 passed, 3380 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
 bounds-checked slice indexing, labeled-block `break <value>`, and

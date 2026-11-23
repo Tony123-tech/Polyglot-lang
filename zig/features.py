@@ -85,9 +85,23 @@ ZIG_ONLY_SOURCE_MARKERS = (
     "bitcast!(",
     "bitsizeof!(",
     "sizeof!(",
+    "alignof!(",
+    "rotl!(",
+    "rotr!(",
+    "add_with_overflow!(",
+    "mul_with_overflow!(",
+    "wrapping_add!(",
+    "wrapping_mul!(",
+    "int_from_float!(",
+    "float_from_int!(",
+    "memcpy_bytes!(",
+    "memset_bytes!(",
+    "reduce_and(",
+    "reduce_or(",
+    "reduce_xor(",
 )
 
 
 def is_zig_only_source(source: str) -> bool:
-    """True when a program needs `--backend zig` (SPEC 8.12.5-8.12.8, 8.12.15-8.12.18)."""
+    """True when a program needs `--backend zig` (SPEC 8.12.5-8.12.8, 8.12.15-8.12.22)."""
     return any(marker in source for marker in ZIG_ONLY_SOURCE_MARKERS)
