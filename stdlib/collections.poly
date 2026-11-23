@@ -164,4 +164,16 @@ impl Counter {
         }
         total
     }
+    // The key with the highest count; None when the counter is empty.
+    // Ties keep the key that was added first.
+    fn top_key(&self) -> Option<String> {
+        if self.names.is_empty() { return None; }
+        let mut best = 0;
+        let mut i = 1;
+        while i < self.counts.len() {
+            if self.counts[i] > self.counts[best] { best = i; }
+            i = i + 1;
+        }
+        Some(self.names[best].clone())
+    }
 }

@@ -68,37 +68,42 @@ fn count_byte(text: String, target: String) -> i64 {
     count
 }
 
+// Width counts Unicode scalars, not bytes, so padding behaves the same for
+// non-ASCII text on both backends.
 fn pad_left(text: String, width: usize, fill: String) -> String {
-    if text.len() >= width { return text; }
+    let chars = text.chars();
+    if chars.len() >= width { return text; }
     if fill.is_empty() { return text; }
-    let padding = fill.repeat(width - text.len());
+    let padding = fill.repeat(width - chars.len());
     format!("{}{}", padding, text)
 }
 
 fn pad_right(text: String, width: usize, fill: String) -> String {
-    if text.len() >= width { return text; }
+    let chars = text.chars();
+    if chars.len() >= width { return text; }
     if fill.is_empty() { return text; }
-    let padding = fill.repeat(width - text.len());
+    let padding = fill.repeat(width - chars.len());
     format!("{}{}", text, padding)
 }
 
+// Reverse by Unicode scalar. Byte slicing would corrupt multi-byte characters.
 fn reverse_text(text: String) -> String {
-    let bytes = text.as_bytes();
+    let chars = text.chars();
     let mut out = "".to_string();
-    let mut i = bytes.len();
+    let mut i = chars.len();
     while i > 0 {
         i = i - 1;
-        out = format!("{}{}", out, &text[i..i + 1]);
+        out = format!("{}{}", out, chars[i]);
     }
     out
 }
 
 fn is_palindrome(text: String) -> bool {
-    let bytes = text.as_bytes();
-    let n = bytes.len();
+    let chars = text.chars();
+    let n = chars.len();
     let mut i = 0;
     while i < n / 2 {
-        if bytes[i] != bytes[n - 1 - i] { return false; }
+        if chars[i] != chars[n - 1 - i] { return false; }
         i = i + 1;
     }
     true
