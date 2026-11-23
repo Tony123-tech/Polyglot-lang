@@ -149,7 +149,7 @@ def test_build_hello_produces_extension(tmp_path: Path):
     assert artifact.parent == out_dir
 
 
-def test_examples_directory_contains_seven_runnable_files():
+def test_examples_directory_runnable_files():
     # The opt-in Zig example uses Zig-only syntax and requires --backend zig;
     # it is outside the default backend contract checked here.
     examples = sorted(
@@ -160,7 +160,25 @@ def test_examples_directory_contains_seven_runnable_files():
             for marker in ("+|", "-|", "*|", "SimdN<", "#[parallel]")
         )
     )
-    assert len(examples) == 7
+    names = {path.name for path in examples}
+    # Starter examples and the task-oriented ones must stay runnable.
+    required = {
+        "hello.poly",
+        "fib.poly",
+        "vec_ops.poly",
+        "option_result.poly",
+        "string_ops.poly",
+        "hashmap.poly",
+        "terminates.poly",
+        "csv_sum.poly",
+        "word_count.poly",
+        "cli_report.poly",
+    }
+    assert required <= names, f"missing examples: {sorted(required - names)}"
+    # Every example must be discoverable from examples/README.md.
+    readme = (ROOT / "examples" / "README.md").read_text(encoding="utf-8")
+    for name in names:
+        assert name in readme, f"{name} is not listed in examples/README.md"
     for path in examples:
         result = _run_cli("check", str(path.relative_to(ROOT)))
         assert result.returncode == 0, f"check failed for {path.name}: {result.stderr}"

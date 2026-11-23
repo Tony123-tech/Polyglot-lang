@@ -1,0 +1,33 @@
+// A tiny "report tool": writes a text file, reads it back, and prints a summary.
+// Shows file IO with Result, string helpers, and tracking a running maximum.
+include!("std:fs");
+include!("std:str_utils");
+
+fn main() -> i64 {
+    let path = "/tmp/polyglot_report_input.txt";
+    let content = "alpha beta\n\ngamma delta epsilon\nzeta\n";
+    // .clone() keeps `path` usable for the report below: passing a String to a
+    // function hands ownership over on the native backend.
+    write_text(path.clone(), content.to_string()).unwrap();
+
+    let text = read_text_or(path.clone(), "");
+    let lines = split(trim_end(text.clone()), "\n");
+
+    let mut longest = "".to_string();
+    let mut longest_len = 0;
+    for line in lines {
+        let size = line.len();
+        if size > longest_len {
+            longest_len = size;
+            longest = line;
+        }
+    }
+
+    let line_count = count_lines(text.clone());
+    let char_count = text.len() as i64;
+    println!("file        : {}", path.clone());
+    println!("lines       : {}", line_count);
+    println!("characters  : {}", char_count);
+    println!("longest line: \"{}\" ({} chars)", longest.clone(), longest_len);
+    longest_len as i64
+}

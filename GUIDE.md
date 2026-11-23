@@ -42,7 +42,15 @@ the Python or native backends.
 
 ## 2. Your first `.poly` file
 
-Create `hello.poly`:
+The quickest start is a generated project:
+
+```sh
+polyglot new myapp
+cd myapp
+polyglot run main.poly
+```
+
+Or create the file by hand. Create `hello.poly`:
 
 ```polyglot
 fn add(a: i64, b: i64) -> i64 {
@@ -394,9 +402,11 @@ derived from the diagnostic alone.
 ## 10. What to do when you get stuck
 
 1. Read the error message. It usually tells you what to write.
-2. Check the [SPECIFICATION](SPECIFICATION.md) for the rule.
-3. Check [NOTES.md](NOTES.md) for the design decision behind the rule.
-4. Run `polyglot check hello.poly` to check the program without
+2. Run `polyglot explain E001` (or any code from `E001`-`E008`) to see the
+   wrong and the right version side by side.
+3. Check the [SPECIFICATION](SPECIFICATION.md) for the rule.
+4. Check [NOTES.md](NOTES.md) for the design decision behind the rule.
+5. Run `polyglot check hello.poly` to check the program without
    running it.
 
 ## 11. Common questions

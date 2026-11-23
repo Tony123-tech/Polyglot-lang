@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from backends import get_backend
+from include_expander import load_program
 from lexer import lex
 from parser import parse
 
@@ -48,9 +49,10 @@ def _call_main(ns: dict, label: str):
 
 @pytest.mark.parametrize("example", EXAMPLES, ids=lambda p: p.stem)
 def test_cross_backend_parity(example):
-    source = example.read_text(encoding="utf-8")
-    py_ns = _compile("python", source)
-    native_ns = _compile("native", source)
+    # Expand include! first: programs may pull in bundled ``std:`` modules or
+    # sibling files, and both backends expect item-level code only.
+    py_ns = get_backend("python", trusted=True).compile(load_program(str(example)))
+    native_ns = get_backend("native", trusted=True).compile(load_program(str(example)))
 
     py_result = _call_main(py_ns, f"{example.name} (python)")
     native_result = _call_main(native_ns, f"{example.name} (native)")

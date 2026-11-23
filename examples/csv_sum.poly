@@ -1,0 +1,37 @@
+// Reads a small CSV file, sums one numeric column, and prints the total.
+// The sample file is written by the program itself, so this example runs
+// anywhere without extra setup: `polyglot run examples/csv_sum.poly`.
+include!("std:fs");
+include!("std:str_utils");
+
+// Sum `column` (0-based) over every row except the header line.
+// Returns an Err when a cell is not a valid integer.
+fn sum_column(data: String, column: usize) -> Result<i64, String> {
+    let mut total = 0;
+    let mut row = 0;
+    for line in split(trim(data), "\n") {
+        row = row + 1;
+        // Skip the header row.
+        if row > 1 {
+            let fields = split(line, ",");
+            if column < fields.len() {
+                // .clone() because indexing yields the element by value.
+                let value: i64 = trim(fields[column].clone()).parse::<i64>()?;
+                total = total + value;
+            }
+        }
+    }
+    Ok(total)
+}
+
+fn main() -> i64 {
+    let path = "/tmp/polyglot_csv_demo.csv";
+    let csv = "day,amount\nmon,12\ntue,7\nwed,25\n";
+    write_text(path.clone(), csv.to_string()).unwrap();
+
+    let data = read_text_or(path.clone(), "");
+    let total = sum_column(data, 1).unwrap_or(-1);
+    println!("rows read from {}", path);
+    println!("column 1 total = {}", total);
+    total
+}

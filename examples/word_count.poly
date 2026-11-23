@@ -1,0 +1,50 @@
+// Counts word frequencies in a fixed sentence and prints the most common word.
+// Shows two parallel Vecs (words and counts) and nested loops over container data.
+include!("std:str_utils");
+
+fn main() -> i64 {
+    let text = "the quick brown fox jumps over the lazy dog the fox sleeps";
+    let words = split(text, " ");
+
+    let mut uniq = ["seed"].to_vec();
+    uniq.pop();
+    let mut counts = [0].to_vec();
+    counts.pop();
+
+    for word in words {
+        let mut found = false;
+        let mut index = 0;
+        let mut position = 0;
+        // Index loop instead of `for known in uniq`: iterating a Vec by value
+        // would move it, and uniq is needed again on the next iteration.
+        while index < uniq.len() {
+            if uniq[index] == word {
+                found = true;
+                position = index;
+            }
+            index = index + 1;
+        }
+        if found {
+            counts[position] = counts[position] + 1;
+        } else {
+            uniq.push(word);
+            counts.push(1);
+        }
+    }
+
+    // Walk both Vecs once to find the highest count.
+    let mut best_word = 0;
+    let mut best_count = 0;
+    let mut index = 0;
+    for count in counts {
+        if count > best_count {
+            best_count = count;
+            best_word = index;
+        }
+        index = index + 1;
+    }
+
+    println!("distinct words = {}", uniq.len() as i64);
+    println!("most frequent  = {} ({} times)", uniq[best_word].clone(), best_count);
+    best_count
+}

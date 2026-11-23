@@ -1,32 +1,50 @@
 # polyglot-lang
 
-**polyglot-lang** (v0.3.8) is a Rust-like language with one shared front end
-(lexer, parser, AST) and several backends: a Python transpiler with no native
-dependencies, a native Rust/PyO3 extension backend, an experimental WebAssembly
-backend, an experimental Apple-Silicon JIT backend, and an experimental Zig
-backend. It also ships pure-Python language and runtime models (Gleam-style
-ADTs, OTP actors, Mojo-style origin tracking) for static analysis and runtime
-verification.
+**Write Rust-style code in a single `.poly` file and run it with Python — no
+Rust toolchain, no `Cargo.toml`, no build step.**
 
-Write one `.poly` file and choose how to run it:
-
-```polyglot
-fn add(a: i64, b: i64) -> i64 { a + b }
+```sh
+polyglot new myapp && cd myapp && polyglot run main.poly
 ```
 
-## Backends at a glance
+**Who this is for:** Python developers who want explicit types, `Option`/`Result`
+instead of `None` and exceptions, and predictable integer widths — without
+learning Rust or maintaining a PyO3 project.
 
-| Backend | Default flag | Artifact | Requirements | Contract |
-|---------|--------------|----------|--------------|----------|
-| Python | `python` | Runs in-process (Python AST) | None | Parity baseline |
-| Native | `native` (`build` default) | PyO3 extension (`.so`/`.pyd`) | `cargo` + `rustc` | Parity baseline |
-| WASM | `wasm` | `.wat` via wasmtime | `wasmtime` extra | Experimental, compute-only |
-| JIT | `jit` | AArch64 machine code | macOS, Apple Silicon | Experimental |
-| Zig | `zig` | C-ABI dynamic library via `ctypes` | `zig` on `PATH` | Experimental |
+**Who this is not for (yet):** teams shipping a large production service today.
+The language is young, the standard library is small, and the native story is
+still settling. Use CPython, Numba or Polars when you need production maturity
+this month.
 
-Python and native are parity-tested for the documented language subset. WASM,
-JIT, and Zig are opt-in experiments and are **not** part of that parity
-contract. No `Cargo.toml` or `pyproject.toml` scaffolding is needed for a
+What you actually get:
+
+- Types are checked at compile time; bindings are immutable unless you write `let mut`.
+- `Option` and `Result` make missing values and failures part of the signature.
+- One file runs in-process through the Python backend, or compiles to a PyO3
+  extension when a hot loop needs C-level speed.
+- Stable error codes (`E001`–`E008`) with fix hints, `polyglot explain E001`,
+  and an LSP that publishes the same diagnostics.
+
+New here? Start with `polyglot new`, then read [GUIDE.md](GUIDE.md) and
+[examples/README.md](examples/README.md).
+
+## Backends by tier
+
+The tier says how much you can rely on a backend. Docs, examples and the
+error-code guarantees only cover tier 1.
+
+| Tier | Backend | Default flag | Artifact | Requirements | Promise |
+|------|---------|--------------|----------|--------------|---------|
+| 1 | Python | `python` | Runs in-process (Python AST) | None | Parity baseline |
+| 1 | Native | `native` (`build` default) | PyO3 extension (`.so`/`.pyd`) | `cargo` + `rustc` | Parity baseline |
+| 2 | WASM | `wasm` | `.wat` via wasmtime | `wasmtime` extra | Best effort, compute-only |
+| 3 | JIT | `jit` | AArch64 machine code | macOS, Apple Silicon | Research |
+| 3 | Zig | `zig` | C-ABI dynamic library via `ctypes` | `zig` on `PATH` | Research |
+
+Tier 1 backends share one front end and are parity-tested. Tier 2 and 3 are opt-in
+experiments: they are not covered by the parity contract, they can lag behind
+language changes, and problems in them are handled as research rather than
+product bugs. No `Cargo.toml` or `pyproject.toml` scaffolding is needed for a
 single-file program.
 
 ## Quick Start
@@ -37,7 +55,15 @@ Install:
 pip install polyglot-lang
 ```
 
-Python 3.14.8 or later is required. Create `hello.poly`:
+Python 3.14.8 or later is required. Create a project and run it:
+
+```sh
+polyglot new myapp
+cd myapp
+polyglot run main.poly
+```
+
+Prefer a single file with no directory? Create `hello.poly` by hand:
 
 ```polyglot
 fn add(a: i64, b: i64) -> i64 { a + b }
@@ -72,6 +98,8 @@ New to Rust-like syntax? See [GUIDE.md](GUIDE.md) for a step-by-step tutorial.
 ## CLI reference
 
 ```sh
+polyglot new <dir>                    create a starter project
+polyglot explain [E001]               explain an error code (omit to list all)
 polyglot run <file>        [--backend python|native|wasm|jit|zig] [--target-width N] [--error-format text|json] [--verbose]
 polyglot build <file>      [--backend python|native|wasm|zig] [--out-dir <dir>] [--incremental] [--error-format text|json] [--verbose]
 polyglot check <file>                  [--all-errors] [--error-format text|json] [--verbose]
@@ -87,6 +115,8 @@ polyglot hotpatch[--json] [--color] [--save-as NAME] [--compare NAME]
 
 | Command | What it does |
 |---------|--------------|
+| `new` | Creates a directory with a runnable `main.poly` and a short README; refuses to overwrite a non-empty directory. |
+| `explain` | Prints what an error code means plus a wrong/right example; omit the code to list every code. |
 | `run` | Compiles and executes a file; prints `main()`'s return value when present. `--target-width 32\|64` simulates that `usize`/`isize` width on the Python backend only. |
 | `build` | Compiles only. Native emits an extension module, WASM writes a `.wat`, Zig copies a C-ABI dynamic library. All print the artifact path. `--incremental` reuses per-function Rust fragments across native rebuilds. |
 | `check` | Parses, translates (Python path only — no `--backend`), and runs `#[terminates]` checks without executing. `--all-errors` reports every top-level parse error. |
@@ -161,22 +191,14 @@ the cached library next to the source (`.so` on macOS).
 
 ### Experimental language & runtime models
 
-Pure-Python modules, no native toolchain, outside the Python/native parity
-contract:
+Pure-Python modules that need no native toolchain: Gleam-style total ADTs with
+exhaustive-match witnesses, Elixir/OTP-style supervised actors with restart
+budgets, and Mojo-style origin tracking with lane analysis. They are analysis and
+runtime helpers, not new compilers, and they sit outside the Python/native parity
+contract.
 
-| Module | Inspired by | Provides | Guide |
-|--------|-------------|----------|-------|
-| `compiler/gleam_style/` | Gleam | Total ADTs, exhaustive-match witnesses (`E002`), bit-array patterns with checked bounds, cross-target capability contracts | [docs/gleam_style.md](docs/gleam_style.md) |
-| `runtime/actor_otp/` | Elixir/OTP | Share-nothing actors, deep-copied messages, `one_for_one`/`one_for_all`/`rest_for_one` supervision with restart budgets, let-it-crash `E001`–`E008` reports, bounded telemetry | [docs/actor_otp.md](docs/actor_otp.md) |
-| `compiler/mojo_bridge/` | Mojo | `Copyable`/`Movable`/`BorrowOnly` value kinds, `Owned`/`Borrowed`/`UnsafeAnyOrigin` lifetimes, SIMD lane analysis, MLIR availability probe, PEP 667-safe CPython interop | [docs/mojo_bridge.md](docs/mojo_bridge.md) |
-
-```python
-from compiler.gleam_style import AdtDef, Variant, check_exhaustive
-
-option = AdtDef("Option", (Variant("Some", ("Int",)), Variant("None")))
-check_exhaustive(option, [("Some", ("x",))])
-# error[E002]: non-exhaustive match on 'Option'; missing patterns: None
-```
+These are research surfaces, not product features. Full reference, runnable
+examples and their tests live in [docs/advanced.md](docs/advanced.md).
 
 ## Error codes (E001–E008)
 
@@ -316,6 +338,15 @@ Select a backend with `get_backend("python")`, `get_backend("native")`,
   deadlock-freedom for arbitrary code).
 - Distributed migration is cooperative replay, not opaque stack copying
   (see docs/distributed.md).
+- **Move checking is a parity gap.** Passing a `String` to a function twice
+  without `.clone()` compiles on the Python backend but is rejected by the native
+  backend with `E004` (`use of moved value`). Treat the native error as correct
+  and add `.clone()`.
+- **The Python backend is slow on call-heavy code.** Transpiled functions wrap
+  their arguments, so recursive `fib` runs about 15x slower than CPython, while a
+  tight typed `for` loop can beat CPython. Numbers and method:
+  [benchmarks/RESULTS.md](benchmarks/RESULTS.md), reproduced with
+  `python benchmarks/run_benchmarks.py`.
 
 ## Notes & license
 
