@@ -51,6 +51,7 @@ py-modules = [
 include = [
     "api*",
     "backends*",
+    "bootstrap*",
     "compiler*",
     "debug*",
     "diagnostics*",
@@ -63,8 +64,11 @@ include = [
     "security*",
     "stdlib*",
     "swarm*",
+    "tools.abi_contract*",
     "tools.adversarial*",
     "tools.build_ci*",
+    "tools.dst*",
+    "tools.provenance*",
     "zig*",
 ]
 

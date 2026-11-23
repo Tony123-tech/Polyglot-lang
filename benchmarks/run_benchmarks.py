@@ -70,6 +70,7 @@ def run_polyglot(workload: str, backend: str, reps: int) -> tuple[float, float, 
         proc = subprocess.run(
             command
             + ["exec", str(source), "--backend", backend, "--result-file", str(out_path)],
+            check=False,
             capture_output=True,
             text=True,
         )
