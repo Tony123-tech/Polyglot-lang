@@ -499,6 +499,19 @@ This section defines the platform differences permitted by this specification. E
 
 - `tests/test_actor_otp.py` covers actor spawn and message delivery, isolation guarantees (initial-state copy and payload deep-copy), dead-actor sends, handler crashes, mailbox capacity and selective receive, all three supervision strategies, restart-intensity exhaustion and window reset, crash classification per exception class, boundary-violation rejection, and telemetry bounding and filtering.
 
+### 8.16 Ownership and move checking
+
+- **8.16.1** Polyglot MUST follow Rust ownership for owned values: `String`, `Vec<T>`, `HashMap`, user structs and enums are moved when used by value; integers, floats, `bool`, `char`, references and tuples of those are copied. A use of a moved binding MUST raise `E009`, naming the binding and the line of the move and/or the line of the reuse.
+- **8.16.2** The check MUST run on the shared front end before either backend generates code, so the Python and native backends accept and reject the same programs. A program rejected by one backend MUST be rejected by the other with the same code, the same binding name and the same line pair. `polyglot explain E009` documents the rule for users.
+- **8.16.3** Moving out of an owned container by index (for example passing `words[0]` where a `String` is expected) MUST raise `E009` with its own message, because indexing yields a place rather than a value. Cloning the element or taking a reference is the documented fix.
+- **8.16.4** The first use of a moved value is reported; the pass MUST be deterministic and MUST stop at the first violation rather than emit a cascade. A diverging branch (`return`, `break`, `continue`, `panic!`) MUST NOT contribute its moves to the state after the branch, matching Rust, and an unconditional reassignment MUST make the binding live again.
+- **8.16.5** The model is bounded and MUST NOT guess. Unknown types, method semantics the pass does not model, and moves through references are left to the backend. A construct the pass cannot prove MUST NOT be reported as an error.
+
+**Acceptance criteria**
+
+- `tests/test_move_parity.py` runs the same case table through both backends and asserts identical outcomes: allowed programs run with the same return value, rejected programs raise the same `E009` headline with the same line pair.
+- `tests/test_m7_diagnostics.py` covers `E001`–`E008` formatting; `E009` uses the same five-line form and prints a character span when the node has one.
+
 ## 9. Toolchain and Delivery
 
 - **9.1** The toolchain MUST include a lexer, a parser, an AST, both backends, diagnostics that map native errors to source positions, and a module mechanism.
@@ -584,6 +597,8 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **10.44** `runtime/actor_otp/` is a deterministic, pure-Python runtime model outside the Python/native parity contract. It provides share-nothing actors, OTP supervision strategies with restart budgets, and let-it-crash fault reports with bounded telemetry. It does not spawn OS threads, does not provide real BEAM/OTP semantics, and does not replace the `distributed/` actor runtime. See 8.15 and `docs/actor_otp.md`.
 - **10.45** `compiler/mojo_bridge/` is a pure-Python analysis layer outside the Python/native parity contract. It models value/origin lifetimes, contiguous buffer layouts with SIMD lane analysis, an honest MLIR availability probe, and CPython interop with a PEP 667 hot-loop guard. It does not generate native code, does not invoke MLIR/GPU toolchains, and does not provide real Mojo compilation. See 8.14 and `docs/mojo_bridge.md`.
 
+- **10.46** Ownership checking is a bounded syntactic pass, not a borrow checker: it tracks direct local bindings with a statically known type, follows straight-line blocks, `if`/`else`, `if let`, `match` arms and loop bodies, and treats a diverging branch as unreachable. It does not model partial moves of struct fields, moves through references, `RefCell`-style interior mutability, or method semantics it does not know, and it does not add lifetime or borrow tracking. Those cases remain the native backend's responsibility, so `E009` coverage is not guaranteed to be complete across both backends for programs that rely on unmodelled constructs. See 8.16.
+
 ## 11. Versioning
 
 - **11.1** Any change to Section 8 MUST increase the specification version.
@@ -612,6 +627,7 @@ This section is normative. Each entry MUST reference the requirement or platform
 - **11.23** v0.3.9++ adds 9.20 and 13.3.7 (the ordered `hard-frames-parity` release-gate stage with fixed seeds), 13.2.7 (shared WASM preflight diagnostics and compile-time aggregate specialization with explicit dynamic-ABI boundaries), and records that the four Zig SIMD/parallel C-ABI defects are fixed. The three-way parity matrix now runs all 12 cases on all three backends with zero skips.
 - **11.24** v0.3.9+++ adds 9.21 and 13.3.8: research frames H–K (bounded formal methods, termination/variant proofs, hard-state migration/replay, and adversarial verification) with explicit `Unknown`/bound/timeout boundaries and no WASM or JIT changes. The release gate gains a `research-frames` stage with an injectable in-process spec-oracle runner, and the wheel package list includes `tools.adversarial*`.
 - **11.25** v0.3.9++++ upgrades the Zig backend for Zig 0.17.1 and adds three pure-Python language/runtime models. The Zig changes add 8.12.11–8.12.14: signed `/` and `%` lower to `@divTrunc`/`@rem`, slice indexing is bounds-checked via `_zig_at`/`_zig_at_mut`, `Result<T, PillarError>` lowers to `PillarError!T`, and labeled-block `break <value>` uses an untyped label. The new models add 8.13 (`compiler/gleam_style/`: total ADTs with exhaustive-match witnesses, bit-array patterns with checked bounds, cross-target capability contracts), 8.14 (`compiler/mojo_bridge/`: value/origin lifetimes, contiguous layouts with SIMD lane analysis, an honest MLIR probe, PEP 667-safe CPython interop), and 8.15 (`runtime/actor_otp/`: share-nothing actors, OTP supervision with restart budgets, let-it-crash fault reports and bounded telemetry). They add 10.43–10.45 and are outside the Python/native parity contract.
+- **11.26** v0.3.9+ records shared ownership checking: `backends/move_check.py` runs before both backends and raises `E009` (8.16), `stdlib` was made Unicode-safe with `read_lines` and `Counter::top_key`, the CLI gained `polyglot new` and `polyglot explain`, and `examples/` gained three task-oriented programs plus a benchmark suite. It adds 8.16, 10.46, and moves the one native diagnostic that used `E009` for an out-of-range cast literal to `E008`, restoring the E001–E008 pillar surface.
 
 ## 12. Conformance Status
 
@@ -623,8 +639,8 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 3224 passed, 6 skipped, 28 deselected.
-- `pytest -q -m slow`: 28 passed, 3235 deselected.
+- `pytest -q`: 3258 passed, 6 skipped, 31 deselected.
+- `pytest -q -m slow`: 31 passed, 3264 deselected.
 
 The four previously failing Zig SIMD/parallel C-ABI cases in `tests/test_zig_backend.py` and `tests/test_auto.py` now pass: the generated wrappers use `extern struct` vector parameters/returns, the `std` import is emitted once, and stale zero-byte dylibs are evicted and rebuilt. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints), the 100-function framework registry with its ten frame test suites, the differential fuzzer / release gate / telemetry / packaging suites, the completed 1,000-function rollout (all ten batches, 1000 functions), the speculative JIT / WASM production / hard compiler-runtime frames with their focused suites, WASM compile-time aggregate specialization with shared `E001`–`E008` preflight diagnostics, the full three-way parity matrix (12/12 cases on all three backends with zero skips), and the `hard-frames-parity` release-gate stage, replacing the earlier stale baseline.
 

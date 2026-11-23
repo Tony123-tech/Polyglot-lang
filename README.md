@@ -22,7 +22,7 @@ What you actually get:
 - `Option` and `Result` make missing values and failures part of the signature.
 - One file runs in-process through the Python backend, or compiles to a PyO3
   extension when a hot loop needs C-level speed.
-- Stable error codes (`E001`–`E008`) with fix hints, `polyglot explain E001`,
+- Stable error codes (`E001`–`E009`) with fix hints, `polyglot explain E001`,
   and an LSP that publishes the same diagnostics.
 
 New here? Start with `polyglot new`, then read [GUIDE.md](GUIDE.md) and
@@ -122,7 +122,7 @@ polyglot hotpatch[--json] [--color] [--save-as NAME] [--compare NAME]
 | `check` | Parses, translates (Python path only — no `--backend`), and runs `#[terminates]` checks without executing. `--all-errors` reports every top-level parse error. |
 | `lsp` | Starts the stdio language server (`textDocument/publishDiagnostics` on open/change/save). |
 | `compile` | Compatibility command used by the HTTP executor; prints exported top-level names. |
-| `exec` | Compiles and executes like `run`, prints program output only, and — with `--result-file` — writes JSON with compile/run timings, peak RSS, return value, and structured `E001`–`E008` diagnostics. |
+| `exec` | Compiles and executes like `run`, prints program output only, and — with `--result-file` — writes JSON with compile/run timings, peak RSS, return value, and structured `E001`–`E009` diagnostics. |
 | `visualizer` (`gui`) | Local dependency-free web UI for the AST, monomorphization diff, error spans, and side-by-side Python/native output. Binds to `127.0.0.1` by default; runs submitted code as trusted local code. |
 | `telemetry`/`timings`/`cache`/`hotpatch` | Print compile-phase timings, cache hit rates, monomorphization counts, and hot-patch status. `--save-as NAME` and `--compare NAME` persist and diff baselines outside the workspace. |
 
@@ -150,7 +150,7 @@ documented subset:
 | `vec![...]`, `String::from(...)`, lazy `unwrap_or_else` | ✅ | ✅ |
 | `if let` (`Some`/`None`/`Ok`/`Err`), statement & expression position | ✅ | ✅ |
 | `HashMap::entry(...)` (`or_default`, `or_insert`, …) | ✅ | ✅ |
-| Error codes `E001`–`E008` + structured fix hints | ✅ | ✅ |
+| Error codes `E001`–`E009` + structured fix hints | ✅ | ✅ |
 | LSP `publishDiagnostics` on open/change/save | ✅ | ✅ |
 | `#[terminates]` checking, incl. multiple self-recursive calls | ✅ | ✅ |
 | `std:fs` trusted host seam | ✅ (trusted) | ✅ (trusted) |
@@ -200,7 +200,7 @@ contract.
 These are research surfaces, not product features. Full reference, runnable
 examples and their tests live in [docs/advanced.md](docs/advanced.md).
 
-## Error codes (E001–E008)
+## Error codes (E001–E009)
 
 Every diagnostic carries a stable code:
 
@@ -213,7 +213,8 @@ Every diagnostic carries a stable code:
 | `E005` | `IncludeCycleError` | Cyclic `include!` chain; the full chain is printed. SPEC 9.2. |
 | `E006` | `IncludeNotFoundError` | `include!` target missing or unreadable; `std:` paths escaping `stdlib/` also report this. SPEC 9.2. |
 | `E007` | `UnsupportedNativePatternError` | Source pattern cannot be represented by stable Rust (also reserved `#[gpu]`/`#[npu]`). SPEC 8.3. |
-| `E008` | `InvalidIntegerParseLiteralError` | A literal integer could not be parsed for the target type. |
+| `E008` | `InvalidIntegerParseLiteralError`, `InvalidCastError` | A literal integer could not be parsed, or a literal cannot be represented in the type it is cast to. |
+| `E009` | `MoveError` | An owned value (`String`, `Vec`, struct, enum) is used after it was moved; the message names the binding and both lines. SPEC 8.16. |
 
 Fix hints are local and deterministic (currently an edit only for implicit `as`
 casts under `E001`). The language server publishes at most one diagnostic per
@@ -291,8 +292,8 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3224 passed, 6 skipped, 28 deselected (`pytest -q`);
-28 passed, 3235 deselected (`pytest -q -m slow`).
+**Current test status:** 3258 passed, 6 skipped, 31 deselected (`pytest -q`);
+31 passed, 3264 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
 bounds-checked slice indexing, labeled-block `break <value>`, and
@@ -338,10 +339,12 @@ Select a backend with `get_backend("python")`, `get_backend("native")`,
   deadlock-freedom for arbitrary code).
 - Distributed migration is cooperative replay, not opaque stack copying
   (see docs/distributed.md).
-- **Move checking is a parity gap.** Passing a `String` to a function twice
-  without `.clone()` compiles on the Python backend but is rejected by the native
-  backend with `E004` (`use of moved value`). Treat the native error as correct
-  and add `.clone()`.
+- Ownership is checked by one shared pass (`backends/move_check.py`, SPEC 8.16),
+  so a moved `String`/`Vec`/struct is rejected with `E009` on both backends
+  before either one generates code. The model is bounded: struct-field partial
+  moves, moves through references and unmodelled method semantics are still left
+  to the native backend, so a program can occasionally pass `--backend python`
+  and fail rustc. `polyglot explain E009` shows the fix.
 - **The Python backend is slow on call-heavy code.** Transpiled functions wrap
   their arguments, so recursive `fib` runs about 15x slower than CPython, while a
   tight typed `for` loop can beat CPython. Numbers and method:

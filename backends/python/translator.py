@@ -1737,6 +1737,11 @@ class Translator:
     # ---- entry -------------------------------------------------------------
 
     def translate_program(self, program: Program) -> ast.Module:
+        # Ownership is a language rule, not a backend rule: check it once here
+        # so every translation path (run, check, compile) reports the same E009.
+        from backends.move_check import check_moves
+
+        check_moves(program)
         validate_program_features(program)
         program = monomorphize(program)
         self.struct_names.clear()

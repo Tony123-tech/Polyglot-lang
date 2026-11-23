@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-# A read-only mapping: adding "E009" at runtime would silently widen the
-# public diagnostic contract, so the E001-E008 set is enforced here.
+# A read-only mapping: extending it at runtime would silently widen the public
+# diagnostic contract, so the exact E001-E008 set is enforced here.
 ERROR_CODES: Final[Mapping[str, str]] = MappingProxyType(
     {
         "E001": "type, layout, or ABI boundary",

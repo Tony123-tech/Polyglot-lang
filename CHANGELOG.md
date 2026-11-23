@@ -28,9 +28,20 @@ Version history derived from SPECIFICATION.md Section 11.
   pattern/spec-conformance tests into "DID NOT RAISE". `_is_built` now requires
   a matching `.polyglot-manifest.json`, validated by
   `tests/test_native_cache_manifest.py`.
-- Recorded all four defects with Symptom/Cause/Fix/Lesson entries in `NOTES.md`.
-- Verified baseline: 3224 passed, 6 skipped, 28 deselected (`pytest -q`);
-  28 passed, 3235 deselected (`pytest -q -m slow`).
+- Added shared ownership checking: `backends/move_check.py` runs before both
+  backends and raises `E009` for a moved `String`/`Vec`/struct used again, with
+  the binding name and both lines. Index moves (`words[0]` into an owned
+  parameter) get their own message. Adds SPEC 8.16 and 10.46. The model is
+  bounded: struct-field partial moves and unmodelled method semantics stay with
+  the native backend.
+- Moved the native out-of-range cast literal diagnostic from `E009` to `E008`,
+  restoring the documented E001-E008 pillar surface now that `E009` means
+  ownership.
+- Added `tests/test_move_parity.py`: 8 allowed and 12 rejected programs run
+  through both backends and must agree on the outcome.
+- Recorded all defects with Symptom/Cause/Fix/Lesson entries in `NOTES.md`.
+- Verified baseline: 3258 passed, 6 skipped, 31 deselected (`pytest -q`);
+  31 passed, 3264 deselected (`pytest -q -m slow`).
 
 ## Unreleased — Zig 0.17.1 codegen and language/runtime models
 

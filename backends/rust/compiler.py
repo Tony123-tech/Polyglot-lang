@@ -255,6 +255,9 @@ class NativeBackend(BackendBase):
         top-level item changes.
         """
         self._check_trust()
+        from backends.move_check import check_moves
+
+        check_moves(program)
         codegen = RustCodegen(module_name=module_name)
         try:
             source = codegen.generate(program)
@@ -273,7 +276,7 @@ class NativeBackend(BackendBase):
                 source_line=error.line,
                 source_col=error.col,
                 source_line_text=program.source_lines.get(error.line),
-                code="E009",
+                code="E008",
             ) from error
         key = hashlib.sha256(source.encode()).hexdigest()[:16]
         build_dir = self.cache_dir / key

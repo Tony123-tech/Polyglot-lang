@@ -19,7 +19,7 @@
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3224 passed, 6 skipped, 28 deselected (fast suite, after the native cache fix).
+**Latest baseline:** 3258 passed, 6 skipped, 31 deselected (fast suite, after the native cache fix).
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -1899,6 +1899,72 @@ tighten that path's contract for callers that already relied on it.
 
 ### Status after this pass
 
-- Full fast suite: **3224 passed, 6 skipped, 28 deselected.**
+- Full fast suite: **3258 passed, 6 skipped, 31 deselected.**
 - Native pattern and spec-conformance failures: 14 → 0.
 - All three bugs are covered by tests that fail if the behaviour returns.
+
+## Ownership checking (E009) — parity by construction
+
+The README listed "move checking is a parity gap" as a known limitation: the
+same `.poly` file could pass on the Python backend and fail on the native
+backend with rustc's "use of moved value". Closing that gap needs the rule in
+one place, not in two backends.
+
+**Design:** `backends/move_check.py` walks the shared AST between parsing and
+code generation. `TranslateError`-style formatting is reused: one `E009` with
+the binding name, the line it moved on, and the line that reused it, plus a
+span when the node has one. `PythonBackend.translate_program` and
+`NativeBackend.build` both call it, so `run`, `check`, `exec`, `compile` and
+`build` all agree. The pass is bounded: it models locals with a statically
+known type and reports only what it can prove; unknown types and unmodelled
+method semantics are left to backend, as SPEC 8.16.5 requires.
+
+### Bug 1 — branching on a diverging branch produced false positives
+
+**Symptom:** Four shipped `stdlib` modules were rejected by the new pass:
+`algo` (`bubble_sort`), `random` (`shuffle`), `str_utils` (`pad_left`), and
+`prelude` (which includes them). Every message pointed at a `return` inside a
+guard followed by a later use of the same binding.
+
+**Cause:** the pass merged the state of both `if` branches unconditionally, so
+`if n < 2 { return out; }` marked `out` moved on the fall-through path even
+though that branch never reaches the code after the `if`. Rust does not work
+that way: a diverging path contributes nothing to the join.
+
+**Fix:** `terminates_block` / `terminates_expr` recognise `return`, `break`,
+`continue`, `panic!` and `if`/`match` where every arm diverges. A diverging
+branch merges as the entry state, a diverging loop body leaves the exit state
+untouched, and statements after a diverging statement are treated as
+unreachable. All four modules then passed, which matches rustc.
+
+### Bug 2 — array-literal `vec![...]` hid the element type
+
+**Symptom:** `let words = vec![String::from("a")]; take(words[0]);` was
+accepted by the pass even though the native backend rejects it with
+"cannot move out of index".
+
+**Cause:** the parser lowers `vec![a, b]` to an `ArrayExpr`, and the checker's
+element-type helper only understood `Vec<T>` generics, so `[String]` produced
+no element type and `is_copy(None)` stayed quiet.
+
+**Fix:** `_element_type` understands the `[T]` form as well. The parity table
+now pins the index case to `cannot move out of index of 'words'`.
+
+### Bug 3 — the pass could not be imported by the installed CLI
+
+**Symptom:** `polyglot run` failed with `No module named 'move_check'` while
+`pytest` passed, because the editable install ships only the modules listed in
+`pyproject.toml`.
+
+**Cause:** the module lived at the repository root, which is neither a
+`py-modules` entry nor a package.
+
+**Fix:** it moved to `backends/move_check.py` and is imported as
+`backends.move_check`. `pyproject.toml` stays untouched.
+
+### Status after this pass
+
+- `tests/test_move_parity.py`: 8 allowed programs (run on both backends) and
+  12 rejected ones that must raise the same `E009` headline and line pair.
+- Full fast suite: **3258 passed, 6 skipped, 31 deselected**; slow suite
+  **31 passed**.
