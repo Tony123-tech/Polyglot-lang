@@ -16,8 +16,10 @@
 - Zig (experimental): saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, C-ABI boundaries
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
+- Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
+- Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3224 passed, 5 skipped, 24 deselected; slow 22 passed, 1908 deselected.
+**Latest baseline:** 3224 passed, 6 skipped, 28 deselected (fast suite, after the native cache fix).
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 
@@ -1802,3 +1804,101 @@ Several defects were caught by the focused suites during construction: the parse
 **Lesson:** Even when structs stay internal to Zig (non-C-ABI), accurate field and parameter type tables are essential so casts and calls emit valid Zig builtins.
 
 - Covered by `tests/test_zig_backend.py::test_zig_user_fn_calls_if_else_and_struct_fields`.
+
+## Comprehension pass — bugs found while making the project teachable
+
+Scope: while splitting `GUIDE.md` into a beginner path plus `docs/advanced.md`,
+adding `polyglot new` / `polyglot explain`, hardening `stdlib`, and writing
+task-oriented examples, four defects surfaced that no existing test caught.
+They are recorded here with the same layout used by the N-series entries.
+
+### Bug 1 — `check_program` used before it was imported
+
+**Symptom:** Every `polyglot run` failed immediately with
+`error: name 'check_program' is not defined`, including
+`polyglot run examples/vec_ops.poly`.
+
+**Cause:** Three files (`backends/python/translator.py`,
+`backends/rust/codegen.py`, `backends/wasm/validation.py`) carried duplicated
+blocks left by a repeated scripted edit: `self._proven_terminating =
+check_program(program)` appeared above the local import that defines
+`check_program`, the import line itself was written
+`check_function, check_program, check_program`, and the WASM validator
+referenced a `program` name that only existed in a different scope.
+
+**Fix:** One local import at the first use site, duplicated statements removed,
+and the WASM preflight now computes `proven = check_program(program)` once and
+passes it into `_validate_item` instead of relying on an enclosing name.
+
+**Lesson:** A scripted edit across several files needs an import-time smoke test
+(`polyglot run` on a known example), not just a syntax check per file.
+
+### Bug 2 — `reverse_text` indexed UTF-8 strings by byte
+
+**Symptom:** `reverse_text("café")` raised
+`'utf-8' codec can't decode byte 0x80` on the Python backend and returned
+garbage on the native backend; `reverse_text("a😀b")` was worse.
+
+**Cause:** `stdlib/str_utils.poly` built the result with `&text[i..i+1]`,
+which slices at byte offsets. Any code point outside ASCII straddles several
+bytes, so the slice is not a `char` and the conversion fails.
+
+**Fix:** The function now indexes `text.chars()` and appends with
+`format!("{}{}", out, chars[i])`. `is_palindrome` compares characters instead
+of bytes, and `pad_left` / `pad_right` treat the requested width as a count of
+Unicode scalars with a comment stating that choice.
+
+**Lesson:** In a `String` type backed by UTF-8, byte offsets are never a
+substitute for character positions. `tests/test_stdlib_unicode.py` now guards
+this with a bit-mask probe so each behaviour can be checked in isolation on
+both backends.
+
+### Bug 3 — the native cache reused artifacts it did not build
+
+**Symptom:** 14 cases in `tests/test_native_n2a_patterns.py` and
+`tests/test_spec_conformance.py` reported "DID NOT RAISE" where a
+`RustCompileError` was required — for example a `match` arm binding the same
+name twice, which `rustc` rejects with `E0416`. The same compile reported
+`reused: True` and exposed a namespace containing only `n8_valid_len`, a
+function from a different program.
+
+**Cause:** `_seed_incremental_target` clones another build's `target/`
+directory into a fresh cache entry to keep `pyo3` and `mio` warm (see the
+APFS seeding section above). That directory can already contain
+`libpolyglot_native.dylib`, and `_is_built` treated the presence of any
+extension file as "this source is compiled". A program that had never been
+built was therefore loaded from someone else's module, so no compile error
+could ever occur.
+
+**Fix:** `_is_built` now requires `<build_dir>/.polyglot-manifest.json` with a
+`module` equal to the requested module name, a `source_hash` equal to the
+cache entry name, and an `extension` that actually exists in the entry.
+`_build` writes that manifest after a successful cargo run;
+`_build_incremental` already wrote an equivalent one.
+`tests/test_native_cache_manifest.py` pins the four rejection cases and the
+one acceptance case.
+
+**Lesson:** A content-addressed cache must verify its own identity from
+metadata it wrote; inferring "done" from the shape of files on disk is exactly
+the assumption that seeding breaks.
+
+### Bug 4 — the fix for Bug 3 broke a caller that tolerates a missing artifact
+
+**Symptom:** `tests/test_rust_compile_error.py::test_warning_only_cargo_result_does_not_raise`
+failed with `RuntimeError: No extension module found`.
+
+**Cause:** The manifest was written by calling `_find_extension`, which raises
+when cargo exits successfully without emitting a library — a state the
+existing warning-only test intentionally produces.
+
+**Fix:** The manifest step uses the quiet lookup and writes nothing when no
+extension exists; such an entry simply rebuilds next time.
+
+**Lesson:** A verification step added after an existing success path must not
+tighten that path's contract for callers that already relied on it.
+
+### Status after this pass
+
+- Full fast suite: **3224 passed, 6 skipped, 28 deselected.**
+- Native pattern and spec-conformance failures: 14 → 0.
+- All three bugs are covered by tests that fail if the behaviour returns.

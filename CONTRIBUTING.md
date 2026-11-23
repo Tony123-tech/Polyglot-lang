@@ -153,7 +153,11 @@ Scopes: frontend, python, rust, api, cli, tests, docs, build, ci.
   clause and bump the version. Section 8 changes also require a
   Section 10 entry and a CHANGELOG.md entry.
 - NOTES is a design journal. Add a Symptom/Cause/Fix/Lesson entry
-  for each non-trivial bug or decision.
+  for each non-trivial bug or decision. Write the entry when the bug
+  is found, not after the fix: the Symptom is the part that is easy to
+  lose. Name the test that now covers it.
+- Any bug fixed without a covering test must say so in the entry,
+  otherwise the next refactor silently reintroduces it.
 - README should reflect the SPEC support matrix, the CLI, and the
   current test baseline. `make docs-sync` and the CI docs-sync check
   enforce matching pytest baselines in README and SPEC 12.1.
