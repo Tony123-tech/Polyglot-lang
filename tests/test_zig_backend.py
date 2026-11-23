@@ -107,3 +107,94 @@ def test_zig_simd_horizontal_reduce_and_example():
     b = (ctypes.c_double * 4)(10.0, 20.0, 30.0, 40.0)
     assert ns["simd_dot4"](a, b) == 300.0
     assert ns["main"]() == 255
+
+
+def test_zig_signed_division_uses_divtrunc():
+    """Signed `/` lowers to ``@divTrunc`` (truncate toward zero, C semantics)."""
+    src = """
+    fn div_test(a: i64, b: i64) -> i64 { a / b }
+    fn rem_test(a: i64, b: i64) -> i64 { a % b }
+    """
+    ns = compile_zig(parse(lex(src)))
+    assert ns["div_test"](7, 2) == 3
+    assert ns["div_test"](-7, 2) == -3
+    assert ns["rem_test"](7, 2) == 1
+    assert ns["rem_test"](-7, 2) == -1
+
+
+def test_zig_slice_index_is_bounds_checked():
+    """Slice indexing lowers to ``_zig_at``/``_zig_at_mut`` with a debug assert."""
+    import ctypes
+
+    src = """
+    fn sum_slice(items: &[i64], n: usize) -> i64 {
+        let mut total: i64 = 0;
+        for i in 0..n {
+            total += items[i];
+        }
+        total
+    }
+    """
+    ns = compile_zig(parse(lex(src)))
+    arr = (ctypes.c_int64 * 5)(10, 20, 30, 40, 50)
+    assert ns["sum_slice"](arr, 5) == 150
+
+
+def test_zig_labeled_block_break_with_value():
+    """``if cond { break N; } else { M }`` lowers to a labeled block break."""
+    src = """
+    fn pick(flag: bool) -> i64 {
+        let v: i64 = if flag { break 1; } else { 2 };
+        v
+    }
+    """
+    ns = compile_zig(parse(lex(src)))
+    assert ns["pick"](True) == 1
+    assert ns["pick"](False) == 2
+
+
+def test_zig_pillar_error_result_union():
+    """``Result<T, PillarError>`` lowers to ``PillarError!T``, not ``anyerror!T``."""
+    from zig.backend import ZigCodegen
+
+    src = "fn fail() -> Result<i64, PillarError> { Err(E003) }"
+    code = ZigCodegen("t").generate(parse(lex(src)))
+    assert "PillarError!i64" in code
+    assert "error.E003" in code
+    assert "anyerror!i64" not in code
+
+
+def test_zig_err_payload_resolves_pillar_error_members():
+    """``Err(E00n)`` / ``Err(n)`` / ``Err(error.E00n)`` all resolve to PillarError."""
+    from zig.backend import ZigCodegen
+
+    for src, expected in [
+        ("fn f() -> Result<i64, PillarError> { Err(E001) }", "error.E001"),
+        ("fn f() -> Result<i64, PillarError> { Err(E008) }", "error.E008"),
+        ("fn f() -> Result<i64, PillarError> { Err(3) }", "error.E003"),
+    ]:
+        code = ZigCodegen("t").generate(parse(lex(src)))
+        assert expected in code, f"expected {expected} in {code}"
+
+
+def test_zig_user_fn_calls_if_else_and_struct_fields():
+    """Zig backend supports recursive/typed fn calls, if/else branches, and struct field inference."""
+    src = """
+    struct Vec2 { x: f64, y: f64 }
+    fn scale_u8(v: u8) -> u8 { v *| 2 }
+    fn fib(n: i64) -> i64 {
+        if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+    }
+    fn compute(n: i64, use_fib: bool) -> i64 {
+        let p = Vec2 { x: 3.5, y: 4.5 };
+        let scaled = scale_u8(n) as i64;
+        let mut bonus: i64 = 0;
+        if use_fib {
+            bonus = fib(n);
+        }
+        scaled + bonus + ((p.x + p.y) as i64)
+    }
+    """
+    ns = compile_zig(parse(lex(src)))
+    assert ns["compute"](6, True) == 12 + 8 + 8
+    assert ns["compute"](6, False) == 12 + 0 + 8
