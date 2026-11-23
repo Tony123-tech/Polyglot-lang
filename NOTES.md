@@ -17,6 +17,7 @@
 - Runtime failures: located `E002` guards on both backends, IEEE 754 float division
 - Ownership: explicit `drop(x)`, borrow-vs-move conflicts, bounded NLL, loop fixpoint
 - Rust ergonomics: trait coherence/composition/dispatch plans, arena handles, async boundaries
+- Repository root cleanup: stage modules into `compiler/core/` and `compiler/analysis/`, shims removed, string-embedded imports swept
 - Host interpreter: 3.14.8 floor checked at the CLI door, refusal as `error:`/`help:`, PEP 649 reason
 - Parser/translator/codegen: `if let` as a tail expression (10 bugs)
 - Priority features: `vec!`, `String::from`, lazy fallbacks, `std:fs`, expression-position `if let`, entry API, termination, diagnostics
@@ -25,7 +26,63 @@
 
 **Latest baseline:** 3511 passed, 6 skipped, 31 deselected (fast suite, after the host-interpreter floor batch); slow suite 31 passed, 3517 deselected.
 
+**Baseline ledger.** The counts quoted further down are the numbers printed by the
+run that closed each batch, oldest first: 3258 (comprehension pass) → 3340
+(priority features) → 3390 (runtime failure reporting, 11.30) → 3411 (explicit
+`drop` and borrow conflicts, 11.31) → 3498 (Rust ergonomics, 11.32) → 3511
+(host-interpreter floor, 12.1). Two sections still quote 3258 because the later
+section copied the earlier figure instead of re-running the suite; read each quoted
+count as the close of its own batch, not as the current total. A local run that
+reports 3512 passed / 5 skipped differs from the recorded 3511 / 6 by exactly one
+test whose skip depends on the local toolchain, and that difference is not yet
+reconciled.
+
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
+
+## Repository root cleanup — imports that are not import statements
+
+**Symptom:** Moving the nine stage modules into `compiler/core/` and
+`compiler/analysis/` and deleting the root shims looked mechanical: an AST codemod
+rewrote 308 real `import` statements in 126 files with zero parse errors, and the
+targeted tests passed. The first full suite after the shim removal reported 12
+failures, and four of them were not import problems in the static sense at all:
+`compiler/evolution.py` could no longer self-compile a candidate pass, the
+regression harness reported `RuntimeError: lexer/parser are unavailable` and
+`monomorph=unavailable` for every probe, and `test_package_exports` could not
+import `lexer` at all.
+
+**Cause:** Three classes of reference survive an AST rewrite. First, *source text
+that is later imported*: `evolution.py` stores its auditable pass templates and its
+runner script as string literals, writes them to disk, and imports them back, so
+`from ast_nodes import Binary` sits inside a triple-quoted block the codemod never
+sees. Second, *dynamic imports*: `regression/harness.py` resolves stages through
+`importlib.import_module("lexer")` with a fallback that reports "unavailable", and
+`runtime/capabilities.py` stores the stage module name as a string field, so a stale
+name silently downgrades capability probes to `status: unavailable` instead of
+failing loudly. Third, *documentation samples*, which are the first thing a reader
+copy-pastes. A fourth class was pure path arithmetic: `include_expander` resolved
+`Path(__file__).parent / "stdlib"`, and `tools/lint_statement_leaks.py` read
+`ROOT / "parser.py"`, which after the move was the three-line shim — the guard
+would have stayed green while inspecting nothing.
+
+**Fix:** The string sites now name the packaged path (`compiler.core.ast_nodes`,
+`compiler.analysis.monomorph`), the capability entries store
+`compiler.analysis.*`, the harness imports `compiler.core.*`, and the doc samples in
+`docs/advanced.md`, `docs/zig.md` and `docs/experimental_pillars.md` show the path a
+reader can actually run. The evolution allowlist became
+`_ALLOWED_IMPORT_MODULES` and accepts both `ast_nodes` and
+`compiler.core.ast_nodes`, because a pass written before the move is still a valid
+auditable transform; rejecting it would have been a behaviour change disguised as a
+rename. `STDLIB_DIR` uses `parents[2]`, and the statement-leak guard reads the real
+parser.
+
+**Lesson:** "The codemod parsed everything and touched 308 statements" is a
+statement about syntax, not about references. Anything that turns a name into an
+import later — templates that get written to disk, `import_module`, a config field,
+a doc sample — needs a separate sweep, and the sweep should be a full test run plus
+a grep for the old names inside strings, not a review of the diff. The failures that
+matter most here were the quiet ones: a guard reading a shim and a capability probe
+reporting `unavailable` both look like success from the outside.
 
 ## Host interpreter — a requirement nothing actually checked
 
