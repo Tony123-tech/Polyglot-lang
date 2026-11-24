@@ -23,6 +23,12 @@ polyglot new myapp && cd myapp && polyglot run main.poly
 # hello / 2 words / fib(20) = 6765
 ```
 
+On the Python backend `fib(20)` takes roughly 15× longer than CPython — the
+translator is a tree walker, not an optimising compiler. Use this for explicit
+types, `Option`/`Result` and an ownership check, not for speed; the native
+backend exists for the cases where the Python overhead matters. Numbers are in
+`benchmarks/`, and none of them are a promise about your workload.
+
 **Who this is for:** Python developers who want explicit types, `Option`/`Result`
 instead of `None` and exceptions, and predictable integer widths — without
 learning Rust or maintaining a PyO3 project.
@@ -55,7 +61,9 @@ this month.
 > the Python backend runs recursive `fib` about 15× slower than CPython ·
 > WASM is `i64`/`bool` compute-only · Zig indexing is unchecked and an out-of-range
 > read is undefined behaviour · research surfaces sit outside the Tier 1 parity
-> contract.
+> contract. Why each limit exists, and what would lift the Python floor, is in
+> [docs/compatibility_plan.md](docs/compatibility_plan.md); terms like *tier*,
+> *parity* and *bounded NLL* are defined in [docs/glossary.md](docs/glossary.md).
 
 New here? Start with `polyglot new`, then read [GUIDE.md](GUIDE.md) and
 [examples/README.md](examples/README.md).

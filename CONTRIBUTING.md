@@ -3,6 +3,31 @@
 Thanks for your interest. This document explains how to set up
 the project, run tests, and submit changes.
 
+## Quick start (new contributors)
+
+The short version, for someone who has ten minutes and has not read the rest of
+this file. The long form of every step is below.
+
+1. Fork the repository, then branch from `main`:
+   `git switch -c fix/<short-name>`.
+2. Install once:
+   `python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"`
+   (Python 3.14.8 or later — see below.)
+3. Make the change. If behaviour changed, add a test in the same commit; a fix
+   without a covering test has to say so in `NOTES.md`.
+4. Run the quick gate: `make core` — the front end, analysis, diagnostics and
+   CLI, no Rust or Zig toolchain, about twenty seconds.
+5. Run the full gate before pushing: `make check` — ruff, `ruff format --check`,
+   the docs-sync check and the whole pytest suite. A pull request is expected to
+   pass it.
+6. Commit using the shape in [COMMIT_GUIDE.md](COMMIT_GUIDE.md), staging files
+   by explicit path (`git add compiler/core/lexer.py tests/test_frontend_lexing.py`)
+   and never `git add .` or `git add -A`.
+7. Open the pull request. Say what changed, why, and which gate you ran. If you
+   touched a SPEC clause, name the clause.
+
+Everything below is the long form of those seven steps.
+
 ## Project structure
 
 See [docs/architecture.md](docs/architecture.md) for the pipeline diagram
@@ -69,6 +94,24 @@ Or use the Makefile:
     make docs-sync     # README/SPEC test-baseline agreement
     make check         # lint + format-check + docs-sync + fast tests
 
+### Running without a Rust or Zig toolchain
+
+`make core` (`pytest -q -m core_only`) runs 486 tests in about twenty seconds
+using nothing outside the Python standard library: the lexer, parser, AST
+utilities, span tracking, parser recovery, type and enum checking, monomorph
+planning, the move and borrow passes, the diagnostics code table, the inline
+language, the include expander, the CLI entry point and the packaging contract.
+
+The selection is the `CORE_ONLY_MODULES` set in `conftest.py`, applied as the
+`core_only` marker during collection, so the list lives in one place instead of
+in twenty-two files. Add a module there only if *every* test in it passes on a
+machine with no `cargo` and no `zig`; a module that mixes both belongs in the
+full suite.
+
+This is a local development gate, not a replacement for CI: the full suite still
+runs in CI with both toolchains installed, and `make check` is still the
+pre-push requirement.
+
 Native tests compile Rust; the first run is slow, subsequent runs hit
 the cache under `~/.cache/polyglot-native`. Zig tests build a dynamic library
 and cache it under `~/.cache/polyglot-zig`, keyed by a hash of the generated
@@ -127,6 +170,11 @@ in `backends/rust/compiler.py`, and `E005`/`E006` in
 3. Run `polyglot check examples/<name>.poly` and
    `polyglot run examples/<name>.poly` (or add a test) before opening a
    pull request.
+4. Examples written by other people go under
+   `examples/community-contrib/`, not into the curated top-level set. The
+   rules are in [examples/community-contrib/README.md](examples/community-contrib/README.md):
+   runnable on the Python backend with no toolchain, a `//` comment saying what
+   it demonstrates, and a row in that directory's table.
 
 ## Commit conventions
 
@@ -138,6 +186,18 @@ change, and files are staged explicitly by path (never `git add -A` or
 
 Types: feat, fix, refactor, test, docs, build, chore, perf, ci.
 Scopes: frontend, python, rust, api, cli, tests, docs, build, ci.
+
+### Optional pre-commit hooks
+
+`pre-commit` is in the `dev` extra. Once per clone:
+
+    pre-commit install
+
+The hooks in `.pre-commit-config.yaml` are all `local`: they run `ruff format`
+and `ruff check --fix` on staged Python files, plus `tools/lint_docs.py` and
+`tools/check_docs_sync.py` when a document changes. Nothing is downloaded at
+commit time. The hooks only catch what is cheap to catch; they do not run the
+test suite, and they do not replace `make check`.
 
 ## Pull request process
 
@@ -181,3 +241,36 @@ Scopes: frontend, python, rust, api, cli, tests, docs, build, ci.
 - Experimental Zig backend: zig/backend.py, zig/features.py, and
   zig/lowering.py (see docs/zig.md).
 - Shell completions: tools/completions/.
+
+Each of these is tracked on GitHub, so a visitor can find work without reading
+this file first. The labels used on issues are:
+
+| Label | What it marks |
+| --- | --- |
+| `good first issue` | Self-contained, explained in the issue, no design decision needed (GitHub's default label, with a space) |
+| `documentation` | README, GUIDE, `docs/`, or a docstring that is wrong or missing |
+| `experimental-backend` | WASM, Zig or JIT work — Tier 2/3, outside the parity contract |
+| `refactor` | Internal cleanup with no behaviour change, like the `compiler/` move |
+| `enhancement` | A change to behaviour that needs a SPEC clause and a test |
+
+Open issues that use them right now:
+
+- [#1](https://github.com/Tony123-tech/Polyglot-lang/issues/1) community
+  examples (`good first issue`, `documentation`)
+- [#2](https://github.com/Tony123-tech/Polyglot-lang/issues/2) `_Option`
+  duplicate definition (`refactor`)
+- [#3](https://github.com/Tony123-tech/Polyglot-lang/issues/3) first WASM slice
+  beyond `i64`/`bool` (`experimental-backend`)
+- [#4](https://github.com/Tony123-tech/Polyglot-lang/issues/4) `#[terminates]`
+  across calls (`enhancement`)
+
+Filter by `good first issue` and comment on the issue before starting, so two
+people do not take the same task.
+
+## Vocabulary and compatibility
+
+- New to the project's jargon (tier, parity, bounded NLL, guarded failure,
+  span)? See [docs/glossary.md](docs/glossary.md).
+- Wondering why Python 3.14.8 is required and whether that can change? See
+  [docs/compatibility_plan.md](docs/compatibility_plan.md) — a design note,
+  explicitly not a promise.

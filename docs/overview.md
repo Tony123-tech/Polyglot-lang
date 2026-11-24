@@ -23,6 +23,8 @@ Python 3.14.8 or later is required.
 | [NOTES](../NOTES.md) | Design journal: symptoms, causes, fixes, lessons, test baselines |
 | [CONTRIBUTING](../CONTRIBUTING.md) | Development setup, tests, Makefile, adding error codes/examples |
 | [architecture.md](architecture.md) | ASCII pipeline diagram and layer responsibilities |
+| [glossary.md](glossary.md) | The project's own vocabulary: tier, parity, guarded failure, bounded NLL, span, capability status |
+| [compatibility_plan.md](compatibility_plan.md) | Why Python 3.14.8 is required, the four options for lowering it, and what a version matrix would have to prove |
 | [zig.md](zig.md) | Experimental Zig backend: saturating ops, arbitrary-width integers, `#[parallel]`, SIMD, and boundaries |
 | [gleam_style.md](gleam_style.md) | Gleam-inspired total ADTs, exhaustive matching with missing-pattern witnesses, bit-array patterns, and cross-target contracts |
 | [actor_otp.md](actor_otp.md) | Elixir/OTP-inspired isolated actors, supervision strategies, restart budgets, crash reports, and telemetry |
