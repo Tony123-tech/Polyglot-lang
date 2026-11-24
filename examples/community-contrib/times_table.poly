@@ -1,0 +1,9 @@
+// Community example: prints a small times table with a while loop.
+fn main() -> i64 {
+    let mut row = 1;
+    while row <= 3 {
+        println!("{} x 2 = {}", row, row * 2);
+        row = row + 1;
+    }
+    0
+}
