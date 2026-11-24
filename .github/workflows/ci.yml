@@ -18,9 +18,31 @@ jobs:
         with:
           python-version: "3.14"
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to the compiler the native tests were written against: two of
+      # them assert on rustc's own diagnostic wording, which drifts between
+      # releases. `rust-toolchain.toml` is the same pin for local checkouts.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Install Zig 0.17.1
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            macOS-ARM64) target=aarch64-macos ;;
+            macOS-X64) target=x86_64-macos ;;
+            Linux-X64) target=x86_64-linux ;;
+            Linux-ARM64) target=aarch64-linux ;;
+            *) echo "unsupported runner ${RUNNER_OS}-${RUNNER_ARCH}" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://ziglang.org/download/0.17.1/zig-${target}-0.17.1.tar.xz" -o "${RUNNER_TEMP}/zig.tar.xz"
+          mkdir -p "${RUNNER_TEMP}/zig"
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}/zig" --strip-components=1
+          echo "${RUNNER_TEMP}/zig" >> "${GITHUB_PATH}"
+
 
       - name: Install package
         run: pip install -e ".[dev]"
@@ -65,11 +87,33 @@ jobs:
         with:
           python-version: "3.14"
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to the compiler the native tests were written against: two of
+      # them assert on rustc's own diagnostic wording, which drifts between
+      # releases. `rust-toolchain.toml` is the same pin for local checkouts.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native_pillars
+
+      - name: Install Zig 0.17.1
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            macOS-ARM64) target=aarch64-macos ;;
+            macOS-X64) target=x86_64-macos ;;
+            Linux-X64) target=x86_64-linux ;;
+            Linux-ARM64) target=aarch64-linux ;;
+            *) echo "unsupported runner ${RUNNER_OS}-${RUNNER_ARCH}" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://ziglang.org/download/0.17.1/zig-${target}-0.17.1.tar.xz" -o "${RUNNER_TEMP}/zig.tar.xz"
+          mkdir -p "${RUNNER_TEMP}/zig"
+          tar -xJf "${RUNNER_TEMP}/zig.tar.xz" -C "${RUNNER_TEMP}/zig" --strip-components=1
+          echo "${RUNNER_TEMP}/zig" >> "${GITHUB_PATH}"
+
 
       - name: Install package
         run: pip install -e ".[dev]"

@@ -1,0 +1,8 @@
+# Pin the compiler rather than tracking whatever "stable" is today.
+# Two native tests assert on rustc's own diagnostic wording
+# (`mismatched types`, `non-exhaustive patterns`); 1.100.0 reworded them and
+# turned main red without any code change. CI reads this pin, and so does a
+# local checkout, so both compile with the same compiler.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]

@@ -65,6 +65,12 @@ Rust toolchain:
     rustc --version
     cargo --version
 
+The version is pinned in `rust-toolchain.toml` (1.97.1) and rustup installs it
+automatically inside this directory. Do not upgrade past it casually: two native
+tests assert on rustc's own diagnostic wording, and a newer compiler reworded
+them, which turns the suite red for a reason that has nothing to do with your
+change.
+
 The experimental WASM backend needs the optional `wasm` extra:
 
     pip install -e ".[dev,wasm]"
@@ -73,8 +79,10 @@ The experimental Zig backend needs `zig` on `PATH`:
 
     zig version
 
-Zig tests are skipped when the toolchain is absent. They are not required for
-the Python/native parity suite.
+CI installs 0.17.1, which is the version this backend was validated against;
+a different Zig release may reject the generated source. Zig tests are skipped
+when the toolchain is absent. They are not required for the Python/native parity
+suite.
 
 ## Running tests
 
