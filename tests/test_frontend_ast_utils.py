@@ -8,10 +8,10 @@ from collections.abc import Callable
 import pytest
 
 import compiler.core.ast_nodes as ast
-from compiler.frontend import ast_utils
-from compiler.frontend.errors import PolyglotError
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
+from compiler.frontend import ast_utils
+from compiler.frontend.errors import PolyglotError
 
 SOURCE = """fn main() -> i64 {
     let a = 1;

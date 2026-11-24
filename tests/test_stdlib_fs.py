@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from compiler.core.ast_nodes import FnDecl
 from backends.python.translator import compile_rust
+from compiler.core.ast_nodes import FnDecl
 from compiler.core.include_expander import load_program
 
 ROOT = Path(__file__).resolve().parent.parent

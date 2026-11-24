@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from backends.jit.errors import JITCompileError, JITUnsupportedError
 from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
@@ -80,7 +81,6 @@ from compiler.core.ast_nodes import (
 from compiler.core.ast_nodes import (
     Range as RangeExpr,
 )
-from backends.jit.errors import JITCompileError, JITUnsupportedError
 
 # ---------------------------------------------------------------------------
 # Types

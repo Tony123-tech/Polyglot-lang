@@ -76,5 +76,7 @@ def ipc_release_borrow_lease(arena: SharedRingArena, *, holder: str) -> BorrowLe
     """Drop a borrow lease and return what was freed."""
     lease = arena.leases.pop(holder, None)
     if lease is None:
-        raise PillarError("E003", f"{holder} holds no borrow lease", help_text="grant before release")
+        raise PillarError(
+            "E003", f"{holder} holds no borrow lease", help_text="grant before release"
+        )
     return lease  # type: ignore[return-value]

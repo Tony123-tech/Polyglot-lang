@@ -13,6 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from compiler.analysis.monomorph import monomorphize
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from distributed import (
     Actor,
     AnchorChannel,
@@ -66,9 +69,6 @@ from distributed.wire import (
     encode_frame,
     peek_kind,
 )
-from compiler.core.lexer import lex
-from compiler.analysis.monomorph import monomorphize
-from compiler.core.parser import parse
 
 
 class FakeClock:

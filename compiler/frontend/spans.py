@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, NoReturn
 
+from compiler.core.lexer import Token
 from compiler.frontend.errors import PolyglotError
 from compiler.frontend.framework import (
     _char_to_byte,
@@ -21,7 +22,6 @@ from compiler.frontend.framework import (
     _offset_to_line_col,
     _token_end_char_offset,
 )
-from compiler.core.lexer import Token
 
 __all__ = [
     "span_byte_to_char",

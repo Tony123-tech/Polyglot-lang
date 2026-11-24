@@ -31,6 +31,13 @@ from types import FrameType, MappingProxyType, ModuleType, TracebackType
 from typing import Any
 
 from api.visualizer import program_to_source
+from backends import get_backend
+from backends.python.translator import (
+    Translator,
+    _Option,
+    _Result,
+    _ResultErrSentinel,
+)
 from compiler.core.ast_nodes import (
     EnumDecl,
     FnDecl,
@@ -47,13 +54,6 @@ from compiler.core.ast_nodes import (
     TypeImplTrait,
     TypeName,
     TypeRef,
-)
-from backends import get_backend
-from backends.python.translator import (
-    Translator,
-    _Option,
-    _Result,
-    _ResultErrSentinel,
 )
 from compiler.core.lexer import lex
 from compiler.core.parser import parse

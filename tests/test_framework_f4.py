@@ -10,16 +10,6 @@ from typing import Any
 
 import pytest
 
-from compiler.core.ast_nodes import (
-    EnumDecl,
-    ImplBlock,
-    LitBool,
-    LitInt,
-    LitStr,
-    MacroCall,
-    StructDecl,
-    TraitDecl,
-)
 from backends.python.framework import (
     py_bind_native_extension_module,
     py_emit_macro_expansions,
@@ -33,9 +23,19 @@ from backends.python.framework import (
     py_run_parity_harness,
 )
 from backends.python.translator import RuntimeFailure, _Result, _ResultErrSentinel
-from framework_functions import get_function
+from compiler.core.ast_nodes import (
+    EnumDecl,
+    ImplBlock,
+    LitBool,
+    LitInt,
+    LitStr,
+    MacroCall,
+    StructDecl,
+    TraitDecl,
+)
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
+from framework_functions import get_function
 
 SOURCES = {
     "f4_parity_native": """

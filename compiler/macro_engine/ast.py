@@ -106,16 +106,4 @@ class Block:
         return self.statements
 
 
-Node = (
-    LitInt
-    | LitStr
-    | LitBool
-    | Var
-    | Hole
-    | Add
-    | Call
-    | Let
-    | If
-    | Return
-    | Block
-)
+Node = LitInt | LitStr | LitBool | Var | Hole | Add | Call | Let | If | Return | Block

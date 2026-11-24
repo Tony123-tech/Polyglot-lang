@@ -8,12 +8,12 @@ import shutil
 
 import pytest
 
-from compiler.core.ast_nodes import TypeName
 from backends import get_backend
 from backends.jit.errors import JITUnsupportedError
 from backends.jit.memory import is_supported_host
-from compiler.core.lexer import lex
 from compiler.analysis.monomorph import MonomorphizationError, monomorphize
+from compiler.core.ast_nodes import TypeName
+from compiler.core.lexer import lex
 from compiler.core.parser import parse
 
 requires_apple_silicon = pytest.mark.skipif(

@@ -116,7 +116,11 @@ class _Parser:
     def take(self, expected: str | None = None) -> str:
         token = self.peek()
         if token is None:
-            raise PillarError("E003", "unexpected end of source", help_text="close the block or expression")
+            raise PillarError(
+                "E003",
+                "unexpected end of source",
+                help_text="close the block or expression",
+            )
         if expected is not None and token != expected:
             raise PillarError(
                 "E003",
@@ -138,14 +142,18 @@ class _Parser:
         self.take("fn")
         name = self.take()
         if name in KEYWORDS:
-            raise PillarError("E003", f"cannot name a function {name!r}: it is a keyword")
+            raise PillarError(
+                "E003", f"cannot name a function {name!r}: it is a keyword"
+            )
         self.take("(")
         params: list[str] = []
         if self.peek() != ")":
             while True:
                 param = self.take()
                 if param in params:
-                    raise PillarError("E003", f"duplicate parameter {param!r} in {name}")
+                    raise PillarError(
+                        "E003", f"duplicate parameter {param!r} in {name}"
+                    )
                 params.append(param)
                 if self.peek() == ",":
                     self.take(",")
@@ -155,7 +163,11 @@ class _Parser:
         self.take("->")
         ret = self.take()
         if ret not in ("i64", "bool"):
-            raise PillarError("E001", f"unsupported return type {ret!r}", help_text="the subset has i64 and bool")
+            raise PillarError(
+                "E001",
+                f"unsupported return type {ret!r}",
+                help_text="the subset has i64 and bool",
+            )
         self.take("{")
         body = self.block()
         return Function(name, tuple(params), ret, body)
@@ -267,7 +279,10 @@ def _infer(expr: Expr, env: dict[str, str], signatures: dict[str, str]) -> str:
                 raise PillarError("E001", f"cannot compare {left} with {right}")
             return "bool"
         if left != "i64" or right != "i64":
-            raise PillarError("E001", f"operator {expr.op!r} needs i64 operands, got {left} and {right}")
+            raise PillarError(
+                "E001",
+                f"operator {expr.op!r} needs i64 operands, got {left} and {right}",
+            )
         return "i64"
     if isinstance(expr, Applied):
         if expr.callee not in signatures:
@@ -280,14 +295,23 @@ def _infer(expr: Expr, env: dict[str, str], signatures: dict[str, str]) -> str:
     raise PillarError("E001", f"cannot type expression {expr!r}")
 
 
-def _check_block(statements: tuple[Stmt, ...], env: dict[str, str], ret: str, signatures: dict[str, str]) -> None:
+def _check_block(
+    statements: tuple[Stmt, ...],
+    env: dict[str, str],
+    ret: str,
+    signatures: dict[str, str],
+) -> None:
     scope = dict(env)
     for statement in statements:
         if isinstance(statement, Let):
             scope[statement.name] = _infer(statement.value, scope, signatures)
         elif isinstance(statement, Return):
             actual = _infer(statement.value, scope, signatures)
-            if actual != ret and not (ret == "bool" and isinstance(statement.value, BinOp) and statement.value.op in ("<", ">", "==")):
+            if actual != ret and not (
+                ret == "bool"
+                and isinstance(statement.value, BinOp)
+                and statement.value.op in ("<", ">", "==")
+            ):
                 raise PillarError(
                     "E001",
                     f"return type {actual} does not match declared {ret}",
@@ -321,7 +345,15 @@ def _emit_expr(expr: Expr) -> str:
     if isinstance(expr, Var):
         return f"(var {expr.name})"
     if isinstance(expr, BinOp):
-        op = {"+": "add", "-": "sub", "*": "mul", "/": "div", "<": "lt", ">": "gt", "==": "eq"}[expr.op]
+        op = {
+            "+": "add",
+            "-": "sub",
+            "*": "mul",
+            "/": "div",
+            "<": "lt",
+            ">": "gt",
+            "==": "eq",
+        }[expr.op]
         return f"({op} {_emit_expr(expr.left)} {_emit_expr(expr.right)})"
     if isinstance(expr, Applied):
         args = " ".join(_emit_expr(arg) for arg in expr.args)
@@ -347,7 +379,9 @@ def emit_ir(program: Program) -> str:
     for function in program.functions:
         params = " ".join(function.params)
         body = " ".join(_emit_stmt(statement) for statement in function.body)
-        lines.append(f"(fn {function.name} (params {params}) (ret {function.ret}) (block {body}))")
+        lines.append(
+            f"(fn {function.name} (params {params}) (ret {function.ret}) (block {body}))"
+        )
     return "\n".join(lines)
 
 

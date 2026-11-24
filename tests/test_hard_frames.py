@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from compiler.ir.framework import ir_lower_ast_to_hir, ir_lower_hir_to_mir
 from compiler.ir.hard import (
     ir_schedule_raii_cleanup,
@@ -20,8 +22,6 @@ from compiler.types.hard import (
     types_enforce_higher_rank_bounds,
     types_expand_mutually_recursive_generics,
 )
-from compiler.core.lexer import lex
-from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 from runtime.hotpatch.hard import (
     hp_rcu_reader_writer_invariants,

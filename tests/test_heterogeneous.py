@@ -19,6 +19,8 @@ from compiler.core.ast_nodes import (
     PatIdent,
     Range,
 )
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from compiler.heterogeneous import (
     AffineExpr,
     ANENode,
@@ -38,8 +40,6 @@ from compiler.heterogeneous import (
     accel_npu_ane_graph_compile,
     accel_zero_copy_unified_mem,
 )
-from compiler.core.lexer import lex
-from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 
 _PUBLIC_FUNCTIONS = (

@@ -34,7 +34,10 @@ def test_same_seed_reproduces_the_trace() -> None:
 
 def test_seed_changes_only_the_tie_order() -> None:
     traces = {
-        tuple((s.now_ms, s.node) for s in dst_virtualize_clock_and_scheduler(_ops(), seed=seed).steps)
+        tuple(
+            (s.now_ms, s.node)
+            for s in dst_virtualize_clock_and_scheduler(_ops(), seed=seed).steps
+        )
         for seed in range(6)
     }
     assert len(traces) >= 2
@@ -79,8 +82,14 @@ def test_injection_drops_loses_and_duplicates() -> None:
     report = dst_inject_byzantine_and_io_faults(
         _ops(),
         seed=3,
-        rates={"drop": 1.0, "duplicate": 0.0, "reorder": 0.0,
-               "torn_write": 0.0, "lost_fsync": 0.0, "bitflip": 0.0},
+        rates={
+            "drop": 1.0,
+            "duplicate": 0.0,
+            "reorder": 0.0,
+            "torn_write": 0.0,
+            "lost_fsync": 0.0,
+            "bitflip": 0.0,
+        },
     )
     assert report.ops == ()
     assert report.injected["drop"] == len(_ops())
@@ -90,8 +99,14 @@ def test_duplicates_are_replayed_with_a_new_sequence() -> None:
     report = dst_inject_byzantine_and_io_faults(
         [SimOp(5, "a", "read", "x")],
         seed=3,
-        rates={"drop": 0.0, "duplicate": 1.0, "reorder": 0.0,
-               "torn_write": 0.0, "lost_fsync": 0.0, "bitflip": 0.0},
+        rates={
+            "drop": 0.0,
+            "duplicate": 1.0,
+            "reorder": 0.0,
+            "torn_write": 0.0,
+            "lost_fsync": 0.0,
+            "bitflip": 0.0,
+        },
     )
     assert len(report.ops) == 2
     assert report.ops[1].seq == report.ops[0].seq + 1
@@ -101,8 +116,14 @@ def test_torn_write_truncates_the_payload() -> None:
     report = dst_inject_byzantine_and_io_faults(
         [SimOp(5, "a", "write", "abcdefgh")],
         seed=3,
-        rates={"drop": 0.0, "duplicate": 0.0, "reorder": 0.0,
-               "torn_write": 1.0, "lost_fsync": 0.0, "bitflip": 0.0},
+        rates={
+            "drop": 0.0,
+            "duplicate": 0.0,
+            "reorder": 0.0,
+            "torn_write": 1.0,
+            "lost_fsync": 0.0,
+            "bitflip": 0.0,
+        },
     )
     assert report.ops[0].payload == "abcd"
     assert report.injected["torn_write"] == 1
@@ -112,8 +133,14 @@ def test_lost_fsync_drops_the_barrier() -> None:
     report = dst_inject_byzantine_and_io_faults(
         [SimOp(5, "a", "write", "x"), SimOp(6, "a", "fsync")],
         seed=3,
-        rates={"drop": 0.0, "duplicate": 0.0, "reorder": 0.0,
-               "torn_write": 0.0, "lost_fsync": 1.0, "bitflip": 0.0},
+        rates={
+            "drop": 0.0,
+            "duplicate": 0.0,
+            "reorder": 0.0,
+            "torn_write": 0.0,
+            "lost_fsync": 1.0,
+            "bitflip": 0.0,
+        },
     )
     assert [op.kind for op in report.ops] == ["write"]
     assert report.injected["lost_fsync"] == 1
@@ -123,8 +150,14 @@ def test_bitflip_corrupts_a_write() -> None:
     report = dst_inject_byzantine_and_io_faults(
         [SimOp(5, "a", "write", b"\x00\x01")],
         seed=3,
-        rates={"drop": 0.0, "duplicate": 0.0, "reorder": 0.0,
-               "torn_write": 0.0, "lost_fsync": 0.0, "bitflip": 1.0},
+        rates={
+            "drop": 0.0,
+            "duplicate": 0.0,
+            "reorder": 0.0,
+            "torn_write": 0.0,
+            "lost_fsync": 0.0,
+            "bitflip": 1.0,
+        },
     )
     assert report.ops[0].payload != b"\x00\x01"
     assert report.injected["bitflip"] == 1
@@ -134,8 +167,14 @@ def test_reorder_swaps_a_neighbour() -> None:
     report = dst_inject_byzantine_and_io_faults(
         [SimOp(1, "a", "read", 1), SimOp(2, "b", "read", 2)],
         seed=3,
-        rates={"drop": 0.0, "duplicate": 0.0, "reorder": 1.0,
-               "torn_write": 0.0, "lost_fsync": 0.0, "bitflip": 0.0},
+        rates={
+            "drop": 0.0,
+            "duplicate": 0.0,
+            "reorder": 1.0,
+            "torn_write": 0.0,
+            "lost_fsync": 0.0,
+            "bitflip": 0.0,
+        },
     )
     assert [op.node for op in report.ops] == ["b", "a"]
     assert report.injected["reorder"] == 2
@@ -185,5 +224,10 @@ def test_bisect_respects_the_probe_budget() -> None:
 
 def test_fault_kinds_are_all_documented() -> None:
     assert set(FAULTS) == {
-        "drop", "duplicate", "reorder", "torn_write", "lost_fsync", "bitflip"
+        "drop",
+        "duplicate",
+        "reorder",
+        "torn_write",
+        "lost_fsync",
+        "bitflip",
     }

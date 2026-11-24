@@ -46,9 +46,9 @@ def test_lower_ir_to_module_emits_wat_and_wasm(artifact: Any) -> None:
 
 def test_lower_ir_to_module_accepts_hir_and_mir() -> None:
     pytest.importorskip("wasmtime")
-    from compiler.ir.framework import ir_lower_ast_to_hir, ir_lower_hir_to_mir
     from compiler.core.lexer import lex
     from compiler.core.parser import parse
+    from compiler.ir.framework import ir_lower_ast_to_hir, ir_lower_hir_to_mir
 
     program = parse(lex(SOURCE))
     hir = ir_lower_ast_to_hir(program)

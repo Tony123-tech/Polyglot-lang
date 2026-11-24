@@ -18,7 +18,6 @@ import ctypes
 from collections.abc import Callable
 from typing import Any
 
-from compiler.core.ast_nodes import Program
 from backends.base import BackendBase
 from backends.jit.codegen_arm64 import CompiledProgram, compile_program
 from backends.jit.errors import (
@@ -35,6 +34,7 @@ from backends.jit.ir import (
 )
 from backends.jit.memory import ExecutableMemory, is_supported_host
 from compiler.analysis.monomorph import monomorphize
+from compiler.core.ast_nodes import Program
 
 CONTEXT_BYTES = 64
 TRAP_DIVIDE_BY_ZERO = 1

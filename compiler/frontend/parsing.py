@@ -20,6 +20,8 @@ from typing import Any
 
 import compiler.core.ast_nodes as ast
 from api.visualizer import SourcePrinter
+from compiler.core.lexer import LexError, Token, TokenType, lex
+from compiler.core.parser import ParseError, Parser, parse
 from compiler.frontend.errors import PolyglotError
 from compiler.frontend.framework import (
     _ast_to_dict,
@@ -31,8 +33,6 @@ from compiler.frontend.framework import (
     parse_pattern_match_arms,
     parse_pratt_expr_with_precedence,
 )
-from compiler.core.lexer import LexError, Token, TokenType, lex
-from compiler.core.parser import ParseError, Parser, parse
 
 __all__ = [
     "parse_arm_guard_simple",

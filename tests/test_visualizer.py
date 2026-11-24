@@ -30,11 +30,11 @@ from backends.errors import (
     UnsupportedNativePatternError,
 )
 from backends.rust.compiler import RustCompileError, TypeErrorForBoundary
+from compiler.analysis.monomorph import monomorphize
+from compiler.analysis.termination import TerminationError
 from compiler.core.include_expander import IncludeCycleError, IncludeNotFoundError
 from compiler.core.lexer import lex
-from compiler.analysis.monomorph import monomorphize
 from compiler.core.parser import parse
-from compiler.analysis.termination import TerminationError
 
 ROOT = Path(__file__).resolve().parent.parent
 

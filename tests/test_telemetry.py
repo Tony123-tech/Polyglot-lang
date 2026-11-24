@@ -181,9 +181,9 @@ def test_record_monomorph_counts_families_and_compile_payloads():
 
 
 def test_record_monomorph_accepts_inflation_report_and_parsed_program():
-    from compiler.types.framework import monomorph_emit_inflation_report
     from compiler.core.lexer import lex
     from compiler.core.parser import parse
+    from compiler.types.framework import monomorph_emit_inflation_report
 
     source = """
 fn pick<T>(x: T) -> T { x }

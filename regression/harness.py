@@ -108,7 +108,10 @@ def _import(module: str) -> tuple[Any | None, str | None]:
 
 def _parse(source: str) -> Any:
     """Parse Polyglot source with the repository lexer/parser."""
-    lexer, parser = _import("compiler.core.lexer")[0], _import("compiler.core.parser")[0]
+    lexer, parser = (
+        _import("compiler.core.lexer")[0],
+        _import("compiler.core.parser")[0],
+    )
     if lexer is None or parser is None:
         raise RuntimeError("lexer/parser are unavailable")
     return parser.parse(lexer.lex(source))

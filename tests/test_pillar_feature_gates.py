@@ -4,9 +4,9 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from compiler.core.ast_nodes import FnDecl, Node, Program
 from backends.python.translator import PythonBackend
 from backends.rust.compiler import NativeBackend
+from compiler.core.ast_nodes import FnDecl, Node, Program
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
 from runtime.diagnostics import PillarError

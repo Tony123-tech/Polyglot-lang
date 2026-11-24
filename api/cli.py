@@ -27,8 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from api.visualizer import fix_hint
-from compiler.core.ast_nodes import Program
 from backends import UntrustedCompileError, get_backend
+from compiler.analysis.termination import TerminationError
+from compiler.core.ast_nodes import Program
 from compiler.core.include_expander import (
     IncludeCycleError,
     IncludeNotFoundError,
@@ -37,7 +38,6 @@ from compiler.core.include_expander import (
 )
 from compiler.core.lexer import lex
 from compiler.core.parser import parse, parse_recovering
-from compiler.analysis.termination import TerminationError
 
 # The most recently read program text.  Errors raised deep inside a command
 # reach ``main``'s generic handler without a source argument; keeping the text
@@ -126,13 +126,7 @@ def _format_five_line(error: Exception) -> str:
         else "at: <unknown>"
     )
     head = f"error[{code}]: {reason}" if code else f"error: {reason}"
-    return (
-        f"{head}\n"
-        f"  reason: {reason}\n"
-        f"  help: {help_text}\n"
-        f"  note: {note}\n"
-        f"  {loc}"
-    )
+    return f"{head}\n  reason: {reason}\n  help: {help_text}\n  note: {note}\n  {loc}"
 
 
 def _error_payload(error: Exception, source_text: str | None = None) -> dict[str, Any]:
@@ -589,9 +583,9 @@ _ERROR_EXPLAINERS: dict[str, dict[str, str]] = {
             "never applies to them."
         ),
         "wrong": "fn take(s: String) -> i64 { s.len() as i64 }\n"
-        "let text = String::from(\"hi\");\n"
+        'let text = String::from("hi");\n'
         "take(text);\n"
-        "println!(\"{}\", text);",
+        'println!("{}", text);',
         "right": "take(text.clone());  // or: take(text); and never use text again",
         "tip": (
             "The message prints both lines: where the value moved, was dropped, "
@@ -614,9 +608,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
     entry = _ERROR_EXPLAINERS.get(code)
     if entry is None:
         print(f"error: unknown code '{code}'", file=sys.stderr)
-        print(
-            "known codes: " + ", ".join(_ERROR_EXPLAINERS), file=sys.stderr
-        )
+        print("known codes: " + ", ".join(_ERROR_EXPLAINERS), file=sys.stderr)
         return 1
     print(f"{code}: {entry['title']}")
     print()
@@ -697,9 +689,7 @@ def build_parser() -> argparse.ArgumentParser:
             "The generated project runs immediately with `polyglot run main.poly`."
         ),
         epilog=(
-            "Examples:\n"
-            "  polyglot new myapp\n"
-            "  cd myapp && polyglot run main.poly"
+            "Examples:\n  polyglot new myapp\n  cd myapp && polyglot run main.poly"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -713,11 +703,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Print what a stable error code means and how to fix it. "
             "Omit the code to list every code."
         ),
-        epilog=(
-            "Examples:\n"
-            "  polyglot explain\n"
-            "  polyglot explain E001"
-        ),
+        epilog=("Examples:\n  polyglot explain\n  polyglot explain E001"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     explain_p.add_argument(

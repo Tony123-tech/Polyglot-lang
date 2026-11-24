@@ -10,9 +10,9 @@ import shutil
 
 import pytest
 
-from compiler.frontend.errors import PolyglotError
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
+from compiler.frontend.errors import PolyglotError
 from zig import compile_zig
 from zig.backend import ZigCodegen
 from zig.intrinsics import (
@@ -144,9 +144,7 @@ def test_bswap_rejects_a_non_byte_width() -> None:
 
 def test_value_intrinsic_arity_is_checked() -> None:
     with pytest.raises(PolyglotError) as error:
-        ZigCodegen("t").generate(
-            parse(lex("fn f(x: u8) -> i64 { popcount!(x, x) }"))
-        )
+        ZigCodegen("t").generate(parse(lex("fn f(x: u8) -> i64 { popcount!(x, x) }")))
     assert error.value.code == "E003"
 
 
@@ -301,9 +299,7 @@ def test_overflow_rejects_a_bool_operand() -> None:
 
 def test_overflow_arity_is_checked() -> None:
     with pytest.raises(PolyglotError) as error:
-        ZigCodegen("t").generate(
-            parse(lex("fn f(x: u8) -> i64 { wrapping_add!(x) }"))
-        )
+        ZigCodegen("t").generate(parse(lex("fn f(x: u8) -> i64 { wrapping_add!(x) }")))
     assert error.value.code == "E003"
 
 
@@ -366,11 +362,15 @@ def test_float_from_int_widens_to_f64() -> None:
 
 def test_conversions_reject_the_wrong_operand_family() -> None:
     with pytest.raises(PolyglotError) as error:
-        ZigCodegen("t").generate(parse(lex("fn f(x: u32) -> i64 { int_from_float!(x) }")))
+        ZigCodegen("t").generate(
+            parse(lex("fn f(x: u32) -> i64 { int_from_float!(x) }"))
+        )
     assert error.value.code == "E001"
     assert "float operand" in error.value.diagnostic.message
     with pytest.raises(PolyglotError) as error:
-        ZigCodegen("t").generate(parse(lex("fn f(x: f64) -> f64 { float_from_int!(x) }")))
+        ZigCodegen("t").generate(
+            parse(lex("fn f(x: f64) -> f64 { float_from_int!(x) }"))
+        )
     assert error.value.code == "E001"
     assert "integer operand" in error.value.diagnostic.message
 
@@ -419,7 +419,11 @@ def test_memcpy_and_memset_write_through_pointers() -> None:
 def test_memory_intrinsics_require_a_pointer_destination() -> None:
     with pytest.raises(PolyglotError) as error:
         ZigCodegen("t").generate(
-            parse(lex("fn f(dst: u8, src: &[u8], n: usize) { memcpy_bytes!(dst, src, n); }"))
+            parse(
+                lex(
+                    "fn f(dst: u8, src: &[u8], n: usize) { memcpy_bytes!(dst, src, n); }"
+                )
+            )
         )
     assert error.value.code == "E001"
     assert "pointer or slice destination" in error.value.diagnostic.message

@@ -656,8 +656,8 @@ def test_unit_return_and_bool_return():
 
 
 def test_internal_compile_error_has_context():
-    from compiler.core.ast_nodes import TypeName
     from backends.jit.ir import type_from_ast
+    from compiler.core.ast_nodes import TypeName
 
     with pytest.raises(JITUnsupportedError):
         type_from_ast(TypeName(line=1, col=1, name="String"))

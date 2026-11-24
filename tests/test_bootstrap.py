@@ -33,24 +33,32 @@ fn clamp(n) -> i64 {
 }
 """
 
-TWO_FN_SOURCE = ADD_SOURCE + """
+TWO_FN_SOURCE = (
+    ADD_SOURCE
+    + """
 fn twice(n) -> i64 {
     return add(n, n);
 }
 """
+)
 
 
 def test_source_lowers_to_canonical_ir() -> None:
     artifact = bootstrap_stage1_compile_subset(ADD_SOURCE)
     assert artifact.functions == ("add",)
-    assert artifact.ir == "(fn add (params x y) (ret i64) (block (let sum (add (var x) (var y))) (return (var sum))))"
+    assert (
+        artifact.ir
+        == "(fn add (params x y) (ret i64) (block (let sum (add (var x) (var y))) (return (var sum))))"
+    )
     assert artifact.ir_lines == 1
     assert artifact.digest == digest(artifact.ir)
 
 
 def test_identical_sources_have_identical_digests() -> None:
     left = bootstrap_stage1_compile_subset(ADD_SOURCE)
-    right = bootstrap_stage1_compile_subset("  " + ADD_SOURCE.replace("add", "add") + "\n\n")
+    right = bootstrap_stage1_compile_subset(
+        "  " + ADD_SOURCE.replace("add", "add") + "\n\n"
+    )
     assert left.digest == right.digest
 
 
@@ -117,7 +125,12 @@ def test_stage2_reaches_a_fixed_point() -> None:
 
 
 def test_stage2_rejects_malformed_ir() -> None:
-    bad = Artifact(ir="(fn f (params) (ret i64) (block (return (mystery 1))))", digest=digest("x"), functions=("f",), source_chars=1)
+    bad = Artifact(
+        ir="(fn f (params) (ret i64) (block (return (mystery 1))))",
+        digest=digest("x"),
+        functions=("f",),
+        source_chars=1,
+    )
     with pytest.raises(PillarError) as error:
         bootstrap_verify_stage2_fixed_point(bad)
     assert error.value.code == "E008"

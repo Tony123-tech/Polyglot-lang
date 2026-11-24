@@ -369,7 +369,9 @@ class MoveChecker:
         for item in items:
             if isinstance(item, FnDecl):
                 self.functions[item.name] = _Sig(
-                    params=[render_type(param.ty, self.aliases) for param in item.params],
+                    params=[
+                        render_type(param.ty, self.aliases) for param in item.params
+                    ],
                     ret=render_type(item.ret, self.aliases),
                 )
             elif isinstance(item, ImplBlock):
@@ -581,14 +583,18 @@ class MoveChecker:
             return self._method_call(expr)
         if isinstance(expr, Field):
             receiver_ty = self._eval(expr.receiver)
-            return (self.structs.get(_type_base(receiver_ty) or "") or {}).get(expr.name)
+            return (self.structs.get(_type_base(receiver_ty) or "") or {}).get(
+                expr.name
+            )
         if isinstance(expr, Index):
             receiver_ty = self._eval(expr.receiver)
             self._eval(expr.index)
             element = self._element_type(receiver_ty)
             if consume and not is_copy(element):
                 name = (
-                    expr.receiver.name if isinstance(expr.receiver, Ident) else "this place"
+                    expr.receiver.name
+                    if isinstance(expr.receiver, Ident)
+                    else "this place"
                 )
                 raise MoveError(
                     name, expr.line, expr.line, expr.col, span=expr.span, kind="index"
@@ -704,10 +710,15 @@ class MoveChecker:
             return self._apply(sig, expr.args)
         if isinstance(callee, Path):
             segments = callee.segments
-            if len(segments) > 1 and segments[-2] == "String" and segments[-1] in {
-                "from",
-                "new",
-            }:
+            if (
+                len(segments) > 1
+                and segments[-2] == "String"
+                and segments[-1]
+                in {
+                    "from",
+                    "new",
+                }
+            ):
                 for arg in expr.args:
                     self._eval(arg, consume=True)
                 return "String"
@@ -726,7 +737,9 @@ class MoveChecker:
 
     def _apply(self, sig: _Sig | None, args: list[Expr]) -> str | None:
         for position, arg in enumerate(args):
-            param_ty = sig.params[position] if sig and position < len(sig.params) else None
+            param_ty = (
+                sig.params[position] if sig and position < len(sig.params) else None
+            )
             if sig is None or is_copy(param_ty):
                 self._eval(arg)
             else:
@@ -735,7 +748,9 @@ class MoveChecker:
 
     def _method_call(self, expr: MethodCall) -> str | None:
         receiver_ty = self._eval(expr.receiver)
-        if expr.method in CONSUMING_RECEIVER_METHODS and isinstance(expr.receiver, Ident):
+        if expr.method in CONSUMING_RECEIVER_METHODS and isinstance(
+            expr.receiver, Ident
+        ):
             self._move(expr.receiver)
         sig = self.methods.get((_type_base(receiver_ty) or "", expr.method))
         if sig is not None:
@@ -924,9 +939,7 @@ def terminates_expr(expr: Expr) -> bool:
             return terminates_block(expr.else_branch)
         return terminates_expr(expr.else_branch)
     if isinstance(expr, MatchExpr):
-        return bool(expr.arms) and all(
-            terminates_expr(arm.body) for arm in expr.arms
-        )
+        return bool(expr.arms) and all(terminates_expr(arm.body) for arm in expr.arms)
     if isinstance(expr, MacroCall):
         return expr.path.split("::")[-1] in {"panic", "unreachable", "todo"}
     return False
@@ -943,7 +956,9 @@ def _merge(
         right = second.get(name, local)
         moved_at = left.moved_at
         if right.moved_at is not None:
-            moved_at = right.moved_at if moved_at is None else min(moved_at, right.moved_at)
+            moved_at = (
+                right.moved_at if moved_at is None else min(moved_at, right.moved_at)
+            )
         partial_at = left.partial_at
         if right.partial_at is not None:
             partial_at = (

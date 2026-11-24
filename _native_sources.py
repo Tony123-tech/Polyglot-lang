@@ -96,8 +96,8 @@ def compile_sources(sources: dict[str, str]) -> dict[str, Any]:
     if not sources:
         return {}
 
-    from compiler.core.ast_nodes import Program
     from backends import get_backend
+    from compiler.core.ast_nodes import Program
     from compiler.core.lexer import lex
     from compiler.core.parser import parse
 

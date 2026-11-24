@@ -6,9 +6,9 @@ import hashlib
 
 import pytest
 
+from compiler.core.lexer import KEYWORDS, TokenType
 from compiler.frontend import lexing
 from compiler.frontend.errors import PolyglotError
-from compiler.core.lexer import KEYWORDS, TokenType
 
 _PUBLIC_NAMES = [
     "lex_tokenize",

@@ -12,6 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from backends.base import BackendBase
+from backends.wasm.aggregates import lower_wasm_aggregates
+from backends.wasm.validation import wasm_preflight_validate
 from compiler.core.ast_nodes import (
     Assign,
     Binary,
@@ -37,9 +40,6 @@ from compiler.core.ast_nodes import (
     Unary,
     While,
 )
-from backends.base import BackendBase
-from backends.wasm.aggregates import lower_wasm_aggregates
-from backends.wasm.validation import wasm_preflight_validate
 
 I64 = "i64"
 BOOL = "i32"

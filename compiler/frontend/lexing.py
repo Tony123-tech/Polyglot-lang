@@ -14,7 +14,6 @@ import re
 import string
 from typing import Any, Final, NoReturn
 
-from compiler.frontend.errors import PolyglotError
 from compiler.core.lexer import (
     KEYWORDS,
     SIMPLE_ESCAPES,
@@ -24,6 +23,7 @@ from compiler.core.lexer import (
     TokenType,
     lex,
 )
+from compiler.frontend.errors import PolyglotError
 
 __all__ = [
     "lex_balance_delimiters",

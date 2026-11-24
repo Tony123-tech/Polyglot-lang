@@ -31,7 +31,9 @@ from runtime.diagnostics import PillarError
 
 MAGIC = b"PLYGRING"
 FORMAT_VERSION = 1
-HEADER = struct.Struct("<8sIIIIQQQQ")  # magic, version, slots, slot_size, next_slot, head, tail, epoch, inflight
+HEADER = struct.Struct(
+    "<8sIIIIQQQQ"
+)  # magic, version, slots, slot_size, next_slot, head, tail, epoch, inflight
 HEADER_SIZE = HEADER.size
 MAX_SLOTS = 1 << 20
 MAX_SLOT_SIZE = 1 << 20
@@ -85,8 +87,8 @@ class SharedRingArena:
     def header(self) -> ArenaHeader:
         if self._map is None:
             raise PillarError("E003", "arena is closed")
-        magic, version, slots, slot_size, next_slot, head, tail, epoch, inflight = HEADER.unpack(
-            self._header_bytes()
+        magic, version, slots, slot_size, next_slot, head, tail, epoch, inflight = (
+            HEADER.unpack(self._header_bytes())
         )
         if magic != MAGIC:
             raise PillarError(
@@ -100,7 +102,9 @@ class SharedRingArena:
                 f"arena format version {version} is not supported",
                 help_text=f"supported version: {FORMAT_VERSION}",
             )
-        return ArenaHeader(version, slots, slot_size, next_slot, head, tail, epoch, inflight)
+        return ArenaHeader(
+            version, slots, slot_size, next_slot, head, tail, epoch, inflight
+        )
 
     def _write_header(self, **changes: int) -> None:
         assert self._map is not None
@@ -171,7 +175,9 @@ class SharedRingArena:
         """Give the slot back; the tail only advances in FIFO order."""
         header = self.header()
         if header.inflight == 0:
-            raise PillarError("E003", "no lease is outstanding", help_text="pop before release")
+            raise PillarError(
+                "E003", "no lease is outstanding", help_text="pop before release"
+            )
         if lease.index != header.tail:
             raise PillarError(
                 "E003",
@@ -179,7 +185,9 @@ class SharedRingArena:
                 help_text="release leases in the order they were popped",
             )
         self._drop_view(lease.view)
-        self._write_header(tail=(header.tail + 1) % header.slots, inflight=header.inflight - 1)
+        self._write_header(
+            tail=(header.tail + 1) % header.slots, inflight=header.inflight - 1
+        )
 
     def _drop_view(self, view: memoryview) -> None:
         for index, live in enumerate(self._views):
@@ -228,7 +236,9 @@ def ipc_map_shared_ring_arena(
             help_text="a ring needs at least one slot plus one empty sentinel",
         )
     if not 1 <= slot_size <= MAX_SLOT_SIZE:
-        raise PillarError("E003", f"slot size must be between 1 and {MAX_SLOT_SIZE}, got {slot_size}")
+        raise PillarError(
+            "E003", f"slot size must be between 1 and {MAX_SLOT_SIZE}, got {slot_size}"
+        )
 
     target = Path(path)
     exists = target.exists()
@@ -244,7 +254,9 @@ def ipc_map_shared_ring_arena(
     if not exists:
         target.parent.mkdir(parents=True, exist_ok=True)
         with open(target, "wb") as handle:
-            handle.write(HEADER.pack(MAGIC, FORMAT_VERSION, slots, slot_size, 0, 0, 0, 0, 0))
+            handle.write(
+                HEADER.pack(MAGIC, FORMAT_VERSION, slots, slot_size, 0, 0, 0, 0, 0)
+            )
             handle.write(b"\x00" * (slots * slot_size))
     elif target.stat().st_size < size:
         raise PillarError(

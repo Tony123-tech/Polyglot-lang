@@ -36,8 +36,8 @@ from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from compiler.core.ast_nodes import Program
 from backends import hotpatch as legacy_hotpatch
+from compiler.core.ast_nodes import Program
 from runtime import capabilities
 from runtime.diagnostics import PillarError
 from runtime.hotpatch.errors import (

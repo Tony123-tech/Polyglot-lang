@@ -42,7 +42,11 @@ def test_manifest_for_another_module_is_not_reused(tmp_path: Path) -> None:
     _seed_foreign_artifact(build_dir)
     (build_dir / ".polyglot-manifest.json").write_text(
         json.dumps(
-            {"source_hash": build_dir.name, "module": "hello", "extension": f"lib{MODULE}.dylib"}
+            {
+                "source_hash": build_dir.name,
+                "module": "hello",
+                "extension": f"lib{MODULE}.dylib",
+            }
         ),
         encoding="utf-8",
     )
@@ -56,7 +60,11 @@ def test_manifest_for_a_different_source_dir_is_not_reused(tmp_path: Path) -> No
     _seed_foreign_artifact(build_dir)
     (build_dir / ".polyglot-manifest.json").write_text(
         json.dumps(
-            {"source_hash": "ffffffffffffffff", "module": MODULE, "extension": f"lib{MODULE}.dylib"}
+            {
+                "source_hash": "ffffffffffffffff",
+                "module": MODULE,
+                "extension": f"lib{MODULE}.dylib",
+            }
         ),
         encoding="utf-8",
     )
@@ -70,7 +78,11 @@ def test_manifest_with_missing_extension_is_not_reused(tmp_path: Path) -> None:
     build_dir.mkdir(parents=True, exist_ok=True)
     (build_dir / ".polyglot-manifest.json").write_text(
         json.dumps(
-            {"source_hash": build_dir.name, "module": MODULE, "extension": f"lib{MODULE}.dylib"}
+            {
+                "source_hash": build_dir.name,
+                "module": MODULE,
+                "extension": f"lib{MODULE}.dylib",
+            }
         ),
         encoding="utf-8",
     )
@@ -84,7 +96,11 @@ def test_matching_manifest_is_reused(tmp_path: Path) -> None:
     _seed_foreign_artifact(build_dir)
     (build_dir / ".polyglot-manifest.json").write_text(
         json.dumps(
-            {"source_hash": build_dir.name, "module": MODULE, "extension": f"lib{MODULE}.dylib"}
+            {
+                "source_hash": build_dir.name,
+                "module": MODULE,
+                "extension": f"lib{MODULE}.dylib",
+            }
         ),
         encoding="utf-8",
     )

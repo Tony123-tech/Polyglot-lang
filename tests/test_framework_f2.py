@@ -13,6 +13,9 @@ import pytest
 import compiler.core.ast_nodes as ast
 import framework_functions
 from backends import get_backend
+from compiler.analysis.monomorph import monomorphize
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
 from compiler.types.framework import (
     TypeConstraint,
     monomorph_cache_placeholder_register,
@@ -26,9 +29,6 @@ from compiler.types.framework import (
     typecheck_enforce_trait_bounds,
     typecheck_infer_expressions,
 )
-from compiler.core.lexer import lex
-from compiler.analysis.monomorph import monomorphize
-from compiler.core.parser import parse
 from runtime.diagnostics import PillarError
 
 

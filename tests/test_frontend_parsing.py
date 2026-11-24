@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 
 import compiler.core.ast_nodes as ast
+from compiler.core.lexer import lex
 from compiler.frontend import parsing
 from compiler.frontend.errors import PolyglotError
-from compiler.core.lexer import lex
 
 
 def _expect_error(

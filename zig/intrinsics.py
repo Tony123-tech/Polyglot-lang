@@ -188,9 +188,7 @@ def require_arithmetic_operand(name: str, type_name: str) -> tuple[int, bool]:
             "use bitcast! to read the raw bits instead"
         )
     if type_name == "bool":
-        raise IntrinsicError(
-            f"{name}! needs an integer wider than one bit, got bool"
-        )
+        raise IntrinsicError(f"{name}! needs an integer wider than one bit, got bool")
     shape = int_shape(type_name)
     if shape is None:
         raise IntrinsicError(

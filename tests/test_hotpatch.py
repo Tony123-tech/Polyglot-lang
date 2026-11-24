@@ -7,7 +7,6 @@ import threading
 
 import pytest
 
-from compiler.core.ast_nodes import FnDecl, StructDecl
 from backends.hotpatch import (
     ChangeKind,
     HotpatchManager,
@@ -15,6 +14,7 @@ from backends.hotpatch import (
     diff_programs,
 )
 from backends.python.translator import PythonBackend
+from compiler.core.ast_nodes import FnDecl, StructDecl
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
 from runtime.diagnostics import PillarError

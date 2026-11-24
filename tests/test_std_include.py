@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-import compiler.core.include_expander as include_expander
+from compiler.core import include_expander
 from compiler.core.ast_nodes import FnDecl, StructDecl
 from compiler.core.include_expander import (
     IncludeCycleError,

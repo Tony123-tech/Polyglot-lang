@@ -84,9 +84,14 @@ def _substitute(node: Node, args: tuple[Node, ...], counter: list[int]) -> Node:
         counter[0] += 1
         return args[node.index]
     if isinstance(node, Add):
-        return Add(_substitute(node.left, args, counter), _substitute(node.right, args, counter))
+        return Add(
+            _substitute(node.left, args, counter),
+            _substitute(node.right, args, counter),
+        )
     if isinstance(node, Call):
-        return Call(node.callee, tuple(_substitute(arg, args, counter) for arg in node.args))
+        return Call(
+            node.callee, tuple(_substitute(arg, args, counter) for arg in node.args)
+        )
     if isinstance(node, If):
         return If(
             _substitute(node.cond, args, counter),
@@ -102,13 +107,18 @@ def _substitute(node: Node, args: tuple[Node, ...], counter: list[int]) -> Node:
     if isinstance(node, Return):
         return Return(_substitute(node.value, args, counter))
     if isinstance(node, Block):
-        return Block(tuple(_substitute(statement, args, counter) for statement in node.statements))
+        return Block(
+            tuple(
+                _substitute(statement, args, counter) for statement in node.statements
+            )
+        )
     return node
 
 
 def _count_holes(node: Node) -> int:
     return sum(
-        1 if isinstance(child, Hole) else _count_holes(child) for child in node.children()
+        1 if isinstance(child, Hole) else _count_holes(child)
+        for child in node.children()
     )
 
 

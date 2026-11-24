@@ -32,4 +32,6 @@ def bootstrap_diff_stage_ir_hashes(left: Artifact, right: Artifact) -> DiffRepor
     for index, (a, b) in enumerate(zip(left_lines, right_lines, strict=False)):
         if a != b:
             return DiffReport(False, left.digest, right.digest, index + 1)
-    return DiffReport(False, left.digest, right.digest, min(len(left_lines), len(right_lines)) + 1)
+    return DiffReport(
+        False, left.digest, right.digest, min(len(left_lines), len(right_lines)) + 1
+    )

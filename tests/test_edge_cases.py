@@ -12,13 +12,13 @@ import platform
 
 import pytest
 
-from compiler.core.ast_nodes import Binary
 from backends import get_backend
 from backends.jit.memory import is_supported_host
+from compiler.analysis.termination import TerminationError, check_function
+from compiler.core.ast_nodes import Binary
 from compiler.core.include_expander import IncludeNotFoundError, load_program
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
-from compiler.analysis.termination import TerminationError, check_function
 
 
 def _compile(source: str, backend: str = "python"):

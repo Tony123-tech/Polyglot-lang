@@ -69,7 +69,14 @@ def run_polyglot(workload: str, backend: str, reps: int) -> tuple[float, float, 
         started = time.perf_counter()
         proc = subprocess.run(
             command
-            + ["exec", str(source), "--backend", backend, "--result-file", str(out_path)],
+            + [
+                "exec",
+                str(source),
+                "--backend",
+                backend,
+                "--result-file",
+                str(out_path),
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -85,8 +92,7 @@ def run_polyglot(workload: str, backend: str, reps: int) -> tuple[float, float, 
         compile_ms = payload.get("compile_ms") or 0.0
         if attempt == 0 and wall > 30:
             print(
-                f"  {workload}/{backend}: first run took {wall:.0f}s "
-                "(native build)",
+                f"  {workload}/{backend}: first run took {wall:.0f}s (native build)",
                 file=sys.stderr,
             )
         result = str(payload.get("return_value"))

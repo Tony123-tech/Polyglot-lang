@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 import compiler.core.ast_nodes as ast
-from compiler.frontend import framework
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
+from compiler.frontend import framework
 
 
 def test_lex_source_with_spans_utf8_bytes_and_line_columns():

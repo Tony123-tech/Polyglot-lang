@@ -23,6 +23,8 @@ from dataclasses import replace
 from typing import Any
 
 import compiler.core.ast_nodes as ast
+from compiler.core.lexer import LexError, lex
+from compiler.core.parser import ParseError, parse
 from compiler.frontend.errors import PolyglotError
 from compiler.ir.framework import (
     BOOL_TYPE,
@@ -36,8 +38,6 @@ from compiler.ir.framework import (
     HirType,
     ir_lower_ast_to_hir,
 )
-from compiler.core.lexer import LexError, lex
-from compiler.core.parser import ParseError, parse
 
 __all__ = [
     "hir_alpha_rename",

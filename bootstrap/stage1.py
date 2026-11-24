@@ -24,10 +24,14 @@ class Artifact:
         return len(self.ir.splitlines())
 
 
-def bootstrap_stage1_compile_subset(source: str, *, emit_zig_text: bool = False) -> Artifact:
+def bootstrap_stage1_compile_subset(
+    source: str, *, emit_zig_text: bool = False
+) -> Artifact:
     """Parse, type-check, and lower ``source`` to canonical IR."""
     if not source.strip():
-        raise PillarError("E003", "no source to compile", help_text="pass a subset program")
+        raise PillarError(
+            "E003", "no source to compile", help_text="pass a subset program"
+        )
     program = parse_subset(source)
     check_types(program)
     ir = emit_ir(program)

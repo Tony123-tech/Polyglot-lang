@@ -26,10 +26,10 @@ import pytest
 
 from backends.errors import TranslateError
 from backends.rust.compiler import RustCompileError
+from compiler.analysis.termination import TerminationError, check_function
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
 from runtime.diagnostics import ERROR_CODES, PillarError
-from compiler.analysis.termination import TerminationError, check_function
 from tools.abi_contract.contract import (
     ALL_ERROR_CODES,
     ContractViolation,

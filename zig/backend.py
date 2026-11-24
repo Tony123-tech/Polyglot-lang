@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Any, NoReturn
 
+from backends.base import BackendBase
 from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
@@ -98,7 +99,6 @@ from compiler.core.ast_nodes import (
 from compiler.core.ast_nodes import (
     Path as AstPath,
 )
-from backends.base import BackendBase
 from compiler.frontend.errors import PolyglotError
 from zig.build import (
     ZigBuildError,
@@ -1644,9 +1644,7 @@ fn _zig_assert(condition: bool, message: []const u8, line: u32, col: u32) void {
         value = f"@as({value_type}, {self._emit_expr(expr.args[0])})"
         # The count must be the operand's own integer type; a negative or
         # over-wide count traps on @intCast rather than rotating silently.
-        count = (
-            f"@as({value_type}, @intCast({self._emit_expr(expr.args[1])}))"
-        )
+        count = f"@as({value_type}, @intCast({self._emit_expr(expr.args[1])}))"
         return f"{function}({value_type}, {value}, {count})"
 
     def _emit_conversion_intrinsic(self, expr: MacroCall) -> str:

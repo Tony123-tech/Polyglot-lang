@@ -177,7 +177,9 @@ def test_cli_prints_the_runtime_failure_five_line_format(tmp_path: Path):
     source.write_text(DIVIDE_BY_ZERO, encoding="utf-8")
     result = _run_cli("run", str(source))
     assert result.returncode == 1
-    lines = [line.strip() for line in result.stderr.strip().splitlines() if line.strip()]
+    lines = [
+        line.strip() for line in result.stderr.strip().splitlines() if line.strip()
+    ]
     assert lines[0] == "error[E002]: division by zero"
     assert lines[1] == "reason: division by zero"
     assert lines[2].startswith("help: ")
@@ -195,7 +197,9 @@ def test_zig_reports_the_same_code_and_location(source: str, tmp_path: Path):
     path.write_text(source, encoding="utf-8")
     result = _run_cli("run", str(path), "--backend", "zig")
     assert result.returncode == 1
-    lines = [line.strip() for line in result.stderr.strip().splitlines() if line.strip()]
+    lines = [
+        line.strip() for line in result.stderr.strip().splitlines() if line.strip()
+    ]
     line, col = EXPECTED_LOCATION[source]
     assert lines[0].startswith("error[E002]: ")
     assert lines[1] == f"at: line {line}, column {col}"

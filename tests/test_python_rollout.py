@@ -29,10 +29,10 @@ from backends.python.framework import (
     py_run_parity_harness,
 )
 from backends.python.rollout import FRAMEWORK_ROWS
-from compiler.frontend.ast_utils import ast_find_by_type
-from compiler.frontend.errors import PolyglotError
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
+from compiler.frontend.ast_utils import ast_find_by_type
+from compiler.frontend.errors import PolyglotError
 
 _SOURCE = """
 struct Point { x: i64, y: i64 }

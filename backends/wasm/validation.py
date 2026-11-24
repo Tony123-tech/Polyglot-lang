@@ -13,6 +13,9 @@ from __future__ import annotations
 from dataclasses import fields, is_dataclass
 from typing import Any
 
+from backends.errors import InvalidIntegerParseLiteralError, check_host_call_arity
+from backends.python.translator import TypeErrorForBoundary
+from compiler.analysis.termination import check_function, check_program
 from compiler.core.ast_nodes import (
     Call,
     Cast,
@@ -27,9 +30,6 @@ from compiler.core.ast_nodes import (
     Program,
     TypeName,
 )
-from backends.errors import InvalidIntegerParseLiteralError, check_host_call_arity
-from backends.python.translator import TypeErrorForBoundary
-from compiler.analysis.termination import check_function, check_program
 
 _INTEGER_TYPES = {
     "i8",

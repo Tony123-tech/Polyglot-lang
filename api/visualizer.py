@@ -17,8 +17,8 @@ import time
 from typing import Any
 
 import compiler.core.ast_nodes as ast
-from compiler.core.lexer import LexError, lex
 from compiler.analysis.monomorph import MonomorphizationError, monomorphize
+from compiler.core.lexer import LexError, lex
 from compiler.core.parser import ParseError, parse
 
 MAX_TREE_NODES = 20_000

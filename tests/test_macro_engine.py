@@ -95,7 +95,9 @@ def test_splice_fills_every_hole() -> None:
 
 def test_splice_rejects_wrong_arity() -> None:
     with pytest.raises(PillarError) as error:
-        macro_expand_typed_ast_splice(_swap_template(), (LitInt(1),), param_types=("i64",))
+        macro_expand_typed_ast_splice(
+            _swap_template(), (LitInt(1),), param_types=("i64",)
+        )
     assert error.value.code == "E002"
     assert "hole" in str(error.value)
 

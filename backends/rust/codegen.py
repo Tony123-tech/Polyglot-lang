@@ -17,6 +17,16 @@ import re
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 
+from backends.errors import (
+    HOST_CALL_ARITIES,
+    InvalidIntegerParseLiteralError,
+    TranslateError,
+    UnsupportedNativePatternError,
+    check_host_call_arity,
+)
+from compiler.analysis.match_diagnostics import warn_match_issues
+from compiler.analysis.monomorph import monomorphize
+from compiler.analysis.struct_order import order_struct_declarations
 from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
@@ -105,17 +115,7 @@ from compiler.core.ast_nodes import (
     is_isize_type,
     is_usize_type,
 )
-from backends.errors import (
-    HOST_CALL_ARITIES,
-    InvalidIntegerParseLiteralError,
-    TranslateError,
-    UnsupportedNativePatternError,
-    check_host_call_arity,
-)
-from compiler.analysis.match_diagnostics import warn_match_issues
-from compiler.analysis.monomorph import monomorphize
 from runtime.feature_gates import validate_program_features
-from compiler.analysis.struct_order import order_struct_declarations
 
 
 class InvalidCastError(RuntimeError):

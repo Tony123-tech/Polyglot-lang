@@ -337,9 +337,7 @@ def cluster_handle_partition_and_split_brain(
             quorum=quorum,
             epoch=cluster.leases.epoch,
             partitions=tuple(
-                PartitionView(
-                    nodes=members, writable=False, epoch=cluster.leases.epoch
-                )
+                PartitionView(nodes=members, writable=False, epoch=cluster.leases.epoch)
                 for members in normalized
             ),
             fences={},
@@ -357,9 +355,7 @@ def cluster_handle_partition_and_split_brain(
         for name in members:
             cluster.dead.add(name)
             fences[name] = epoch
-        partitions.append(
-            PartitionView(nodes=members, writable=False, epoch=epoch)
-        )
+        partitions.append(PartitionView(nodes=members, writable=False, epoch=epoch))
 
     return PartitionReport(
         decision="majority",

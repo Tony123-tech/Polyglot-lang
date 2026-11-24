@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import fields, is_dataclass
 from typing import Any
 
+from backends.move_check import MoveError
 from compiler.core.ast_nodes import (
     ArrayExpr,
     Assign,
@@ -38,7 +39,6 @@ from compiler.core.ast_nodes import (
     Unary,
     While,
 )
-from backends.move_check import MoveError
 
 _COPY_TYPES = frozenset(
     {

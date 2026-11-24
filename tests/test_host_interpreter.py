@@ -74,8 +74,8 @@ def test_pyproject_requires_python_matches_the_floor():
 
 
 def test_cli_refuses_before_parsing_arguments(monkeypatch, capsys):
-    from diagnostics import host
     from api.cli import main
+    from diagnostics import host
 
     def refuse(version_info=None):
         require_supported_python((3, 12, 4))

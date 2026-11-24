@@ -8,8 +8,8 @@ import json
 
 import pytest
 
-from compiler.core.ast_nodes import FnDecl
 from backends import get_backend
+from compiler.core.ast_nodes import FnDecl
 from proofs.synthesis import (
     I64_MAX,
     I64_MIN,

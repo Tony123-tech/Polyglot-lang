@@ -53,7 +53,9 @@ class HygienicExpansion:
     captured: tuple[str, ...]
 
 
-def _walk(node: Node, env: dict[str, str], scope_id: int, state: dict[str, list]) -> Node:
+def _walk(
+    node: Node, env: dict[str, str], scope_id: int, state: dict[str, list]
+) -> Node:
     if isinstance(node, Var):
         if node.name in env:
             return Var(env[node.name])
@@ -77,9 +79,14 @@ def _walk(node: Node, env: dict[str, str], scope_id: int, state: dict[str, list]
         body = _walk(node.body, inner_env, scope_id, state)
         return Let(renamed, value, body)
     if isinstance(node, Add):
-        return Add(_walk(node.left, env, scope_id, state), _walk(node.right, env, scope_id, state))
+        return Add(
+            _walk(node.left, env, scope_id, state),
+            _walk(node.right, env, scope_id, state),
+        )
     if isinstance(node, Call):
-        return Call(node.callee, tuple(_walk(arg, env, scope_id, state) for arg in node.args))
+        return Call(
+            node.callee, tuple(_walk(arg, env, scope_id, state) for arg in node.args)
+        )
     if isinstance(node, If):
         return If(
             _walk(node.cond, env, scope_id, state),

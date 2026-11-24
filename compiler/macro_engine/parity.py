@@ -51,7 +51,9 @@ def _emit_python(node: Node) -> tuple[tuple[str, str], ...]:
             body += _emit_python(arg)
         return body + (("call", node.callee),)
     if isinstance(node, Let):
-        return _emit_python(node.value) + (("store", node.name),) + _emit_python(node.body)
+        return (
+            _emit_python(node.value) + (("store", node.name),) + _emit_python(node.body)
+        )
     if isinstance(node, If):
         return (
             _emit_python(node.cond)
@@ -144,7 +146,10 @@ def macro_verify_backend_expansion_parity(
 
     return ParityReport(
         backends=backends,
-        digests=tuple((name, hashlib.sha256(repr(stream).encode()).hexdigest()[:16]) for name, stream in streams.items()),
+        digests=tuple(
+            (name, hashlib.sha256(repr(stream).encode()).hexdigest()[:16])
+            for name, stream in streams.items()
+        ),
         opcodes=baseline,
         parity=True,
     )

@@ -72,7 +72,15 @@ def _expr(node) -> object:
     if head == "var" and len(tail) == 1:
         return Var(str(tail[0]))
     if head in {"add", "sub", "mul", "div", "lt", "gt", "eq"} and len(tail) == 2:
-        symbol = {"add": "+", "sub": "-", "mul": "*", "div": "/", "lt": "<", "gt": ">", "eq": "=="}[head]
+        symbol = {
+            "add": "+",
+            "sub": "-",
+            "mul": "*",
+            "div": "/",
+            "lt": "<",
+            "gt": ">",
+            "eq": "==",
+        }[head]
         return BinOp(symbol, _expr(tail[0]), _expr(tail[1]))
     if head == "call" and tail:
         return Applied(str(tail[0]), tuple(_expr(arg) for arg in tail[1:]))
@@ -92,9 +100,7 @@ def _block(node) -> tuple:
         elif head == "return" and len(item) == 2:
             statements.append(Return(_expr(item[1])))
         elif head == "if" and len(item) == 4:
-            statements.append(
-                If(_expr(item[1]), _block(item[2]), _block(item[3]))
-            )
+            statements.append(If(_expr(item[1]), _block(item[2]), _block(item[3])))
         else:
             raise PillarError("E008", f"IR statement {head!r} is not supported")
     return tuple(statements)
@@ -108,13 +114,21 @@ def parse_ir(text: str) -> Program:
     functions = []
     for entry in roots:
         if not isinstance(entry, tuple) or entry[:1] != ("fn",) or len(entry) != 5:
-            raise PillarError("E008", "expected (fn name (params ...) (ret T) (block ...))")
+            raise PillarError(
+                "E008", "expected (fn name (params ...) (ret T) (block ...))"
+            )
         _tag, name, params, ret, body = entry
         if not isinstance(params, tuple) or params[:1] != ("params",):
             raise PillarError("E008", f"function {name!r} has no (params ...) node")
         if not isinstance(ret, tuple) or ret[:1] != ("ret",) or len(ret) != 2:
             raise PillarError("E008", f"function {name!r} has no (ret T) node")
         if ret[1] not in ("i64", "bool"):
-            raise PillarError("E008", f"function {name!r} has unsupported return type {ret[1]!r}")
-        functions.append(Function(str(name), tuple(str(p) for p in params[1:]), str(ret[1]), _block(body)))
+            raise PillarError(
+                "E008", f"function {name!r} has unsupported return type {ret[1]!r}"
+            )
+        functions.append(
+            Function(
+                str(name), tuple(str(p) for p in params[1:]), str(ret[1]), _block(body)
+            )
+        )
     return Program(tuple(functions))

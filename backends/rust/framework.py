@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, NoReturn
 
-from compiler.core.ast_nodes import Program
 from backends.rust.codegen import RustCodegen
+from compiler.core.ast_nodes import Program
 from runtime.diagnostics import ERROR_CODES, PillarError
 
 # ---------------------------------------------------------------------------
@@ -603,8 +603,8 @@ def _specs_from_program(
     tuple[RsTraitImplSpec, ...],
 ]:
     """Derive scaffold metadata from an AST using the real Rust codegen."""
-    from compiler.core.ast_nodes import EnumDecl, FnDecl, ImplBlock, StructDecl
     from compiler.analysis.monomorph import monomorphize
+    from compiler.core.ast_nodes import EnumDecl, FnDecl, ImplBlock, StructDecl
 
     codegen = RustCodegen(module_name=module_name)
     codegen.generate(program)

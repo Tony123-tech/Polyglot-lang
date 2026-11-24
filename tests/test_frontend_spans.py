@@ -9,9 +9,9 @@ from __future__ import annotations
 import pytest
 
 import compiler.core.ast_nodes as ast
+from compiler.core.lexer import Token, TokenType
 from compiler.frontend import spans
 from compiler.frontend.errors import PolyglotError
-from compiler.core.lexer import Token, TokenType
 
 SOURCE = "aé日🙂\nb"
 

@@ -23,7 +23,7 @@ from compiler.core.parser import parse
 ALLOWED = [
     (
         "clone_then_two_uses",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let text = String::from("hi");
@@ -32,36 +32,36 @@ fn main() -> i64 {
     let b = take(text);
     a + b
 }
-''',
+""",
         4,
     ),
     (
         "borrow_in_print",
-        '''
+        """
 fn main() -> i64 {
     let text = String::from("hi");
     println!("{}", text);
     println!("{}", text);
     7
 }
-''',
+""",
         7,
     ),
     (
         "copy_scalar_reuse",
-        '''
+        """
 fn main() -> i64 {
     let n = 3;
     let m = n + n;
     let k = n * m;
     k
 }
-''',
+""",
         18,
     ),
     (
         "index_clone",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let words = vec![String::from("a"), String::from("bb")];
@@ -69,12 +69,12 @@ fn main() -> i64 {
     let b = take(words[1].clone());
     a + b
 }
-''',
+""",
         3,
     ),
     (
         "early_return_guard",
-        '''
+        """
 fn sort_like(values: Vec<i64>) -> Vec<i64> {
     let mut out = values.clone();
     let n = out.len();
@@ -86,12 +86,12 @@ fn main() -> i64 {
     let sorted = sort_like(vec![5, 3]);
     sorted.len() as i64
 }
-''',
+""",
         2,
     ),
     (
         "move_inside_loop_body",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let seed = String::from("ab");
@@ -104,12 +104,12 @@ fn main() -> i64 {
     }
     total
 }
-''',
+""",
         6,
     ),
     (
         "exclusive_branch_moves",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let text = String::from("abc");
@@ -121,12 +121,12 @@ fn main() -> i64 {
     }
     n
 }
-''',
+""",
         3,
     ),
     (
         "shadowing_after_move",
-        '''
+        """
 fn main() -> i64 {
     let text = String::from("old");
     let copy = text;
@@ -134,7 +134,7 @@ fn main() -> i64 {
     println!("{}", text);
     5
 }
-''',
+""",
         5,
     ),
 ]
@@ -143,7 +143,7 @@ fn main() -> i64 {
 REJECTED = [
     (
         "second_call",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let text = String::from("hi");
@@ -151,26 +151,26 @@ fn main() -> i64 {
     take(text);
     0
 }
-''',
+""",
         "use of moved value: `text`",
         (5, 6),
     ),
     (
         "move_then_read",
-        '''
+        """
 fn main() -> i64 {
     let text = String::from("hi");
     let moved = text;
     println!("{}", text);
     0
 }
-''',
+""",
         "use of moved value: `text`",
         (4, 5),
     ),
     (
         "return_value_reused",
-        '''
+        """
 fn consume(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let text = String::from("abc");
@@ -178,13 +178,13 @@ fn main() -> i64 {
     println!("{} {}", one, text);
     0
 }
-''',
+""",
         "use of moved value: `text`",
         (5, 6),
     ),
     (
         "vec_second_call",
-        '''
+        """
 fn take_all(values: Vec<i64>) -> i64 { values.len() as i64 }
 fn main() -> i64 {
     let values = vec![1, 2, 3];
@@ -192,26 +192,26 @@ fn main() -> i64 {
     take_all(values);
     0
 }
-''',
+""",
         "use of moved value: `values`",
         (5, 6),
     ),
     (
         "index_move_out",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let words = vec![String::from("a"), String::from("b")];
     take(words[0]);
     0
 }
-''',
+""",
         "cannot move out of index of `words`",
         (5, 5),
     ),
     (
         "if_branch_move",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let text = String::from("hi");
@@ -220,13 +220,13 @@ fn main() -> i64 {
     println!("{}", text);
     0
 }
-''',
+""",
         "use of moved value: `text`",
         (6, 7),
     ),
     (
         "loop_body_move",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let text = String::from("hi");
@@ -238,13 +238,13 @@ fn main() -> i64 {
     println!("{}", text);
     0
 }
-''',
+""",
         "use of moved value: `text`",
         (7, 10),
     ),
     (
         "for_move_then_len",
-        '''
+        """
 fn main() -> i64 {
     let values = vec![1, 2, 3];
     for item in values {
@@ -252,13 +252,13 @@ fn main() -> i64 {
     }
     values.len() as i64
 }
-''',
+""",
         "use of moved value: `values`",
         (4, 7),
     ),
     (
         "push_twice",
-        '''
+        """
 fn main() -> i64 {
     let name = String::from("a");
     let mut names = vec![String::from("z")];
@@ -266,26 +266,26 @@ fn main() -> i64 {
     names.push(name);
     names.len() as i64
     }
-''',
+""",
         "use of moved value: `name`",
         (5, 6),
     ),
     (
         "some_wrap_then_read",
-        '''
+        """
 fn main() -> i64 {
     let name = String::from("a");
     let wrapped = Some(name);
     println!("{}", name);
     0
 }
-''',
+""",
         "use of moved value: `name`",
         (4, 5),
     ),
     (
         "struct_field_move",
-        '''
+        """
 struct Point { label: String, x: i64 }
 fn main() -> i64 {
     let name = String::from("origin");
@@ -293,13 +293,13 @@ fn main() -> i64 {
     println!("{}", name);
     point.x
 }
-''',
+""",
         "use of moved value: `name`",
         (5, 6),
     ),
     (
         "match_arm_move",
-        '''
+        """
 fn take(s: String) -> i64 { s.len() as i64 }
 fn main() -> i64 {
     let text = String::from("hi");
@@ -311,7 +311,7 @@ fn main() -> i64 {
     println!("{}", text);
     0
 }
-''',
+""",
         "use of moved value: `text`",
         (7, 10),
     ),
@@ -322,15 +322,21 @@ def _program(source: str):
     return parse(lex(source))
 
 
-@pytest.mark.parametrize("name,source,expected", ALLOWED, ids=[case[0] for case in ALLOWED])
+@pytest.mark.parametrize(
+    "name,source,expected", ALLOWED, ids=[case[0] for case in ALLOWED]
+)
 def test_allowed_programs_run_on_python(name: str, source: str, expected: int) -> None:
     program = _program(source)
     namespace = PythonBackend(trusted=True).compile(program)
     assert namespace["main"]() == expected
 
 
-@pytest.mark.parametrize("name,source,expected", ALLOWED, ids=[case[0] for case in ALLOWED])
-def test_allowed_programs_pass_the_shared_check(name: str, source: str, expected: int) -> None:
+@pytest.mark.parametrize(
+    "name,source,expected", ALLOWED, ids=[case[0] for case in ALLOWED]
+)
+def test_allowed_programs_pass_the_shared_check(
+    name: str, source: str, expected: int
+) -> None:
     check_moves(_program(source))
 
 
@@ -346,9 +352,14 @@ def test_rejected_programs_raise_identical_e009(
         PythonBackend(trusted=True).compile(program)
 
     with pytest.raises(MoveError) as native_error:
-        NativeBackend(cache_dir=pathlib.Path("/tmp/polyglot-move-parity-cache")).build(program)
+        NativeBackend(cache_dir=pathlib.Path("/tmp/polyglot-move-parity-cache")).build(
+            program
+        )
 
-    assert str(python_error.value).splitlines()[0] == str(native_error.value).splitlines()[0]
+    assert (
+        str(python_error.value).splitlines()[0]
+        == str(native_error.value).splitlines()[0]
+    )
     assert message in str(python_error.value)
     assert python_error.value.moved_at == lines[0]
     assert python_error.value.line == lines[1]
@@ -367,12 +378,14 @@ def test_e009_text_is_the_standard_five_lines() -> None:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("name,source,expected", ALLOWED[:3], ids=[case[0] for case in ALLOWED[:3]])
+@pytest.mark.parametrize(
+    "name,source,expected", ALLOWED[:3], ids=[case[0] for case in ALLOWED[:3]]
+)
 def test_allowed_programs_build_and_run_natively(
     name: str, source: str, expected: int
 ) -> None:
     program = _program(source)
-    namespace = NativeBackend(cache_dir=pathlib.Path("/tmp/polyglot-move-parity-native")).compile(
-        program
-    )
+    namespace = NativeBackend(
+        cache_dir=pathlib.Path("/tmp/polyglot-move-parity-native")
+    ).compile(program)
     assert namespace["main"]() == expected
