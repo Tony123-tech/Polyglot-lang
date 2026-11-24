@@ -182,6 +182,12 @@ _ERROR_LOCATION_RE = re.compile(
 )
 _WARNING_RE = re.compile(r"(?m)^\s*warning(?:\[[^\]]+\])?:\s*(?P<msg>[^\n]+)")
 _DIAGNOSTIC_START_RE = re.compile(r"^(?:error(?:\[[^\]]+\])?:|warning(?:\[[^\]]+\])?:)")
+# rustc colours its diagnostics when stdout is a terminal or when
+# CARGO_TERM_COLOR says so, which is always the case on a GitHub runner. The
+# escape sequences sit in front of the `error[E0308]:` marker that the regexes
+# above anchor on, so without this the whole diagnostic is missed and the
+# failure degrades to a bare "Cargo build failed".
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 _EXTENSION_PATTERNS = ("*.so", "*.pyd", "*.dylib")
 _MACOS_CARGO_CONFIG = (
@@ -686,6 +692,10 @@ def _build_env() -> dict[str, str]:
     env = os.environ.copy()
     env["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1"
     env.setdefault("CARGO_PROFILE_RELEASE_DEBUG", "false")
+    # Diagnostics are parsed, not read by a person, so ask for no colour: the
+    # escape sequences would otherwise depend on where the build ran (a runner
+    # exports CARGO_TERM_COLOR=always, a developer's shell does not).
+    env["CARGO_TERM_COLOR"] = "never"
     if shutil.which("sccache"):
         env["RUSTC_WRAPPER"] = "sccache"
     return env
@@ -763,7 +773,9 @@ def _parse_cargo_error(
     source_line_text_map: dict[int, str] | None = None,
     fragment_starts: dict[str, int] | None = None,
 ) -> RustCompileError:
-    combined = _deduplicate_error_blocks(f"{stdout}\n{stderr}".strip())
+    combined = _deduplicate_error_blocks(
+        _ANSI_ESCAPE_RE.sub("", f"{stdout}\n{stderr}".strip())
+    )
     head = _ERROR_HEAD_RE.search(combined)
     location = _ERROR_LOCATION_RE.search(
         combined,
