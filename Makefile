@@ -1,4 +1,8 @@
-.PHONY: test test-slow lint format format-check docs-sync check
+.PHONY: core test test-slow lint format format-check docs-sync check
+
+# Front end, analysis, diagnostics and CLI: no Rust or Zig toolchain needed.
+core:
+	pytest -q -m core_only
 
 test:
 	pytest -q
