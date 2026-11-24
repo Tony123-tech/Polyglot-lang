@@ -17,6 +17,7 @@ dependencies = [
 dev = [
     "fastapi",
     "ccloc>=0.1.6",
+    "pre-commit>=3.0",
     "pytest>=9.0",
     "pytest-xdist>=3.0",
     "ruff>=0.8",

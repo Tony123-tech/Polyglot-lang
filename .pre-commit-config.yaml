@@ -1,0 +1,39 @@
+# Optional local hooks. CI is still the authority: these only catch what is cheap
+# to catch before a commit is made.
+#
+#   pip install -e ".[dev]"
+#   pre-commit install          # once per clone
+#   pre-commit run --all-files  # to check the whole tree
+#
+# The ruff hooks come from the packaging project, pinned to the same version the
+# `dev` extra installs. The documentation hooks are local scripts: they run
+# against the project's own interpreter and download nothing.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+      - id: ruff
+        name: ruff check --fix (staged Python files)
+        args: [--fix]
+        types_or: [python, pyi]
+
+      - id: ruff-format
+        name: ruff format (staged Python files)
+        types_or: [python, pyi]
+
+  - repo: local
+    hooks:
+      - id: docs-lint
+        name: documentation invariants (README/SPEC baseline and codes)
+        entry: python tools/lint_docs.py
+        language: system
+        pass_filenames: false
+        files: ^(README\.md|SPECIFICATION\.md)$
+
+      - id: docs-sync
+        name: README/SPEC test baseline agreement
+        entry: python tools/check_docs_sync.py
+        language: system
+        pass_filenames: false
+        files: ^(README\.md|SPECIFICATION\.md)$
