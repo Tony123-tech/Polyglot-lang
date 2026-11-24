@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from backends import get_backend
-from lexer import lex
-from parser import parse
+from compiler.core.lexer import lex
+from compiler.core.parser import parse
+
+_NATIVE_BACKEND = None
+
+# A stable per-worker incremental scope. Building every case in a throwaway
+# ``tmp_path`` cache forced a full PyO3 dependency build (~10s) per parameter,
+# turning this module into the slowest part of the suite. A stable scope keeps
+# the dependency artifacts warm and recompiles only the generated program.
+_NATIVE_SCOPE = f"m4-integers-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
 
 
 def _run_py(src: str):
@@ -14,11 +24,26 @@ def _run_py(src: str):
     return ns["main"]()
 
 
-def _run_native(src: str, tmp_path):
-    from backends.rust.compiler import NativeBackend
+def _shared_native_backend():
+    global _NATIVE_BACKEND
+    if _NATIVE_BACKEND is None:
+        from backends.rust.compiler import NativeBackend
 
-    ns = NativeBackend(cache_dir=tmp_path).compile(parse(lex(src)))
-    return ns["main"]()
+        _NATIVE_BACKEND = NativeBackend()
+    return _NATIVE_BACKEND
+
+
+def _compile_native(src: str):
+    return _shared_native_backend().compile(
+        parse(lex(src)),
+        incremental=True,
+        cache_scope=_NATIVE_SCOPE,
+    )
+
+
+def _run_native(src: str, tmp_path=None):
+    del tmp_path  # compiled sources are content-addressed in the shared cache
+    return _compile_native(src)["main"]()
 
 
 def test_casts_i8_i64_succeed_python():
@@ -98,19 +123,16 @@ def test_cross_backend_matrix_python(ty, val, cast_back):
         ("fn main() -> i64 { let x = 1i128 as u128; x as i64 }", 1),
     ],
 )
-def test_native_integer_matrix(src, expected, tmp_path):
-    from backends.rust.compiler import NativeBackend
-
-    ns = NativeBackend(cache_dir=tmp_path).compile(parse(lex(src)))
-    assert ns["main"]() == expected
+def test_native_integer_matrix(src, expected):
+    assert _run_native(src) == expected
 
 
 def test_native_boundary_error_for_implicit_conversion():
-    from backends.rust.compiler import NativeBackend, TypeErrorForBoundary
+    from backends.rust.compiler import TypeErrorForBoundary
 
     src = "fn main(a: i64) -> i8 { let x: i8 = a; x }"
     with pytest.raises(TypeErrorForBoundary):
-        NativeBackend(cache_dir="/tmp/m4_test").compile(parse(lex(src)))
+        _compile_native(src)
 
 
 # ---------------------------------------------------------------------------
@@ -202,16 +224,16 @@ def test_python_literal_out_of_range_raises(ty):
 
 @pytest.mark.native
 @pytest.mark.parametrize("ty", list(INT_SPECS))
-def test_native_literal_out_of_range_rejected(ty, tmp_path):
+def test_native_literal_out_of_range_rejected(ty):
     # Rust infers the literal type from the cast target, so an out-of-range
     # literal is a compile error rather than a run-time wrap.
-    from backends.rust.compiler import NativeBackend, RustCompileError
+    from backends.rust.compiler import RustCompileError
 
     lo, hi = _bounds(ty)
     for literal in (hi + 1, lo - 1):
         src = f"fn main() -> i64 {{ let x = ({literal}) as {ty}; x as i64 }}\n"
         with pytest.raises(RustCompileError):
-            NativeBackend(cache_dir=tmp_path).compile(parse(lex(src)))
+            _compile_native(src)
 
 
 @pytest.mark.native
@@ -246,13 +268,13 @@ def test_python_variable_cast_wraps(ty):
 def test_native_implicit_boundary_matrix(source_type, target_type):
     if source_type == target_type:
         return
-    from backends.rust.compiler import NativeBackend, TypeErrorForBoundary
+    from backends.rust.compiler import TypeErrorForBoundary
 
     src = (
         f"fn main(a: {source_type}) -> {target_type} {{ let x: {target_type} = a; x }}"
     )
     with pytest.raises(TypeErrorForBoundary) as exc_info:
-        NativeBackend(cache_dir="/tmp/m4_boundary_matrix").compile(parse(lex(src)))
+        _compile_native(src)
     message = str(exc_info.value)
     assert "error[E001]:" in message
     assert "found:" in message and "expected:" in message
@@ -360,12 +382,12 @@ def test_native_u8_as_char_is_supported(tmp_path):
 
 
 @pytest.mark.native
-def test_native_integer_as_char_other_widths_rejected(tmp_path):
-    from backends.rust.compiler import NativeBackend, RustCompileError
+def test_native_integer_as_char_other_widths_rejected():
+    from backends.rust.compiler import RustCompileError
 
     src = "fn main() -> i64 { let x: i64 = 65; let c = x as char; c as i64 }"
     with pytest.raises(RustCompileError) as exc_info:
-        NativeBackend(cache_dir=tmp_path).compile(parse(lex(src)))
+        _compile_native(src)
     assert "only `u8` can be cast as `char`" in str(exc_info.value)
 
 
@@ -390,14 +412,14 @@ def test_python_i64_as_bool():
 
 
 @pytest.mark.native
-def test_native_i64_as_bool_rejected(tmp_path):
-    from backends.rust.compiler import NativeBackend, RustCompileError
+def test_native_i64_as_bool_rejected():
+    from backends.rust.compiler import RustCompileError
 
     src = (
         "fn main() -> i64 { let x: i64 = 1; let b = x as bool; if b { 1 } else { 0 } }"
     )
     with pytest.raises(RustCompileError) as exc_info:
-        NativeBackend(cache_dir=tmp_path).compile(parse(lex(src)))
+        _compile_native(src)
     assert "cannot cast `i64` as `bool`" in str(exc_info.value)
 
 

@@ -2,18 +2,31 @@
 
 from __future__ import annotations
 
-import time
 import uuid
 
 import pytest
 
-from ast_nodes import Program
+from compiler.core.ast_nodes import Program
 
 SOURCE = """
 fn add(a: i64, b: i64) -> i64 { a + b }
 fn scale(a: i64, b: i64) -> i64 { a * b }
 fn main() -> i64 { add(2, 3) + scale(4, 5) }
 """
+
+
+def _child_cpu_seconds() -> float:
+    """CPU time spent in cargo/rustc children of this process.
+
+    Returns 0.0 where ``resource`` is unavailable (Windows), which disables
+    the timing assertion below rather than failing on an unsupported host.
+    """
+    try:
+        import resource
+    except ImportError:  # pragma: no cover - Windows
+        return 0.0
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
 
 
 @pytest.mark.native
@@ -31,33 +44,42 @@ def test_build_parser_accepts_incremental_flag():
 
 @pytest.mark.native
 def test_incremental_rebuild_only_recompiles_changed_function(native_backend):
-    from lexer import lex
-    from parser import parse
+    from compiler.core.lexer import lex
+    from compiler.core.parser import parse
 
     # A per-run module name keeps this test from hitting an artifact built by
     # an earlier run, so the second build really exercises incremental Cargo.
     module_name = f"polyglot_incr_{uuid.uuid4().hex[:8]}"
     backend = native_backend
     first = parse(lex(SOURCE))
+    started_cpu = _child_cpu_seconds()
     ns = backend.compile(
         first,
         module_name=module_name,
         incremental=True,
         cache_scope="incremental-test",
     )
+    first_build_cpu = _child_cpu_seconds() - started_cpu
     assert ns["main"]() == 25
 
     changed_source = SOURCE.replace("a + b", "a + b + 10")
     changed = parse(lex(changed_source))
-    started = time.perf_counter()
+    started_cpu = _child_cpu_seconds()
     ns = backend.compile(
         changed,
         module_name=module_name,
         incremental=True,
         cache_scope="incremental-test",
     )
-    elapsed = time.perf_counter() - started
+    rebuild_cpu = _child_cpu_seconds() - started_cpu
 
     assert ns["main"]() == 35
     assert backend.last_build["changed"] == ["fn:add"]
-    assert elapsed < 1.0, f"incremental rebuild took {elapsed:.2f}s"
+    # Wall-clock bounds are unreliable while xdist workers share the machine,
+    # so measure the CPU time cargo/rustc actually consumed. Recompiling only
+    # the changed fragment must cost clearly less than the initial build.
+    budget = max(0.2, first_build_cpu * 0.75)
+    assert rebuild_cpu < budget, (
+        f"incremental rebuild burned {rebuild_cpu:.2f}s of CPU "
+        f"vs {first_build_cpu:.2f}s for the initial build"
+    )
