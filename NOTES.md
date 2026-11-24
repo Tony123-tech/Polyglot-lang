@@ -24,18 +24,26 @@
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3511 passed, 6 skipped, 31 deselected (fast suite, after the host-interpreter floor batch); slow suite 31 passed, 3517 deselected.
+**Latest baseline:** 3512 passed, 5 skipped, 31 deselected (fast suite, after the console-script path fix in 12.2); slow suite 31 passed, 3517 deselected.
 
 **Baseline ledger.** The counts quoted further down are the numbers printed by the
 run that closed each batch, oldest first: 3258 (comprehension pass) → 3340
 (priority features) → 3390 (runtime failure reporting, 11.30) → 3411 (explicit
 `drop` and borrow conflicts, 11.31) → 3498 (Rust ergonomics, 11.32) → 3511
-(host-interpreter floor, 12.1). Two sections still quote 3258 because the later
-section copied the earlier figure instead of re-running the suite; read each quoted
-count as the close of its own batch, not as the current total. A local run that
-reports 3512 passed / 5 skipped differs from the recorded 3511 / 6 by exactly one
-test whose skip depends on the local toolchain, and that difference is not yet
-reconciled.
+(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2). Two sections
+still quote 3258 because the later section copied the earlier figure instead of
+re-running the suite; read each quoted count as the close of its own batch, not as
+the current total.
+
+The earlier 3511 / 6 figure was explained wrongly. The missing test was not a
+toolchain skip: `tests/test_f1_cli.py::test_console_script_entry_point` skipped
+whenever `shutil.which("polyglot")` returned `None`, which depends on whether the
+virtualenv's `bin` directory happened to be on `PATH` — true for `make check` with
+an activated venv (3512 / 5), false for `.venv/bin/python -m pytest` run from a
+plain shell (3511 / 6). A baseline that changes with how you invoke pytest is not a
+baseline. The test now resolves the script from `sysconfig.get_path("scripts")` and
+falls back to `PATH`, so the install either has the script or does not, independent
+of activation.
 
 Rust-like syntax is embedded in Python through the shared lexer, parser, and AST provided by `polyglot-lang`. Programs can be translated from the Rust AST to Python AST and executed with `compile()` and `exec()`, or emitted as Rust source with PyO3, built with Cargo, and loaded as native Python extensions.
 

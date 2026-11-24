@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -191,13 +192,32 @@ def test_cli_entry_point_via_main_import(capsys):
     assert captured.err == ""
 
 
+def _console_script() -> Path | None:
+    """Locate the installed `polyglot` script without relying on PATH.
+
+    `pip install -e .` writes the script into the running interpreter's scripts
+    directory, which is only on PATH if the virtualenv happens to be activated.
+    Resolving it from `sysconfig` keeps this test deterministic: the same install
+    either has the script or does not, whether or not a shell sourced
+    `.venv/bin/activate`. PATH is still consulted as a fallback for setups that
+    put it somewhere unusual.
+    """
+    scripts = sysconfig.get_path("scripts")
+    if scripts:
+        candidate = Path(scripts) / "polyglot"
+        if candidate.exists():
+            return candidate
+    found = shutil.which("polyglot")
+    return Path(found) if found else None
+
+
 def test_console_script_entry_point():
     """Verify the console script is registered and callable."""
-    polyglot = shutil.which("polyglot")
+    polyglot = _console_script()
     if polyglot is None:
         pytest.skip("polyglot console script not installed")
     result = subprocess.run(
-        [polyglot, "run", "examples/hello.poly"],
+        [str(polyglot), "run", "examples/hello.poly"],
         capture_output=True,
         text=True,
         cwd=str(ROOT),

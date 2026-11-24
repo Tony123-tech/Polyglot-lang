@@ -2,6 +2,55 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Contributor experience: a gate that runs without a toolchain
+
+- `pytest -m core_only` (also `make core`) runs the lexer, parser, AST utilities,
+  spans, parser recovery, type/enum checking, monomorph planning, the move and
+  borrow passes, the diagnostics table, the inline language, the include
+  expander, the CLI and the packaging contract — 486 tests in about twenty
+  seconds, with no Rust or Zig installed. Measured with `PATH` cut to
+  `/usr/bin:/bin`, the same selection reports 468 passed, 19 skipped. The
+  selection is `CORE_ONLY_MODULES` in `conftest.py`, applied as a marker during
+  collection, so it lives in one place.
+- CONTRIBUTING opens with the seven steps that actually merge a change, and
+  documents the labels (`good first issue`, `documentation`,
+  `experimental-backend`, `refactor`, `enhancement`) plus the four tracked
+  issues that use them.
+- `docs/glossary.md` defines the project's own vocabulary — tier, parity,
+  guarded failure, `E001`-`E009`, span, inline language, monomorphization, move
+  checking, bounded NLL, normative versus roadmap, baseline, capability status.
+- `docs/compatibility_plan.md` is a design note on the 3.14.8 floor: what the
+  gate actually buys, four options for lowering it with their costs, and what a
+  version matrix would have to prove first. It states plainly that the floor
+  rests on *when* annotations are evaluated, and that nothing in the tree imports
+  `annotationlib`.
+- `.pre-commit-config.yaml` adds optional hooks: `ruff-pre-commit` pinned to
+  v0.17.5 and two local doc-script hooks. `pre-commit>=3.0` joins the `dev`
+  extra. The hooks were validated and run against real files, and they do not
+  replace `make check`.
+- `examples/community-contrib/` opens for contributed examples, with the rules
+  written down and one entry (`times_table.poly`). It sits in a subdirectory so
+  the curated top-level set and its `test_f1_cli` contract are unchanged.
+- README's quick start now says the Python backend is a tree walker with no
+  speed promise, and the limits box links the glossary and the compatibility
+  note.
+
+## Unreleased — `make check` passes on a clean clone, and the baseline stops moving
+
+- `make check` could not pass on `main`: `ruff check .` reported 52 unsorted or
+  redundant imports (49 `I001`, 3 `PLR0402`) and `ruff format --check .` wanted
+  to reformat 24 files. Both are now clean, which is what CONTRIBUTING already
+  claimed the gate would do. The sweep is mechanical — no logic changed — and the
+  full suite is the evidence.
+- `tests/test_f1_cli.py::test_console_script_entry_point` skipped whenever
+  `shutil.which("polyglot")` returned `None`, so the recorded baseline depended
+  on whether the virtualenv was activated: `make check` with an activated venv
+  reported 3512 passed / 5 skipped, while `.venv/bin/python -m pytest` from a
+  plain shell reported 3511 / 6. The test now resolves the script from
+  `sysconfig.get_path("scripts")` and falls back to `PATH`, so the install either
+  has the script or does not. The recorded baseline is 3512 passed, 5 skipped,
+  31 deselected; the slow suite is unchanged at 31 passed, 3517 deselected.
+
 ## Unreleased — Repository root cleanup: compiler stages move into `compiler/`
 
 - The five front-end stages (`lexer`, `parser`, `ast_nodes`, `include_expander`,

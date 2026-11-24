@@ -1,7 +1,7 @@
 # polyglot-lang
 
 ![Python](https://img.shields.io/badge/python-3.14.8%2B-blue)
-![Tests](https://img.shields.io/badge/tests-3511%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-3512%20passing-brightgreen)
 ![Backends](https://img.shields.io/badge/backends-4-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -386,7 +386,7 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3511 passed, 6 skipped, 31 deselected (`pytest -q`);
+**Current test status:** 3512 passed, 5 skipped, 31 deselected (`pytest -q`);
 31 passed, 3517 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,

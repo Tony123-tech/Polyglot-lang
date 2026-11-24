@@ -777,7 +777,7 @@ Status values: **Pass**, **Partial**, **Fail**, **Blocked (environment)**.
 
 As recorded in this session, under Python 3.14.8:
 
-- `pytest -q`: 3511 passed, 6 skipped, 31 deselected.
+- `pytest -q`: 3512 passed, 5 skipped, 31 deselected.
 - `pytest -q -m slow`: 31 passed, 3517 deselected.
 
 The four previously failing Zig SIMD/parallel C-ABI cases in `tests/test_zig_backend.py` and `tests/test_auto.py` now pass: the generated wrappers use `extern struct` vector parameters/returns, the `std` import is emitted once, and stale zero-byte dylibs are evicted and rebuilt. The counts were re-measured after the priority feature batch (`vec!`, `String::from`, lazy `unwrap_or_else`, `std:fs`, expression-position `if let`, the extended entry API, multi-recursion termination proofs, expanded stdlib helpers, and structured diagnostics/fix hints), the 100-function framework registry with its ten frame test suites, the differential fuzzer / release gate / telemetry / packaging suites, the completed 1,000-function rollout (all ten batches, 1000 functions), the speculative JIT / WASM production / hard compiler-runtime frames with their focused suites, WASM compile-time aggregate specialization with shared `E001`–`E008` preflight diagnostics, the full three-way parity matrix (12/12 cases on all three backends with zero skips), the `hard-frames-parity` release-gate stage, and the Zig-exclusive intrinsics batches (`tests/test_zig_special.py`, 34 cases), replacing the earlier stale baseline.
