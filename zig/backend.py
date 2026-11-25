@@ -1237,10 +1237,14 @@ fn _zig_assert(condition: bool, message: []const u8, line: u32, col: u32) void {
             )
         if isinstance(expr, Break):
             if expr.label is None and expr.value is not None and self._block_labels:
-                self.emit(
+                statement = (
                     f"break :{self._block_labels[-1]} {self._emit_expr(expr.value)};"
                 )
-                return
+                self.emit(statement)
+                # Return the text as well as emitting it: this method is typed
+                # to return the rendered expression, and a bare `return` would
+                # hand callers `None` to interpolate into a string.
+                return statement
             return "break"
         if isinstance(expr, Continue):
             return "continue"

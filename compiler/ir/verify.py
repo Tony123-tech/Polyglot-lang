@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import is_dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from compiler.frontend.errors import PolyglotError
 from compiler.ir import passes
@@ -103,8 +103,14 @@ _ORDER_RULES: tuple[tuple[str, str], ...] = (
 # ---------------------------------------------------------------------------
 
 
-def _fail(code: str, message: str, **context: Any) -> None:
-    """Raise a structured IR diagnostic with optional context keys."""
+def _fail(code: str, message: str, **context: Any) -> NoReturn:
+    """Raise a structured IR diagnostic with optional context keys.
+
+    Annotated `NoReturn` rather than `None` because it always raises: callers
+    end with a bare `_fail(...)` line and rely on it to terminate the branch.
+    With `None` a type checker reads every such function as falling off the end
+    without a return.
+    """
     details = ", ".join(f"{key}={value!r}" for key, value in sorted(context.items()))
     raise PolyglotError(
         code,
@@ -466,7 +472,9 @@ def verify_dual_backend_invariants(target: object) -> dict[str, Any]:
         report = ir_verify_dual_backend_invariants(target)
     except (TypeError, ValueError) as error:
         _fail(
-            "E003", "dual-backend verification rejected its input", message=str(error)
+            "E003",
+            "dual-backend verification rejected its input",
+            error=str(error),
         )
     issues = _normalize_issues(report.issues)
     return {

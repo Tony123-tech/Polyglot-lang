@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from types import FrameType, MappingProxyType, ModuleType, TracebackType
-from typing import Any
+from typing import Any, Literal
 
 from api.visualizer import program_to_source
 from backends import get_backend
@@ -1167,8 +1167,13 @@ class FrameTraceGuard:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         traceback: TracebackType | None,
-    ) -> bool:
-        """Restore trace state even when generated code raises."""
+    ) -> Literal[False]:
+        """Restore trace state even when generated code raises.
+
+        The context manager never suppresses an exception, so the return type
+        says `False` rather than `bool`: a plain `bool` leaves it open whether
+        this `__exit__` might swallow a failure from generated code.
+        """
         snapshot = self._snapshot
         if snapshot is not None and self._suspend_trace and snapshot.trace is not None:
             sys.settrace(snapshot.trace)  # type: ignore[arg-type]

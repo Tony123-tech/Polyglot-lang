@@ -735,6 +735,10 @@ def serve(
         return 1
 
     bound_host, bound_port = server.server_address[:2]
+    # AF_INET6 and some socket implementations hand back bytes here; formatted
+    # straight into the URL they print as `b'127.0.0.1'`, which is not clickable.
+    if isinstance(bound_host, bytes):
+        bound_host = bound_host.decode("ascii")
     url = f"http://{bound_host}:{bound_port}/"
     print(f"Polyglot visualizer listening on {url}")
     print("Press Ctrl+C to stop.")
