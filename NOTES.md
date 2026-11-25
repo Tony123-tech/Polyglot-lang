@@ -24,13 +24,13 @@
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3512 passed, 5 skipped, 31 deselected (fast suite, after the console-script path fix in 12.2); slow suite 31 passed, 3517 deselected.
+**Latest baseline:** 3513 passed, 5 skipped, 31 deselected (fast suite, after the console-script path fix in 12.2); slow suite 31 passed, 3517 deselected.
 
 **Baseline ledger.** The counts quoted further down are the numbers printed by the
 run that closed each batch, oldest first: 3258 (comprehension pass) → 3340
 (priority features) → 3390 (runtime failure reporting, 11.30) → 3411 (explicit
 `drop` and borrow conflicts, 11.31) → 3498 (Rust ergonomics, 11.32) → 3511
-(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2). Two sections
+(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2), 3513 (xdist parallelization and pinned `scalar-add` parity). Two sections
 still quote 3258 because the later section copied the earlier figure instead of
 re-running the suite; read each quoted count as the close of its own batch, not as
 the current total.

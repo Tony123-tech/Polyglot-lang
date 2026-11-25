@@ -36,6 +36,54 @@ def test_case_generation_is_seed_reproducible() -> None:
     assert next(twp.iter_three_way_cases(2027)).source != first[0].source
 
 
+def _describe_mismatches(report: twp.ThreeWayReport) -> str:
+    """One line per mismatch, backend names and both values spelled out.
+
+    The raw list is truncated by pytest's repr limit partway through the second
+    mismatch, which is how a runner failure became unreadable: the case id and
+    the two values were visible, but not which backend owned which value.
+    """
+    lines: list[str] = []
+    for mismatch in report.mismatches:
+        if mismatch["kind"] == "expected-code":
+            lines.append(
+                f"{mismatch['case']} [{mismatch['backend']}]: "
+                f"expected {mismatch['expected']}, got {mismatch['observed']}"
+            )
+            continue
+        left_name, right_name = mismatch["backends"]
+        left, right = mismatch["left"], mismatch["right"]
+        lines.append(
+            f"{mismatch['case']}: {left_name}={left.get('result')!r} "
+            f"error={left.get('error')!r} vs "
+            f"{right_name}={right.get('result')!r} error={right.get('error')!r}"
+        )
+    return "\n".join(lines) or "(no mismatches recorded)"
+
+
+def test_scalar_add_expected_result_is_pinned(tmp_path: Path) -> None:
+    """The first case is simple enough to assert against a number.
+
+    Letting the two backends only check each other means agreement on a wrong
+    value passes. `scalar-add` at seed 2026 is `a + b * 2 + 6` with a=2, b=3,
+    so 14 is the answer arithmetic gives.
+    """
+    case = next(
+        case for case in twp.iter_three_way_cases(2026) if case.case_id == "scalar-add"
+    )
+    report = twp.run_three_way_parity(
+        2026,
+        cases=[case],
+        cache_root=tmp_path / "cache",
+        artifacts_dir=tmp_path / "artifacts",
+        backends=("python", "wasm"),
+    )
+    assert report.outcomes["scalar-add"]["python"]["result"] == 14
+    assert report.outcomes["scalar-add"]["wasm"]["result"] == 14, _describe_mismatches(
+        report
+    )
+
+
 def test_python_and_wasm_parity_with_isolated_cache(tmp_path: Path) -> None:
     report = twp.run_three_way_parity(
         2026,
@@ -43,7 +91,7 @@ def test_python_and_wasm_parity_with_isolated_cache(tmp_path: Path) -> None:
         artifacts_dir=tmp_path / "artifacts",
         backends=("python", "wasm"),
     )
-    assert report.passed, report.mismatches
+    assert report.passed, _describe_mismatches(report)
     assert report.cases == 12
     assert (
         report.outcomes["scalar-add"]["python"]["result"]
@@ -147,7 +195,7 @@ def test_all_three_backends_parity(tmp_path: Path) -> None:
         artifacts_dir=tmp_path / "artifacts",
         include_native=True,
     )
-    assert report.passed, report.mismatches
+    assert report.passed, _describe_mismatches(report)
     assert "native" not in report.skipped.get("scalar-add", {})
     assert report.outcomes["scalar-add"]["native"]["result"] == 14
     assert "wasm" not in report.skipped.get("recursive-struct", {})
