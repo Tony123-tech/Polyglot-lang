@@ -151,6 +151,9 @@ class GateOutcome:
     status: Status
     command: tuple[str, ...]
     detail: str = ""
+    # Tail of the failing command's own output. The table says `exit -11` for a
+    # segfault and nothing else, which is exactly as useful as no report at all.
+    tail: str = ""
 
 
 def _default_runner(
@@ -181,12 +184,22 @@ def _run_check(
     )
 
 
+def _output_tail(check: CheckResult, limit: int = 25) -> str:
+    """Last non-empty lines the failing command printed, stderr first."""
+    for text in (check.stderr, check.stdout):
+        lines = [line for line in text.splitlines() if line.strip()]
+        if lines:
+            return "\n".join(lines[-limit:])
+    return ""
+
+
 def _check_outcome(check: CheckResult) -> GateOutcome:
     return GateOutcome(
         name=check.name,
         status="PASS" if check.ok else "FAIL",
         command=check.command,
         detail=f"exit {check.returncode}",
+        tail=_output_tail(check) if not check.ok else "",
     )
 
 
@@ -1020,6 +1033,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(report.render())
         print()
         print(_render_check_table(outcomes))
+        for outcome in outcomes:
+            if outcome.status == "FAIL" and outcome.tail:
+                print()
+                print(f"--- {outcome.name} output (last lines) ---")
+                print(outcome.tail)
     return 0 if report.passed else 1
 
 

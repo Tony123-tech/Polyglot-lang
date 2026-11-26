@@ -17,6 +17,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Full mode runs 12 fuzz seeds x 24 cases plus the whole pytest suite.
     timeout-minutes: 45
+    # A native crash inside pytest exits with -11 and prints nothing useful
+    # unless the fault handler is on; this makes the next segfault name its
+    # Python frame instead of leaving a bare exit code in the gate table.
+    env:
+      PYTHONFAULTHANDLER: "1"
     strategy:
       fail-fast: false
       matrix:

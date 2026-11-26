@@ -11,6 +11,8 @@ on:
 jobs:
   test:
     runs-on: macos-latest
+    env:
+      PYTHONFAULTHANDLER: "1"
     steps:
       - uses: actions/checkout@v5
 
