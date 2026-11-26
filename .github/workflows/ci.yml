@@ -45,7 +45,7 @@ jobs:
 
 
       - name: Install package
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,wasm]"
 
       - name: Lint statement leaks
         run: python3 tools/lint_statement_leaks.py
@@ -116,7 +116,7 @@ jobs:
 
 
       - name: Install package
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,wasm]"
 
       # Fast gate for PRs; the full ordered gate is in release-gate.yml.
       - name: Run quick release gate
