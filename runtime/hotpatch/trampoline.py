@@ -54,6 +54,10 @@ _DARWIN = sys.platform == "darwin"
 RTLD_DEFAULT = ctypes.c_void_p(-2 if _DARWIN else 0)
 _MACHINE = platform.machine().lower()
 _AARCH64 = _MACHINE in {"arm64", "aarch64"}
+# Upper bound on how much of the loaded objects' data segments the Linux GOT
+# scan will touch, in bytes. Real data segments add up to a few MiB; anything
+# larger means a mapping was misread and reading it would fault.
+_GOT_SCAN_LIMIT = 96 * 1024 * 1024
 _X86_64 = _MACHINE in {"x86_64", "amd64"}
 
 libc = ctypes.CDLL(None, use_errno=True)
@@ -212,9 +216,10 @@ def _page_protection(address: int) -> int | None:
     start = address & ~(_PAGE - 1)
     if not _DARWIN:
         for mapping in _read_proc_maps():
-            mapped_start, mapped_end, _path, writable = mapping
+            mapped_start, mapped_end, _path, writable, readable = mapping
             if mapped_start <= start < mapped_end:
-                return PROT_READ | (PROT_WRITE if writable else 0)
+                protection = PROT_READ if readable else 0
+                return protection | (PROT_WRITE if writable else 0)
         return None
     if _mach_vm_protect is None or _mach_task_self is None:
         return None
@@ -637,22 +642,39 @@ def _elf_got_slots(
     span: tuple[int, int] | None,
     seen: set[int],
 ) -> list[GotSlot]:
-    """Locate Linux GOT-like cells by scanning writable mappings.
+    """Locate Linux GOT-like cells by scanning the data segments of loaded objects.
 
     ``symbol`` is retained for diagnostics and API symmetry with the Mach-O
     path; this fallback matches the bound pointer value from ``dlsym`` rather
     than parsing ELF relocations.  The macOS path above is the one exercised
     by the default test suite.
+
+    Only file-backed, readable, writable mappings are scanned. A bound PLT cell
+    is a pointer slot in the data segment of a loaded object, so nothing
+    anonymous can hold one - and reading anonymous memory is where this used to
+    fault: a writable-but-unreadable mapping, or a range a native library had
+    already released, turns an 8-byte ``from_address`` into SIGSEGV, which is
+    how the Linux gate lost `pytest-full` to `exit -11`.
     """
     slots: list[GotSlot] = []
+    scanned = 0
     # A full DT_JMPREL walk (including chained fixups) is intentionally out of
     # scope; only writable maps belonging to the requested library are scanned.
     for mapping in _read_proc_maps():
-        start, end, path, writable = mapping
-        if not writable:
+        start, end, path, writable, readable = mapping
+        if not writable or not readable:
+            continue
+        # ``[heap]``, ``[stack]``, ``[vvar]`` and unnamed anonymous maps have no
+        # GOT cells, and the kernel reports some of them in ways an 8-byte read
+        # cannot survive.
+        if not path or path.startswith("["):
             continue
         if library is not None and library not in path:
             continue
+        size = end - start
+        if size > _GOT_SCAN_LIMIT or scanned + size > _GOT_SCAN_LIMIT:
+            continue
+        scanned += size
         for slot in range(start, end - 7, 8):
             if ctypes.c_void_p.from_address(slot).value == target and slot not in seen:
                 seen.add(slot)
@@ -661,13 +683,16 @@ def _elf_got_slots(
         raise relocation_error(
             f"no bound GOT/PLT slot found for {symbol!r}",
             span=span,
-            detail="the symbol may still be lazily bound or resolved via a chained fixup",
+            detail=(
+                "the symbol may still be lazily bound or resolved via a chained "
+                f"fixup; scanned {scanned} bytes of loaded objects"
+            ),
         )
     return slots
 
 
-def _read_proc_maps() -> list[tuple[int, int, str, bool]]:
-    entries: list[tuple[int, int, str, bool]] = []
+def _read_proc_maps() -> list[tuple[int, int, str, bool, bool]]:
+    entries: list[tuple[int, int, str, bool, bool]] = []
     try:
         with open("/proc/self/maps", encoding="utf-8") as maps:
             for line in maps:
@@ -683,6 +708,7 @@ def _read_proc_maps() -> list[tuple[int, int, str, bool]]:
                         int(end_text, 16),
                         path,
                         "w" in permissions,
+                        "r" in permissions,
                     )
                 )
     except OSError as error:  # pragma: no cover - non-Linux fallback

@@ -1112,3 +1112,35 @@ def test_native_extension_builds_when_requested(tmp_path):
     finally:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("polyglot_hotpatch", None)
+
+
+def test_elf_scan_touches_only_readable_file_backed_mappings(monkeypatch):
+    """The Linux GOT scan must not read anonymous or unwritable mappings.
+
+    A bound PLT cell lives in the data segment of a loaded object. Reading
+    anything else was how the Linux gate lost `pytest-full` to `exit -11`:
+    an 8-byte ``from_address`` on a mapping the kernel had already released
+    faults instead of returning a value. This stubs the mapping table and uses
+    a real heap buffer as the "object", so it runs on macOS too.
+    """
+    from runtime.hotpatch import trampoline
+
+    cells = (ctypes.c_void_p * 3)()
+    base = ctypes.addressof(cells)
+    target = 0xDEADBEEF
+    cells[1] = target
+
+    mapping = (base, base + ctypes.sizeof(cells), "/lib/libfake.so.1")
+    monkeypatch.setattr(
+        trampoline,
+        "_read_proc_maps",
+        lambda: [
+            (*mapping, True, True),
+            (base, base + ctypes.sizeof(cells), "[heap]", True, True),
+            (base, base + ctypes.sizeof(cells), "", True, False),
+        ],
+    )
+    slots = trampoline._elf_got_slots(
+        "fake", target, library=None, span=None, seen=set()
+    )
+    assert [slot.address for slot in slots] == [base + 8]

@@ -24,13 +24,13 @@
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3518 passed, 5 skipped, 31 deselected (fast suite, after the demo smoke test and the Linux `RTLD_DEFAULT` fix); slow suite 31 passed, 3518 deselected.
+**Latest baseline:** 3519 passed, 5 skipped, 31 deselected (fast suite, after the demo smoke test, the Linux `RTLD_DEFAULT` fix and the GOT-scan restriction); slow suite 31 passed, 3519 deselected.
 
 **Baseline ledger.** The counts quoted further down are the numbers printed by the
 run that closed each batch, oldest first: 3258 (comprehension pass) → 3340
 (priority features) → 3390 (runtime failure reporting, 11.30) → 3411 (explicit
 `drop` and borrow conflicts, 11.31) → 3498 (Rust ergonomics, 11.32) → 3511
-(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2), 3513 (xdist parallelization and pinned `scalar-add` parity) → 3518 (demo smoke test, `RTLD_DEFAULT` platform value, gate failure logs). Two sections
+(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2), 3513 (xdist parallelization and pinned `scalar-add` parity) → 3518 (demo smoke test, `RTLD_DEFAULT` platform value, gate failure logs) → 3519 (GOT scan restricted to readable file-backed mappings). Two sections
 still quote 3258 because the later section copied the earlier figure instead of
 re-running the suite; read each quoted count as the close of its own batch, not as
 the current total.
@@ -2634,8 +2634,38 @@ constant could pass 3,513 tests locally and still kill the Linux job.
 reason written next to it, and `test_rtld_default_carries_the_platform_value`
 asserts the value on either platform so the constant cannot silently drift back.
 
-**Lesson:** a "constant" borrowed from one C library's headers is a platform
-assumption, and the dangerous ones do not fail loudly. The gate's new habit —
-keeping the full stdout/stderr of a failing check under `.artifacts/` and printing
-the fault handler's block instead of the last twenty-five lines — is what made
-this findable at all: `exit -11` alone says nothing about where.
+**Symptom, second round:** the gate ran again with that fix and `pytest-full`
+still ended at `exit -11` — but one frame further along, inside the scan that was
+only reachable now that `dlsym` returned:
+
+```
+Fatal Python error: Segmentation fault
+  File "runtime/hotpatch/trampoline.py", line 657 in _elf_got_slots
+  File "runtime/hotpatch/trampoline.py", line 627 in find_got_slots
+  File "runtime/hotpatch/trampoline.py", line 813 in discover
+```
+
+**Cause:** the Linux fallback scanned *every* writable mapping from
+`/proc/self/maps` and read 8 bytes at each address with
+`ctypes.c_void_p.from_address`. Heap, stack, `[vvar]` and anonymous regions have
+no PLT cells in them, and a writable mapping that is not readable (or one a
+native library has already released) faults on the first read. Two things were
+wrong at once: the scan read memory it had no business reading, and it filtered on
+`w` without checking `r`.
+
+**Fix:** the scan now requires a readable, writable, file-backed mapping whose
+path is not a bracketed pseudo-file, and skips anything above a 96 MiB budget, so
+it touches the data segments of loaded objects only — which is the only place a
+bound GOT cell can live. On the Linux clone that is 800 KiB across 9 mappings,
+14 ms, versus every writable page in the process before. `_read_proc_maps` now
+carries the readable bit, `_page_protection` uses it instead of assuming
+`PROT_READ`, and `test_elf_scan_touches_only_readable_file_backed_mappings` stubs
+the mapping table against a real heap buffer so the rule is tested on macOS too.
+
+**Lesson:** two of these three failures were invisible from the platform the tests
+normally run on, and the only reason either was found is that the gate was changed
+to keep the failing check's full output and print the fault handler's own block.
+An `exit -11` with a 25-line tail of addresses would still be an open bug. The
+deeper lesson is about the diagnostic itself: "scan all writable memory" is a
+sentence that sounds bounded and is not — the bounds were never written down, so
+nothing could check them.
