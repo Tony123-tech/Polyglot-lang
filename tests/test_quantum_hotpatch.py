@@ -968,6 +968,20 @@ def test_abi_signature_mismatch_reports_e008_with_byte_span():
     assert "bytes: 2..6" in str(error)
 
 
+def test_rtld_default_carries_the_platform_value():
+    """dlsym's "search every loaded object" handle is NULL on glibc, -2 on dyld.
+
+    This is not the kind of wrong value dlsym reports: glibc treats a non-NULL
+    handle as a ``link_map`` pointer and dereferences it, so a mismatch here
+    takes the interpreter down with SIGSEGV rather than returning NULL - which
+    is why macOS could not see the bug that killed the Linux CI job.
+    """
+    from runtime.hotpatch import trampoline
+
+    expected = 2**64 - 2 if sys.platform == "darwin" else 0
+    assert (trampoline.RTLD_DEFAULT.value or 0) == expected
+
+
 def test_got_discovery_finds_a_bound_symbol():
     if resolve_symbol("getpid") is None:
         pytest.skip("getpid is not resolvable")

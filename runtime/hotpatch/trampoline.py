@@ -46,8 +46,12 @@ MAP_JIT = 0x0800
 VM_PROT_READ = 0x1
 VM_PROT_WRITE = 0x2
 VM_PROT_COPY = 0x10
-RTLD_DEFAULT = ctypes.c_void_p(-2)
 _DARWIN = sys.platform == "darwin"
+# ``RTLD_DEFAULT`` is not a portable constant: dyld spells it -2, while glibc
+# spells it NULL and reads every other handle as a ``link_map`` pointer. Handing
+# glibc the macOS value dereferences 0xfffffffffffffffe, so ``dlsym`` does not
+# return NULL for an unknown symbol there - it kills the process with SIGSEGV.
+RTLD_DEFAULT = ctypes.c_void_p(-2 if _DARWIN else 0)
 _MACHINE = platform.machine().lower()
 _AARCH64 = _MACHINE in {"arm64", "aarch64"}
 _X86_64 = _MACHINE in {"x86_64", "amd64"}
