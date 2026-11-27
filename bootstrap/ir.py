@@ -9,7 +9,19 @@ from __future__ import annotations
 
 from runtime.diagnostics import PillarError
 
-from .subset import Applied, BinOp, Function, If, IntLit, Let, Program, Return, Var
+from .subset import (
+    Applied,
+    BinOp,
+    Expr,
+    Function,
+    If,
+    IntLit,
+    Let,
+    Program,
+    Return,
+    Stmt,
+    Var,
+)
 
 OPEN, CLOSE = "(", ")"
 
@@ -63,7 +75,7 @@ def _parse(text: str):
     return roots
 
 
-def _expr(node) -> object:
+def _expr(node: object) -> Expr:
     if not isinstance(node, tuple) or not node:
         raise PillarError("E008", f"IR expression is not a list: {node!r}")
     head, tail = node[0], node[1:]
@@ -87,10 +99,10 @@ def _expr(node) -> object:
     raise PillarError("E008", f"IR node {head!r} is not part of the canonical subset")
 
 
-def _block(node) -> tuple:
+def _block(node: object) -> tuple[Stmt, ...]:
     if not isinstance(node, tuple) or node[:1] != ("block",):
         raise PillarError("E008", "expected a (block ...) node")
-    statements = []
+    statements: list[Stmt] = []
     for item in node[1:]:
         if not isinstance(item, tuple) or not item:
             raise PillarError("E008", f"IR statement is not a list: {item!r}")
