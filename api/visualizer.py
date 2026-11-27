@@ -58,7 +58,8 @@ class _Synthetic:
 # ---------------------------------------------------------------------------
 
 
-def _line_col_to_offset(source: str, line: int | None, col: int | None) -> int | None:
+def line_col_to_offset(source: str, line: int | None, col: int | None) -> int | None:
+    """Character offset of a 1-based (line, col) pair, or ``None``."""
     if line is None or col is None or line < 1:
         return None
     lines = source.splitlines(keepends=True)
@@ -132,7 +133,7 @@ def _error_span(
     col = getattr(error, "col", None)
     if col is None:
         col = getattr(error, "source_col", None)
-    offset = _line_col_to_offset(source, line, col)
+    offset = line_col_to_offset(source, line, col)
     if offset is None:
         return None, None
     return _token_span_at(source, offset)

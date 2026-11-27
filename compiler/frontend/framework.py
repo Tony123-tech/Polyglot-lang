@@ -30,6 +30,18 @@ import compiler.core.ast_nodes as ast
 from api.visualizer import SourcePrinter, program_to_source
 from compiler.core.lexer import SIMPLE_ESCAPES, Lexer, Token, TokenType, lex
 from compiler.core.parser import ParseError, Parser
+from compiler.frontend.lexeme import (
+    char_literal_end as _char_literal_end,
+)
+from compiler.frontend.lexeme import (
+    raw_string_prefix as _raw_string_prefix,
+)
+from compiler.frontend.lexeme import (
+    string_literal_end as _string_literal_end,
+)
+from compiler.frontend.lexeme import (
+    token_end as _token_end_char_offset,
+)
 
 __all__ = [
     "ast_node_span_normalize",
@@ -205,69 +217,6 @@ def _char_to_byte(source: str, offset: int) -> int:
     return len(source[: max(0, min(offset, len(source)))].encode("utf-8"))
 
 
-def _raw_string_prefix(source: str, start: int) -> tuple[int, int] | None:
-    """Return ``(quote_index, hash_count)`` when a raw string starts here."""
-    if source[start : start + 1] != "r":
-        return None
-    index = start + 1
-    while index < len(source) and source[index] == "#":
-        index += 1
-    if source[index : index + 1] == '"':
-        return index, index - start - 1
-    return None
-
-
-def _string_literal_end(source: str, start: int) -> tuple[int, bool]:
-    """Return ``(end_offset, terminated)`` for a string beginning at *start*."""
-    raw = _raw_string_prefix(source, start)
-    if raw is not None:
-        quote, hashes = raw
-        closing = '"' + "#" * hashes
-        close = source.find(closing, quote + 1)
-        if close < 0:
-            return len(source), False
-        return close + len(closing), True
-
-    if source.startswith('"""', start):
-        delimiter = '"""'
-        index = start + 3
-        while index < len(source):
-            if source.startswith(delimiter, index):
-                return index + 3, True
-            if source[index] == "\\":
-                index += 2
-            else:
-                index += 1
-        return len(source), False
-
-    if source[start : start + 1] != '"':
-        return start, False
-    index = start + 1
-    while index < len(source):
-        if source[index] == '"':
-            return index + 1, True
-        if source[index] == "\\":
-            index += 2
-        else:
-            index += 1
-    return len(source), False
-
-
-def _char_literal_end(source: str, start: int) -> tuple[int, bool]:
-    """Return ``(end_offset, terminated)`` for a char literal."""
-    if source[start : start + 1] != "'":
-        return start, False
-    index = start + 1
-    while index < len(source):
-        if source[index] == "'":
-            return index + 1, True
-        if source[index] == "\\":
-            index += 2
-        else:
-            index += 1
-    return len(source), False
-
-
 def _block_comment_end(source: str, start: int) -> int | None:
     """Index just past a (possibly nested) block comment, or ``None``."""
     if not source.startswith("/*", start):
@@ -286,18 +235,6 @@ def _block_comment_end(source: str, start: int) -> int | None:
         else:
             index += 1
     return None
-
-
-def _token_end_char_offset(source: str, token: Token) -> int:
-    """Exact exclusive character offset of a lexer token's raw lexeme."""
-    if token.type == TokenType.EOF:
-        return len(source)
-    if token.type == TokenType.STRING:
-        return _string_literal_end(source, token.pos)[0]
-    if token.type == TokenType.CHAR:
-        return _char_literal_end(source, token.pos)[0]
-    end = token.pos + len(token.value)
-    return max(token.pos, min(end, len(source)))
 
 
 def _make_record(

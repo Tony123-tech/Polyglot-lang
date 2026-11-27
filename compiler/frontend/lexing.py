@@ -24,6 +24,18 @@ from compiler.core.lexer import (
     lex,
 )
 from compiler.frontend.errors import PolyglotError
+from compiler.frontend.lexeme import (
+    char_literal_end as _char_literal_end,
+)
+from compiler.frontend.lexeme import (
+    raw_string_prefix as _raw_string_prefix,
+)
+from compiler.frontend.lexeme import (
+    string_literal_end as _string_literal_end,
+)
+from compiler.frontend.lexeme import (
+    token_end as _token_end_char_offset,
+)
 
 __all__ = [
     "lex_balance_delimiters",
@@ -158,57 +170,6 @@ def _real_lex(source: str) -> list[Token]:
         _fail("E001", error.msg, source, start, min(len(source), start + 1))
 
 
-def _raw_string_quote(source: str, start: int) -> int | None:
-    """Index of the opening quote when a raw string begins at *start*."""
-    if source[start : start + 1] != "r":
-        return None
-    index = start + 1
-    while index < len(source) and source[index] == "#":
-        index += 1
-    return index if source[index : index + 1] == '"' else None
-
-
-def _string_literal_end(source: str, start: int) -> tuple[int, bool]:
-    """Exclusive end offset of a string lexeme and whether it is terminated."""
-    quote = _raw_string_quote(source, start)
-    if quote is not None:
-        closing = '"' + "#" * (quote - start - 1)
-        close = source.find(closing, quote + 1)
-        if close < 0:
-            return len(source), False
-        return close + len(closing), True
-    delimiter = '"""' if source.startswith('"""', start) else '"'
-    index = start + len(delimiter)
-    while index < len(source):
-        if source.startswith(delimiter, index):
-            return index + len(delimiter), True
-        index += 2 if source[index] == "\\" else 1
-    return len(source), False
-
-
-def _char_literal_end(source: str, start: int) -> tuple[int, bool]:
-    """Exclusive end offset of a char lexeme and whether it is terminated."""
-    if source[start : start + 1] != "'":
-        return start, False
-    index = start + 1
-    while index < len(source):
-        if source[index] == "'":
-            return index + 1, True
-        index += 2 if source[index] == "\\" else 1
-    return len(source), False
-
-
-def _token_end_char_offset(source: str, token: Token) -> int:
-    """Exclusive source offset of a real token's raw lexeme."""
-    if token.type == TokenType.EOF:
-        return len(source)
-    if token.type == TokenType.STRING:
-        return _string_literal_end(source, token.pos)[0]
-    if token.type == TokenType.CHAR:
-        return _char_literal_end(source, token.pos)[0]
-    return max(token.pos, min(len(source), token.pos + len(token.value)))
-
-
 def _token_record(source: str, token: Token) -> dict[str, Any]:
     """Convert a real lexer token into the common token record shape."""
     start = token.pos
@@ -294,7 +255,10 @@ def _problem_kind(source: str, start: int) -> str:
         return "COMMENT"
     if source[start : start + 1] == "'":
         return "CHAR"
-    if source[start : start + 1] == '"' or _raw_string_quote(source, start) is not None:
+    if (
+        source[start : start + 1] == '"'
+        or _raw_string_prefix(source, start) is not None
+    ):
         return "STRING"
     return "UNKNOWN"
 
@@ -690,7 +654,7 @@ def lex_scan_comments(source: str) -> dict:
             index = cursor
             continue
         ch = text[index]
-        if ch == '"' or _raw_string_quote(text, index) is not None:
+        if ch == '"' or _raw_string_prefix(text, index) is not None:
             end, _terminated = _string_literal_end(text, index)
         elif ch == "'":
             end, _terminated = _char_literal_end(text, index)
@@ -735,7 +699,7 @@ def lex_balance_delimiters(source: str) -> dict:
             index = cursor
             continue
         ch = text[index]
-        if ch == '"' or _raw_string_quote(text, index) is not None:
+        if ch == '"' or _raw_string_prefix(text, index) is not None:
             end, _terminated = _string_literal_end(text, index)
             index = max(index + 1, end)
             continue

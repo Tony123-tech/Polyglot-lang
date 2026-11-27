@@ -2715,6 +2715,15 @@ validators; merging them is a cross-module refactor with a wide blast radius and
 is not something a lint pass can do. Recorded here so the rating is not read as an
 unfinished cleanup.
 
+First batch merged: the four literal scanners (`raw_string_prefix`,
+`string_literal_end`, `char_literal_end`, `token_end`) now live in
+`compiler/frontend/lexeme.py` and are imported by both `frontend/lexing.py` and
+`frontend/framework.py`. The two copies had already drifted — the framework one
+returned `(start, False)` for a call not starting at a quote, the lexing one
+scanned to end of file — and both are on the stricter contract now. The same
+round made `api.visualizer.line_col_to_offset` public and deleted the
+byte-identical `_offset_for_line_col` from `api/visualizer_server.py`.
+
 ## The incremental-rebuild test was timing a warm scope
 
 **Symptom:** `pytest -q` failed

@@ -39,7 +39,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from api.telemetry import collector, compare_with, list_baselines, snapshot
-from api.visualizer import analyze
+from api.visualizer import analyze, line_col_to_offset
 from compiler.core.lexer import lex
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -111,15 +111,6 @@ def _read_result_file(path: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _offset_for_line_col(source: str, line: int | None, col: int | None) -> int | None:
-    if line is None or col is None or line < 1:
-        return None
-    lines = source.splitlines(keepends=True)
-    if line > len(lines):
-        return None
-    return sum(len(text) for text in lines[: line - 1]) + max(0, col - 1)
-
-
 def _fallback_diagnostic(
     stderr: str,
     source: str,
@@ -138,7 +129,7 @@ def _fallback_diagnostic(
     location = re.search(r"at: line (\d+), column (\d+)", text)
     line = int(location.group(1)) if location else None
     col = int(location.group(2)) if location else None
-    offset = _offset_for_line_col(source, line, col)
+    offset = line_col_to_offset(source, line, col)
     span = None
     if offset is not None:
         token = re.match(r"[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|\S", source[offset:])
