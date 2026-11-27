@@ -10,7 +10,7 @@ from compiler.core.lexer import Lexer
 from compiler.core.parser import Parser
 
 SRC = r"""
-fn add(a: i64, b: i64) -> i64
+fn add(a: i64, b: i64) -> i64 {
     a + b
 }
 
@@ -26,7 +26,7 @@ fn main() -> i64 {
     let y = 1_000_000 + 1.5e-3;
     let msg = "hello";
     println!("{} {} {}", msg, x, y);
-    let total = 0;
+    let mut total = 0;
     for i in 0..=10 {
         total = total + i;
     }
@@ -44,7 +44,6 @@ def main():
     ns = compile_rust(program)
     ns["main"]()
     print("add(1, 2) =", ns["add"](1, 2))
-    print("add('a', 'b') =", ns["add"]("a", "b"))
     print("factorial(5) =", ns["factorial"](5))
 
 
