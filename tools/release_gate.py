@@ -50,7 +50,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -154,6 +154,8 @@ class GateOutcome:
     # Tail of the failing command's own output. The table says `exit -11` for a
     # segfault and nothing else, which is exactly as useful as no report at all.
     tail: str = ""
+    # Where the whole stdout/stderr of a failing check was written, if anywhere.
+    log_path: str = ""
 
 
 def _default_runner(
@@ -184,13 +186,63 @@ def _run_check(
     )
 
 
+# A tail is the wrong shape for a crash: with `PYTHONFAULTHANDLER=1` the reason
+# and the Python frames come first, followed by a long C stack, so the last
+# lines of that block are the least informative part of it.
+FAULT_REPORT_MARKER = "Fatal Python error:"
+FAULT_REPORT_LINES = 40
+FAILURE_LOG_DIR = "failures"
+FAILURE_LOG_LIMIT = 1 << 20
+
+
+def _fault_report(text: str) -> str:
+    """The fault handler's own block, if the interpreter died inside this run."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(FAULT_REPORT_MARKER):
+            return "\n".join(lines[index : index + FAULT_REPORT_LINES])
+    return ""
+
+
 def _output_tail(check: CheckResult, limit: int = 25) -> str:
     """Last non-empty lines the failing command printed, stderr first."""
     for text in (check.stderr, check.stdout):
+        report = _fault_report(text)
+        if report:
+            return report
         lines = [line for line in text.splitlines() if line.strip()]
         if lines:
             return "\n".join(lines[-limit:])
     return ""
+
+
+def _write_failure_log(
+    artifacts: Path, outcome: GateOutcome, check: CheckResult
+) -> str:
+    """Store the whole output of a failing check under the artifacts directory.
+
+    The workflow uploads `.artifacts/`, so a check that dies in native code
+    leaves something to read afterwards instead of one exit code in a console
+    log that the harness truncated.
+    """
+    if check.ok:
+        return ""
+    sections = [
+        f"### {label}\n{text}"
+        for label, text in (("stdout", check.stdout), ("stderr", check.stderr))
+        if text.strip()
+    ]
+    payload = "\n".join(sections)
+    if len(payload) > FAILURE_LOG_LIMIT:
+        payload = payload[:FAILURE_LOG_LIMIT] + "\n<truncated>\n"
+    try:
+        directory = artifacts / FAILURE_LOG_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{outcome.name}.log"
+        path.write_text(payload, encoding="utf-8")
+    except OSError:
+        return ""
+    return str(path)
 
 
 def _check_outcome(check: CheckResult) -> GateOutcome:
@@ -692,17 +744,23 @@ def _run_gate_detailed(
     outcomes: list[GateOutcome] = []
     required: list[str] = list(REQUIRED_CHECK)
 
+    def record(check: CheckResult) -> GateOutcome:
+        """Per-check outcome, with the failing check's full output kept on disk."""
+        outcome = _check_outcome(check)
+        path = _write_failure_log(artifacts, outcome, check)
+        return replace(outcome, log_path=path) if path else outcome
+
     # Stage 1: ruff format check and lint.
     ruff_checks = ci_verify_ruff_format_and_lint(
         root=root_path, runner=command_runner, ruff_executable=ruff_exe
     )
     checks["ruff"] = ruff_checks
-    outcomes.extend(_check_outcome(check) for check in ruff_checks)
+    outcomes.extend(record(check) for check in ruff_checks)
 
     # Stage 2: in-process scaffold drift verification.
     scaffold_check = _verify_generated_scaffold(cache, scope)
     checks["scaffold"] = (scaffold_check,)
-    outcomes.append(_check_outcome(scaffold_check))
+    outcomes.append(record(scaffold_check))
 
     # Stage 3: core pytest parity suites (plus full pytest in --full mode).
     # The cross-backend parity module is marked ``slow`` at module level, so
@@ -719,7 +777,7 @@ def _run_gate_detailed(
         root=root_path, runner=pytest_runner, python_executable=python_exe
     )
     checks["pytest-core"] = core_checks
-    outcomes.extend(_check_outcome(check) for check in core_checks)
+    outcomes.extend(record(check) for check in core_checks)
     if mode == "full":
         full_check = _run_check(
             "pytest-full",
@@ -728,7 +786,7 @@ def _run_gate_detailed(
             command_runner,
         )
         checks["pytest-full"] = (full_check,)
-        outcomes.append(_check_outcome(full_check))
+        outcomes.append(record(full_check))
         required.append("pytest-full")
 
     # Stage 4: hard compiler/runtime frames and deterministic three-way parity.
@@ -740,12 +798,12 @@ def _run_gate_detailed(
     )
     hard_frame_all: list[CheckResult] = list(hard_frame_checks)
     checks["hard-frames-parity"] = hard_frame_all
-    outcomes.extend(_check_outcome(check) for check in hard_frame_checks)
+    outcomes.extend(record(check) for check in hard_frame_checks)
     effective_parity_runner = parity_runner or _make_parity_runner(cache=cache)
     for seed in HARD_FRAME_PARITY_SEEDS:
         parity_check = _parity_check(seed, effective_parity_runner(seed))
         hard_frame_all.append(parity_check)
-        outcomes.append(_check_outcome(parity_check))
+        outcomes.append(record(parity_check))
 
     # Stage 5: research frame suites (H-K) and the in-process spec oracle.
     research_checks = ci_verify_pytest_parity_suites(
@@ -756,11 +814,11 @@ def _run_gate_detailed(
     )
     research_all: list[CheckResult] = list(research_checks)
     checks["research-frames"] = research_all
-    outcomes.extend(_check_outcome(check) for check in research_checks)
+    outcomes.extend(record(check) for check in research_checks)
     effective_research_runner = research_runner or _default_research_runner
     research_adversarial = _research_check(effective_research_runner())
     research_all.append(research_adversarial)
-    outcomes.append(_check_outcome(research_adversarial))
+    outcomes.append(record(research_adversarial))
 
     # Stage 6: bounded deterministic differential fuzzing.
     seeds, case_count = _fuzz_plan(mode)
@@ -774,7 +832,7 @@ def _run_gate_detailed(
         jobs=effective_jobs,
     )
     checks["diff-fuzz"] = fuzz_checks
-    outcomes.extend(_check_outcome(check) for check in fuzz_checks)
+    outcomes.extend(record(check) for check in fuzz_checks)
     blockers.extend(fuzz_blockers)
 
     # Stage 7: cargo check + clippy with an isolated target directory.
@@ -807,7 +865,7 @@ def _run_gate_detailed(
                 stderr=f"cargo executable not found: {cargo_exe}",
             )
             checks["cargo"] = (unavailable,)
-            outcomes.append(_check_outcome(unavailable))
+            outcomes.append(record(unavailable))
             blockers.append(
                 "cargo: executable not found; native checks are mandatory "
                 "unless --allow-missing-cargo is supplied"
@@ -825,14 +883,14 @@ def _run_gate_detailed(
             cargo_executable=cargo_exe,
         )
         checks["cargo"] = cargo_checks
-        outcomes.extend(_check_outcome(check) for check in cargo_checks)
+        outcomes.extend(record(check) for check in cargo_checks)
 
     # Stage 8: docs sync and docs lint.
     docs_checks = ci_verify_docs_sync_and_lint(
         root=root_path, runner=command_runner, python_executable=python_exe
     )
     checks["docs"] = docs_checks
-    outcomes.extend(_check_outcome(check) for check in docs_checks)
+    outcomes.extend(record(check) for check in docs_checks)
 
     # Stage 9: git worktree cleanliness (explicit SKIP with --allow-dirty).
     git_command: tuple[str, ...] = ("git", "status", "--short")
@@ -855,7 +913,7 @@ def _run_gate_detailed(
             ignore_patterns=(".artifacts/*",),
         )
         checks["git-worktree"] = (git_check,)
-        outcomes.append(_check_outcome(git_check))
+        outcomes.append(record(git_check))
 
     # Stage 10: cargo fmt --check + cargo doc with an isolated target directory.
     fmt_command: tuple[str, ...] = (cargo_exe, "fmt", "--all", "--", "--check")
@@ -879,7 +937,7 @@ def _run_gate_detailed(
                 stderr=f"cargo executable not found: {cargo_exe}",
             )
             checks["rust-format-doc"] = (unavailable,)
-            outcomes.append(_check_outcome(unavailable))
+            outcomes.append(record(unavailable))
             blockers.append(
                 "rust-format-doc: executable not found; native checks are "
                 "mandatory unless --allow-missing-cargo is supplied"
@@ -891,33 +949,33 @@ def _run_gate_detailed(
             cargo_executable=cargo_exe,
         )
         checks["rust-format-doc"] = rust_doc_checks
-        outcomes.extend(_check_outcome(check) for check in rust_doc_checks)
+        outcomes.extend(record(check) for check in rust_doc_checks)
 
     # Stage 11: installed dependencies and minimal project metadata.
     audit_checks = ci_verify_dependency_audit(
         root=root_path, python_executable=python_exe
     )
     checks["dependency-audit"] = audit_checks
-    outcomes.extend(_check_outcome(check) for check in audit_checks)
+    outcomes.extend(record(check) for check in audit_checks)
 
     # Stage 12: relative links in tracked Markdown docs.
     doc_links_check = ci_verify_doc_links(root=root_path, python_executable=python_exe)
     checks["doc-links"] = (doc_links_check,)
-    outcomes.append(_check_outcome(doc_links_check))
+    outcomes.append(record(doc_links_check))
 
     # Stage 13: deterministic benchmark regression guard.
     benchmark_check = ci_verify_benchmark_regression(
         root=root_path, python_executable=python_exe
     )
     checks["benchmark-regression"] = (benchmark_check,)
-    outcomes.append(_check_outcome(benchmark_check))
+    outcomes.append(record(benchmark_check))
 
     # Stage 14: wheel/sdist include-list coverage.
     metadata_check = ci_verify_release_metadata(
         root=root_path, python_executable=python_exe
     )
     checks["release-metadata"] = (metadata_check,)
-    outcomes.append(_check_outcome(metadata_check))
+    outcomes.append(record(metadata_check))
 
     report = ci_generate_release_gate_report(
         checks=checks,
@@ -1038,6 +1096,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print()
                 print(f"--- {outcome.name} output (last lines) ---")
                 print(outcome.tail)
+            if outcome.log_path:
+                print(f"--- {outcome.name} full output: {outcome.log_path} ---")
     return 0 if report.passed else 1
 
 

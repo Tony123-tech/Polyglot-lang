@@ -868,3 +868,59 @@ def test_ci_verify_release_metadata_pass_and_fail(tmp_path: Path) -> None:
     failed = ci_framework.ci_verify_release_metadata(root=root)
     assert not failed.ok
     assert "compiler" in failed.stderr
+
+
+def _segfault_stderr() -> str:
+    """What `PYTHONFAULTHANDLER=1` printed for the Linux gate's exit -11."""
+    lines = [f"noise line {index}" for index in range(30)]
+    lines += [
+        "Fatal Python error: Segmentation fault",
+        "",
+        "Current thread 0x00007f (most recent call first):",
+        '  File "/repo/runtime/hotpatch/trampoline.py", line 577 in resolve_symbol',
+        '  File "/repo/tests/test_quantum_hotpatch.py", line 972 in test_got_discovery',
+    ]
+    lines += [
+        f'  Binary file "/usr/lib/libc.so.6", at +0x{index:04x}' for index in range(50)
+    ]
+    return "\n".join(lines)
+
+
+def test_failing_check_shows_the_fault_block_not_its_tail(tmp_path: Path) -> None:
+    check = CheckResult(
+        name="pytest-full",
+        command=("python", "-m", "pytest", "-q"),
+        returncode=-11,
+        stdout="",
+        stderr=_segfault_stderr(),
+    )
+    outcome = release_gate._check_outcome(check)
+    assert outcome.tail.startswith("Fatal Python error: Segmentation fault")
+    assert "test_got_discovery" in outcome.tail
+    assert "Binary file" not in outcome.tail.splitlines()[:6]
+
+    path = Path(release_gate._write_failure_log(tmp_path, outcome, check))
+    saved = path.read_text()
+    assert saved.startswith("### stderr")
+    assert "test_got_discovery" in saved
+    assert path.name == "pytest-full.log"
+    assert path.parent.name == "failures"
+
+
+def test_passing_check_never_writes_a_failure_log(tmp_path: Path) -> None:
+    check = _pass_check("ruff")
+    outcome = release_gate._check_outcome(check)
+    assert outcome.tail == ""
+    assert release_gate._write_failure_log(tmp_path, outcome, check) == ""
+
+
+def test_plain_failure_without_a_fault_block_still_gets_a_tail(tmp_path: Path) -> None:
+    check = CheckResult(
+        name="cargo",
+        command=("cargo", "build"),
+        returncode=101,
+        stdout="",
+        stderr="error[E0308]: mismatched types\n  --> src/lib.rs:3",
+    )
+    outcome = release_gate._check_outcome(check)
+    assert outcome.tail.splitlines()[-1] == "  --> src/lib.rs:3"
