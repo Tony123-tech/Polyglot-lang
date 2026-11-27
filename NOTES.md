@@ -24,13 +24,13 @@
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3513 passed, 5 skipped, 31 deselected (fast suite, after the console-script path fix in 12.2); slow suite 31 passed, 3517 deselected.
+**Latest baseline:** 3518 passed, 5 skipped, 31 deselected (fast suite, after the demo smoke test and the Linux `RTLD_DEFAULT` fix); slow suite 31 passed, 3518 deselected.
 
 **Baseline ledger.** The counts quoted further down are the numbers printed by the
 run that closed each batch, oldest first: 3258 (comprehension pass) → 3340
 (priority features) → 3390 (runtime failure reporting, 11.30) → 3411 (explicit
 `drop` and borrow conflicts, 11.31) → 3498 (Rust ergonomics, 11.32) → 3511
-(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2), 3513 (xdist parallelization and pinned `scalar-add` parity). Two sections
+(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2), 3513 (xdist parallelization and pinned `scalar-add` parity) → 3518 (demo smoke test, `RTLD_DEFAULT` platform value, gate failure logs). Two sections
 still quote 3258 because the later section copied the earlier figure instead of
 re-running the suite; read each quoted count as the close of its own batch, not as
 the current total.
@@ -2608,3 +2608,34 @@ and the emitted code cannot both be wrong in the same way.
 
 **Lesson:** a failing probe is evidence about *someone's* arithmetic, not
 necessarily the compiler's. Cross-check before editing the lowering.
+
+## The Linux CI segfault — `RTLD_DEFAULT` is not -2 everywhere
+
+**Symptom:** the ubuntu release gate failed at `pytest-full ... [exit -11]` while
+the macOS job on the same commit passed, and the rest of the gate was green. The
+fault handler (added hours earlier) named the frame:
+
+```
+Fatal Python error: Segmentation fault
+  File "runtime/hotpatch/trampoline.py", line 577 in resolve_symbol
+  File "tests/test_quantum_hotpatch.py", line 972 in test_got_discovery_finds_a_bound_symbol
+```
+
+**Cause:** `RTLD_DEFAULT` was written as `ctypes.c_void_p(-2)`, which is what dyld
+uses for "search every loaded image". glibc spells it `NULL` and treats *any*
+other handle as a `link_map *`, so `dlsym(0xfffffffffffffffe, "getpid")` reads
+that address and dies. It is not an error the caller can observe: there is no
+return value to test, no `errno`, no exception — the interpreter is gone. Verified
+directly on x86_64 Linux: `c_void_p(0)` returns the address, `c_void_p(-2)`
+segfaults. macOS never runs the branch that fails, which is why a one-line
+constant could pass 3,513 tests locally and still kill the Linux job.
+
+**Fix:** the handle is now chosen per platform (`-2 if _DARWIN else 0`), with the
+reason written next to it, and `test_rtld_default_carries_the_platform_value`
+asserts the value on either platform so the constant cannot silently drift back.
+
+**Lesson:** a "constant" borrowed from one C library's headers is a platform
+assumption, and the dangerous ones do not fail loudly. The gate's new habit —
+keeping the full stdout/stderr of a failing check under `.artifacts/` and printing
+the fault handler's block instead of the last twenty-five lines — is what made
+this findable at all: `exit -11` alone says nothing about where.
