@@ -26,7 +26,7 @@ Example:
 from backends.base import (
     Backend,
     UntrustedCompileError,
-    get_backend,
 )
+from backends.registry import get_backend
 
 __all__ = ["Backend", "UntrustedCompileError", "get_backend"]

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from backends.base import get_backend
+from backends import get_backend
 from backends.python.runtime import (
     HOST_TARGET_WIDTH,
     get_target_width,

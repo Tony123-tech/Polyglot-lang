@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import fnmatch
 import importlib
+import os
+import subprocess
+import sys
 import tomllib
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -103,3 +106,30 @@ def test_regression_harness_reexport_matches_canonical_module() -> None:
     assert shim.__all__ == canonical.__all__
     for name in canonical.__all__:
         assert getattr(shim, name) is getattr(canonical, name)
+
+
+def test_backend_interface_does_not_import_a_concrete_backend() -> None:
+    """``backends.base`` must stay free of backend imports (no R0401 cycle).
+
+    Every backend module inherits ``BackendBase``, so one top-level import from
+    ``base`` towards a backend closes a cycle in the import graph.  The factory
+    lives in ``backends.registry`` for exactly that reason; this probe runs in a
+    fresh interpreter because the current one has already imported the backends.
+    """
+    probe = (
+        "import sys\n"
+        "import backends.base\n"
+        "print(sorted(n for n in sys.modules if n.startswith(('backends', 'zig'))))\n"
+    )
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    loaded = result.stdout.strip()
+    assert loaded == "['backends', 'backends.base', 'backends.registry']", loaded

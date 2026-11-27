@@ -24,13 +24,14 @@
 - Bug log convention: every defect found gets its own `Symptom` / `Cause` / `Fix` / `Lesson` entry here before or alongside the fix commit
 - Latest fixes: `check_program` import order, UTF-8 string indexing in `stdlib`, native cache manifest validation
 
-**Latest baseline:** 3519 passed, 5 skipped, 31 deselected (fast suite, after the demo smoke test, the Linux `RTLD_DEFAULT` fix and the GOT-scan restriction); slow suite 31 passed, 3519 deselected.
+**Latest baseline:** 3520 passed, 5 skipped, 31 deselected (fast suite, after the demo smoke test, the Linux `RTLD_DEFAULT` fix, the GOT-scan restriction and the backend-registry split); slow suite 31 passed, 3520 deselected.
 
 **Baseline ledger.** The counts quoted further down are the numbers printed by the
 run that closed each batch, oldest first: 3258 (comprehension pass) → 3340
 (priority features) → 3390 (runtime failure reporting, 11.30) → 3411 (explicit
 `drop` and borrow conflicts, 11.31) → 3498 (Rust ergonomics, 11.32) → 3511
-(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2), 3513 (xdist parallelization and pinned `scalar-add` parity) → 3518 (demo smoke test, `RTLD_DEFAULT` platform value, gate failure logs) → 3519 (GOT scan restricted to readable file-backed mappings). Two sections
+(host-interpreter floor, 12.1) → 3512 (console-script path fix, 12.2), 3513 (xdist parallelization and pinned `scalar-add` parity) → 3518 (demo smoke test, `RTLD_DEFAULT` platform value, gate failure logs) → 3519 (GOT scan restricted to readable
+file-backed mappings) → 3520 (`backends.base` import-graph probe). Two sections
 still quote 3258 because the later section copied the earlier figure instead of
 re-running the suite; read each quoted count as the close of its own batch, not as
 the current total.
@@ -2669,3 +2670,70 @@ An `exit -11` with a 25-line tail of addresses would still be an open bug. The
 deeper lesson is about the diagnostic itself: "scan all writable memory" is a
 sentence that sounds bounded and is not — the bounds were never written down, so
 nothing could check them.
+
+## pylint 9.19: one artifact, and nine import cycles that were real
+
+**Symptom:** `pylint . -j 4` rates the tree 9.19/10 and prints a hundred-plus
+`R0801` (duplicate-code) blocks plus ten `R0401` (cyclic-import) blocks, every
+last one headed `debug/timetravel.py:1:0`. That file is a small debug helper and
+duplicates none of it.
+
+**Cause:** both checks are graph-level. `duplicate-code` compares the modules it
+has seen against each other and `cyclic-import` walks the aggregated import graph;
+both finalise after the per-file pass, so the message is attached to whichever
+module happens to be current when they fire — the last one processed. Verified by
+running `pylint --disable=all --enable=R0801 diagnostics/format.py
+diagnostics/telemetry.py`: the two blocks come back under
+`diagnostics/telemetry.py:1:0`, and the actual pair only appears inside the body
+of the message (`==diagnostics.format:[81:95]` /
+`==diagnostics.telemetry:[112:126]`). The header file is not the duplicate and
+`debug/timetravel.py` is not the culprit.
+
+**Fix:** no duplicate block was touched. Seven of the ten cycles came from one
+place: `backends/base.py` held `get_backend()`, whose body imports each concrete
+backend, while every backend imports `BackendBase` from `base`. The imports were
+already lazy, so nothing failed at runtime, but the module graph carried a cycle
+per backend. `get_backend()` now lives in `backends/registry.py`, `base` imports
+nothing from the backends at any level, and `backends/__init__.py` still exports
+the factory, so `from backends import get_backend` is unchanged. The only in-tree
+caller of `from backends.base import get_backend` was `tests/test_n7_usize.py`.
+R0401: 10 → 3.
+
+**Lesson:** pylint counts a function-local import as a module edge, which is why
+"the import is lazy, so there is no cycle" — true for the importer — still reports
+as `R0401`. The three that remain have that same shape inside a single backend
+family (`move_check ↔ borrow_checker`, `rust.compiler ↔ rust.codegen`,
+`wasm.codegen ↔ wasm.aggregates`): one side owns an exception class, the other
+imports it late. Clearing them means relocating those classes to standalone
+modules — churn with no runtime benefit, so they stay, documented rather than
+silenced with a disable.
+
+**Duplicate code, deferred.** The `R0801` pairs are 5–15 line per-module helpers
+(`_text`/`_integer`/`_fail`, the `"i8"…"u128"` width tables, `__all__` re-export
+lists) plus the HIR/MIR twins. They exist because each module keeps its own
+validators; merging them is a cross-module refactor with a wide blast radius and
+is not something a lint pass can do. Recorded here so the rating is not read as an
+unfinished cleanup.
+
+## The incremental-rebuild test was timing a warm scope
+
+**Symptom:** `pytest -q` failed
+`tests/test_native_skeleton.py::test_incremental_rebuild_only_recompiles_changed_function`
+with "incremental rebuild burned 6.69s of CPU vs 6.01s for the initial build" —
+the rebuild cost more than the build it was meant to beat — while the same test
+passed on its own.
+
+**Cause:** the test pinned `cache_scope="incremental-test"`, so every run reused
+one cargo `target` directory. A per-run `module_name` kept the *artifact*
+distinct, but not the compile cache: once the scope was warm, the initial build
+was already as cheap as an incremental one and the 0.75× budget stopped
+separating them. Under xdist load the two costs landed within noise of each
+other.
+
+**Fix:** the scope is per-run (`incremental-<module_name>`), so the first build is
+a cold crate build and the second reuses the `target` it just populated. Still a
+child-CPU ratio, not wall clock.
+
+**Lesson:** a timing assertion is only meaningful when the state it measures is
+fresh. `cache_scope` reads like test isolation, but it isolates artifacts, not
+the compiler's cache.

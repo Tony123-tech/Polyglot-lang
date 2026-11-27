@@ -49,7 +49,11 @@ def test_incremental_rebuild_only_recompiles_changed_function(native_backend):
 
     # A per-run module name keeps this test from hitting an artifact built by
     # an earlier run, so the second build really exercises incremental Cargo.
+    # The cargo scope has to be per-run as well: a shared scope keeps a warm
+    # ``target`` directory, which makes the *first* build as cheap as the
+    # incremental one and turns the ratio below into a coin flip.
     module_name = f"polyglot_incr_{uuid.uuid4().hex[:8]}"
+    cache_scope = f"incremental-{module_name}"
     backend = native_backend
     first = parse(lex(SOURCE))
     started_cpu = _child_cpu_seconds()
@@ -57,7 +61,7 @@ def test_incremental_rebuild_only_recompiles_changed_function(native_backend):
         first,
         module_name=module_name,
         incremental=True,
-        cache_scope="incremental-test",
+        cache_scope=cache_scope,
     )
     first_build_cpu = _child_cpu_seconds() - started_cpu
     assert ns["main"]() == 25
@@ -69,7 +73,7 @@ def test_incremental_rebuild_only_recompiles_changed_function(native_backend):
         changed,
         module_name=module_name,
         incremental=True,
-        cache_scope="incremental-test",
+        cache_scope=cache_scope,
     )
     rebuild_cpu = _child_cpu_seconds() - started_cpu
 
