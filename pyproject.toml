@@ -75,7 +75,11 @@ markers = [
     "generated: marks generated edge-case grids (python backend, no cargo)",
     "generated_heavy: marks optional generated grids that are too slow by default",
 ]
-addopts = "-m 'not slow and not generated_heavy'"
+# Tests are independent, so the default run fans out across all cores
+# (pytest-xdist is a dev dependency). `--dist load` spreads individual tests
+# rather than whole files, which keeps the native/cargo-heavy modules from
+# landing on a single worker.
+addopts = "-m 'not slow and not generated_heavy' -n auto --dist load"
 
 [tool.ruff.lint]
 ignore = ["ISC004", "BLE001", "B017"]
