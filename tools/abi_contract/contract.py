@@ -34,7 +34,7 @@ def _lazy_zig_abi() -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Error codes shared across all backends (E001-E008).
+# Error codes shared across all backends (E001-E009).
 # ---------------------------------------------------------------------------
 
 ERROR_DESCRIPTIONS: Final[dict[str, str]] = {
@@ -46,6 +46,7 @@ ERROR_DESCRIPTIONS: Final[dict[str, str]] = {
     "E006": "missing module, snapshot, or artifact",
     "E007": "unsupported native pattern or platform feature",
     "E008": "malformed serialized state or literal encoding",
+    "E009": "ownership, move, drop, or borrow violation",
 }
 
 # Canonical errno/name/recoverable model for each code, mirrored in zig/abi.py
@@ -59,10 +60,11 @@ ERROR_MODEL: Final[dict[str, dict[str, Any]]] = {
     "E006": {"errno": 2, "name": "missing_artifact", "recoverable": True},
     "E007": {"errno": 95, "name": "unsupported_feature", "recoverable": False},
     "E008": {"errno": 84, "name": "malformed_state", "recoverable": False},
+    "E009": {"errno": 22, "name": "ownership_violation", "recoverable": False},
 }
 
 ALL_ERROR_CODES: Final[tuple[str, ...]] = tuple(
-    f"E{index:03d}" for index in range(1, 9)
+    f"E{index:03d}" for index in range(1, 10)
 )
 
 PILLAR_ERROR_MEMBERS: Final[tuple[str, ...]] = ALL_ERROR_CODES
@@ -409,7 +411,7 @@ def zig_slice_layout(element_type: str, *, word: int = 8) -> SliceLayout:
 
 
 def zig_error_info(code: str) -> ErrorInfo:
-    """Look up the modeled error info for one E001-E008 code."""
+    """Look up the modeled error info for one E001-E009 code."""
     zig = _lazy_zig_abi()
     mapped = zig.zabi_error_map(code)
     return ErrorInfo(

@@ -49,7 +49,7 @@ __all__ = [
     "cio_write_batch",
 ]
 
-_CODES = frozenset(f"E{value:03d}" for value in range(1, 9))
+_CODES = frozenset(f"E{value:03d}" for value in range(1, 10))
 _PRIMITIVES = frozenset({"event", "queue", "timer"})
 _PLATFORMS: dict[str, tuple[str, ...]] = {
     "posix": ("file", "pipe", "socket", "timer"),

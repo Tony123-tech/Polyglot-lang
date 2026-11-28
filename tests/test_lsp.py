@@ -9,6 +9,7 @@ from typing import Any
 from api.lsp import (
     ServerState,
     _lsp_diagnostic,
+    _position_to_offset,
     drain_notifications,
     handle_request,
     read_message,
@@ -359,6 +360,36 @@ def test_lsp_diagnostic_converts_multiline_span_and_line_col_fallback() -> None:
         "start": {"line": 1, "character": 3},
         "end": {"line": 1, "character": 4},
     }
+
+
+def test_lsp_positions_and_incoming_offsets_are_utf16() -> None:
+    text = "🙂 abcdef"
+    item = _lsp_diagnostic(
+        text,
+        {"code": "E003", "message": "boom", "span": [2, 5], "line": 1, "col": 3},
+    )
+
+    # The emoji occupies two UTF-16 code units but one Python character.
+    assert item["range"] == {
+        "start": {"line": 0, "character": 3},
+        "end": {"line": 0, "character": 6},
+    }
+    assert _position_to_offset(text, {"line": 0, "character": 3}) == 2
+
+
+def test_did_open_publishes_every_recovered_syntax_error() -> None:
+    state = ServerState()
+    text = "fn a() { let = 1; }\nfn b() { let = 2; }\n"
+    handle_request(
+        state,
+        "textDocument/didOpen",
+        {"textDocument": {"uri": "file:///many.poly", "text": text}},
+    )
+
+    items = _one_notification(state)["params"]["diagnostics"]
+    assert len(items) == 2
+    assert [item["code"] for item in items] == ["SYNTAX", "SYNTAX"]
+    assert [item["range"]["start"]["line"] for item in items] == [0, 1]
 
 
 def test_serve_flushes_publish_diagnostics_notification() -> None:

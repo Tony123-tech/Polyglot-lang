@@ -286,6 +286,51 @@ fn char_to_ascii_lowercase(value: char) -> char {
     value.to_ascii_lowercase()
 }
 """,
+    "string_batch_methods": """
+fn string_batch_replace_range(mut value: String) -> String {
+    value.replace_range(1..3, "XYZ");
+    value
+}
+fn string_batch_insert_str(mut value: String) -> String {
+    value.insert_str(1, "--");
+    value
+}
+fn string_batch_insert(mut value: String) -> String {
+    value.insert(1, '!');
+    value
+}
+fn string_batch_remove(mut value: String) -> (String, char) {
+    let removed = value.remove(1);
+    (value, removed)
+}
+fn string_batch_truncate(mut value: String) -> String {
+    value.truncate(2);
+    value
+}
+fn string_batch_split_at(value: String) -> (String, String) {
+    value.split_at(2)
+}
+fn string_batch_split_off(mut value: String) -> (String, String) {
+    let tail = value.split_off(2);
+    (value, tail)
+}
+fn string_batch_retain(mut value: String) -> String {
+    value.retain(|character| character != 'x');
+    value
+}
+fn string_batch_match_indices(value: String) -> Vec<(i64, String)> {
+    value.match_indices("ab")
+}
+fn string_batch_rmatch_indices(value: String) -> Vec<(i64, String)> {
+    value.rmatch_indices("ab")
+}
+fn string_batch_split_inclusive(value: String) -> Vec<String> {
+    value.split_inclusive(",")
+}
+fn string_batch_rsplit_inclusive(value: String) -> Vec<String> {
+    value.rsplit_inclusive(",")
+}
+""",
 }
 
 
@@ -1031,3 +1076,56 @@ def test_python_char_to_ascii_lowercase_parity():
     assert namespace["char_to_ascii_lowercase"]("Z") == "z"
     assert namespace["char_to_ascii_lowercase"]("É") == "É"
     assert namespace["char_to_ascii_lowercase"]("1") == "1"
+
+
+@pytest.mark.native
+@pytest.mark.parametrize(
+    ("name", "args", "expected"),
+    [
+        ("string_batch_replace_range", ("abcdef",), "aXYZdef"),
+        ("string_batch_insert_str", ("abcd",), "a--bcd"),
+        ("string_batch_insert", ("abcd",), "a!bcd"),
+        ("string_batch_remove", ("abcd",), ("acd", "b")),
+        ("string_batch_truncate", ("abcdef",), "ab"),
+        ("string_batch_split_at", ("abcd",), ("ab", "cd")),
+        ("string_batch_split_off", ("abcd",), ("ab", "cd")),
+        ("string_batch_retain", ("axbyxc",), "abyc"),
+        ("string_batch_match_indices", ("abxabab",), [(0, "ab"), (3, "ab"), (5, "ab")]),
+        (
+            "string_batch_rmatch_indices",
+            ("abxabab",),
+            [(5, "ab"), (3, "ab"), (0, "ab")],
+        ),
+        ("string_batch_split_inclusive", ("a,b,",), ["a,", "b,"]),
+        ("string_batch_rsplit_inclusive", ("a,b,",), ["b,", "a,"]),
+    ],
+)
+def test_native_string_batch_methods(native_ns, name, args, expected):
+    assert native_ns[name](*args) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "expected"),
+    [
+        ("string_batch_replace_range", ("abcdef",), "aXYZdef"),
+        ("string_batch_insert_str", ("abcd",), "a--bcd"),
+        ("string_batch_insert", ("abcd",), "a!bcd"),
+        ("string_batch_remove", ("abcd",), ("acd", "b")),
+        ("string_batch_truncate", ("abcdef",), "ab"),
+        ("string_batch_split_at", ("abcd",), ("ab", "cd")),
+        ("string_batch_split_off", ("abcd",), ("ab", "cd")),
+        ("string_batch_retain", ("axbyxc",), "abyc"),
+        ("string_batch_match_indices", ("abxabab",), [(0, "ab"), (3, "ab"), (5, "ab")]),
+        (
+            "string_batch_rmatch_indices",
+            ("abxabab",),
+            [(5, "ab"), (3, "ab"), (0, "ab")],
+        ),
+        ("string_batch_split_inclusive", ("a,b,",), ["a,", "b,"]),
+        ("string_batch_rsplit_inclusive", ("a,b,",), ["b,", "a,"]),
+    ],
+)
+def test_python_string_batch_methods(name, args, expected):
+    namespace = compile_rust(parse(lex(SOURCES["string_batch_methods"])))
+
+    assert namespace[name](*args) == expected

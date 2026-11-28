@@ -382,7 +382,7 @@ def test_ctask_error_aggregate_groups_by_code() -> None:
     )
     assert report["count"] == 2
     assert report["by_code"]["E004"] == ("a: boom", "b: x")
-    _expect_code("E003", ctask.ctask_error_aggregate, [{"code": "E009", "name": "bad"}])
+    _expect_code("E003", ctask.ctask_error_aggregate, [{"code": "E010", "name": "bad"}])
 
 
 def test_ctask_pause_resume_cancellation_is_terminal() -> None:

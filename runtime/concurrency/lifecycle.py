@@ -36,7 +36,7 @@ __all__ = [
     "clife_shutdown_run",
 ]
 
-_CODES = frozenset(f"E{value:03d}" for value in range(1, 9))
+_CODES = frozenset(f"E{value:03d}" for value in range(1, 10))
 _RELEASERS = ("close", "release", "shutdown", "stop")
 
 

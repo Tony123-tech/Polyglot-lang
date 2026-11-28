@@ -212,7 +212,11 @@ documented subset:
 | `include!` directive; bundled `std:` library | ✅ | ✅ |
 | `vec![...]`, `String::from(...)`, lazy `unwrap_or_else` | ✅ | ✅ |
 | `if let` (`Some`/`None`/`Ok`/`Err`), statement & expression position | ✅ | ✅ |
-| `HashMap::entry(...)` (`or_default`, `or_insert`, …) | ✅ | ✅ |
+| `while let`, `let else`, struct update `rest`, type aliases | ✅ | ✅ |
+| Simple `use`, inline `mod`, labelled `break`/`continue` | ✅ | ✅ |
+| Extended Vec/String/BTreeMap/HashSet methods | ✅ | ✅ |
+| Borrowed `&Vec<T>` / `&String` parameters | ✅ | ✅ (owned `Vec` boundary) |
+| `HashMap::entry(...)` (`or_default`, `or_insert`, `insert`, …) | ✅ | ✅ |
 | Error codes `E001`–`E009` + structured fix hints | ✅ | ✅ |
 | LSP `publishDiagnostics` on open/change/save | ✅ | ✅ |
 | `#[terminates]` checking, incl. multiple self-recursive calls | ✅ | ✅ |
@@ -221,6 +225,15 @@ documented subset:
 | Async `&self` / `&mut self` impl methods | ✅ | ✅ |
 | Cross-thread Send awaits, drop-based cancellation, reactor timers | ⬜ | ✅ |
 | Box patterns, payload enum slices | ✅ | ⬜ Deferred |
+
+A native `&Vec<T>` parameter is exported to Python as an owned `Vec<T>` that is
+forwarded to an internal `&[T]` implementation, because PyO3 cannot extract a
+generic slice; `&String` is exposed as `&str`. Native source attributes are
+emitted for `#[inline]`, `#[cold]`, `#[must_use]` on `Result`-returning
+functions, and `#[repr(transparent)]` on a single-field struct without
+compiler-inserted borrow state. Index reads and assignment targets are guarded
+on the Python backend; native assignment still uses Rust indexing and panics on
+an out-of-range index (SPEC 2.9.1, 8.23, 10.54).
 
 `BTreeMap` iteration is sorted by key in both backends; `HashSet` iteration order
 is unspecified — sort before comparing. `get_mut` on `BTreeMap`/`HashSet`
@@ -300,7 +313,7 @@ Every diagnostic carries a stable code:
 | Code | Raised by | Meaning |
 |------|-----------|---------|
 | `E001` | `TypeErrorForBoundary` | Implicit conversion between different integer types; add an explicit `as` cast. SPEC 2.4.6–2.4.7. |
-| `E002` | `TerminationError`, `RuntimeFailure` | A `#[terminates]` function has no supported termination proof, or a runtime guard failed (division by zero, index out of bounds, `panic!`, a failed `assert!`). SPEC 2.8, 2.9. |
+| `E002` | `TerminationError`, `RuntimeFailure` | A `#[terminates]` function has no supported termination proof, or a runtime guard failed (division by zero, an out-of-bounds index read or index assignment on the Python backend, `panic!`, a failed `assert!`). SPEC 2.8, 2.9. |
 | `E003` | `TranslateError` | AST-to-backend translation failure (unsupported construct, invalid pattern). Python backend only; native reports `E004` or `E007`. |
 | `E004` | `RustCompileError` | Generated Rust failed to compile; original source location included when available. |
 | `E005` | `IncludeCycleError` | Cyclic `include!` chain; the full chain is printed. SPEC 9.2. |
@@ -310,9 +323,10 @@ Every diagnostic carries a stable code:
 | `E009` | `MoveError`, `BorrowError` | An ownership violation: an owned value (`String`, `Vec`, struct, enum) is used after it was moved, used or released after `drop(x)`, dropped twice, or moved/assigned while borrowed. The message names the binding and both lines. SPEC 8.16. |
 
 Fix hints are local and deterministic (currently an edit only for implicit `as`
-casts under `E001`). The language server publishes at most one diagnostic per
-validation event and does not apply UTF-16 code-unit encoding to positions
-(SPEC 10.39, 10.40).
+casts under `E001`). The language server publishes every syntax error recovered
+from one document together with the front-end check diagnostics, and converts
+positions to and from UTF-16 LSP code units at the protocol boundary (SPEC
+10.39, 10.40).
 
 ## Platform & runtime boundaries
 
@@ -386,8 +400,8 @@ pytest -q tests/test_mojo_bridge.py
   one pass/fail report; the research runner is injectable so verification never
   spawns native or JIT code.
 
-**Current test status:** 3520 passed, 5 skipped, 31 deselected (`pytest -q`);
-31 passed, 3520 deselected (`pytest -q -m slow`).
+**Current test status:** 3596 passed, 5 skipped, 31 deselected (`pytest -q`);
+31 passed, 3601 deselected (`pytest -q -m slow`).
 
 The Zig backend was upgraded for Zig 0.17.1 (signed `/`/`%` to `@divTrunc`/`@rem`,
 unchecked slice indexing, labeled-block `break <value>`, and
@@ -413,9 +427,9 @@ Select a backend with `get_backend("python")`, `get_backend("native")`,
 ## Known limitations
 
 - `#[gpu]` and `#[npu]` annotations are rejected with `E007` before lowering.
-- `while let Some(x) = iter.next()` and language-level async timer/I/O
-  primitives are out of scope. `polyglot_sleep_ms`, `polyglot_readable`, and
-  `await_with_timeout` are runtime/test helpers only (SPEC 8.2, 10.34).
+- Language-level async timer/I/O primitives are out of scope.
+  `polyglot_sleep_ms`, `polyglot_readable`, and `await_with_timeout` are
+  runtime/test helpers only (SPEC 8.2, 10.34).
 - Box patterns, enum payload slices, and nested Vec slice patterns are
   Python-only; `is_ok`/`is_err`/`map_err`/`ok_or`/`and_then`/`or_else` are
   Python-only inside let-bindings.
@@ -442,6 +456,10 @@ Select a backend with `get_backend("python")`, `get_backend("native")`,
   violation: the shared pass decides `E009` once for both backends, while
   `rustc` still makes its own decisions (SPEC 8.16.2, 10.58). `polyglot explain
   E009` shows the fix.
+- The located runtime guard for an index assignment target (`v[i] = x`,
+  including compound assignment) is Python-only. The native backend still emits
+  Rust indexing, so an out-of-range assignment panics instead of raising
+  `RuntimeFailure` (SPEC 2.9.1, 10.54).
 - **The Python backend is slow on call-heavy code.** Transpiled functions wrap
   their arguments, so recursive `fib` runs about 15x slower than CPython, while a
   tight typed `for` loop can beat CPython. Numbers and method:

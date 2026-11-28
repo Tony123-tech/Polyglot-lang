@@ -117,6 +117,13 @@ fn n7_param_nested_get(target: &N7Outer, key: String) -> i64 {
     target.inner.values.get(&key).unwrap_or(-1)
 }
 """,
+    "map_entry_insert": """
+fn n7_entry_insert(
+    mut values: HashMap<String, i64>, key: String, value: i64,
+) -> i64 {
+    *values.entry(key).insert(value)
+}
+""",
     "map_entry_key": """
 fn n7_entry_key(mut values: HashMap<String, i64>, key: String) -> String {
     values.entry(key).key().clone()
@@ -222,6 +229,23 @@ fn n7_map_values_mut_scale(
         *value *= factor;
     }
     values.values()
+}
+""",
+    "btreemap_hashset_batch": """
+fn n7_btreemap_first_key_value(values: BTreeMap<i64, i64>) -> Option<(i64, i64)> {
+    values.first_key_value()
+}
+fn n7_btreemap_pop_first(mut values: BTreeMap<i64, i64>) -> Option<(i64, i64)> {
+    values.pop_first()
+}
+fn n7_btreemap_range(values: BTreeMap<i64, i64>) -> Vec<(i64, i64)> {
+    values.range(2..5)
+}
+fn n7_btreemap_range_inclusive(values: BTreeMap<i64, i64>) -> Vec<(i64, i64)> {
+    values.range(2..=4)
+}
+fn n7_hashset_is_subset(left: HashSet<i64>, right: HashSet<i64>) -> bool {
+    left.is_subset(&right)
 }
 """,
 }
@@ -484,6 +508,21 @@ def test_python_map_nested_and_param_receivers():
 
 
 @pytest.mark.native
+def test_native_map_entry_insert(native_ns):
+    ns = native_ns
+    assert ns["n7_entry_insert"]({}, "a", 3) == 3
+    assert ns["n7_entry_insert"]({"a": 1}, "a", 9) == 9
+
+
+def test_python_map_entry_insert():
+    ns = _run_python(SOURCES["map_entry_insert"])
+    assert ns["n7_entry_insert"]({}, "a", 3) == 3
+    values = {"a": 1}
+    assert ns["n7_entry_insert"](values, "a", 9) == 9
+    assert values == {"a": 9}
+
+
+@pytest.mark.native
 def test_native_map_entry_key(native_ns):
     ns = native_ns
     assert ns["n7_entry_key"]({}, "missing") == "missing"
@@ -555,3 +594,40 @@ def test_python_map_values_mut():
     assert sorted(ns["n7_map_values_mut_scale"](values, 3)) == [3, 6]
     assert values == {"a": 3, "b": 6}
     assert ns["n7_map_values_mut_scale"]({}, 3) == []
+
+
+@pytest.mark.native
+def test_native_btreemap_hashset_batch(native_ns):
+    values = {3: 30, 1: 10, 2: 20, 4: 40, 5: 50}
+    assert native_ns["n7_btreemap_first_key_value"](values) == (1, 10)
+    assert native_ns["n7_btreemap_first_key_value"]({}) is None
+    assert native_ns["n7_btreemap_pop_first"](values) == (1, 10)
+    assert native_ns["n7_btreemap_range"](values) == [(2, 20), (3, 30), (4, 40)]
+    assert native_ns["n7_btreemap_range_inclusive"](values) == [
+        (2, 20),
+        (3, 30),
+        (4, 40),
+    ]
+    assert native_ns["n7_hashset_is_subset"]({1, 2}, {1, 2, 3}) is True
+    assert native_ns["n7_hashset_is_subset"]({1, 4}, {1, 2, 3}) is False
+
+
+def test_python_btreemap_hashset_batch():
+    ns = _run_python(SOURCES["btreemap_hashset_batch"])
+    values = {3: 30, 1: 10, 2: 20, 4: 40, 5: 50}
+    first = ns["n7_btreemap_first_key_value"](values)
+    assert first.is_some() is True
+    assert first.unwrap() == (1, 10)
+    assert ns["n7_btreemap_first_key_value"]({}).is_none() is True
+    popped = ns["n7_btreemap_pop_first"](values)
+    assert popped.is_some() is True
+    assert popped.unwrap() == (1, 10)
+    assert 1 not in values
+    assert ns["n7_btreemap_range"](values) == [(2, 20), (3, 30), (4, 40)]
+    assert ns["n7_btreemap_range_inclusive"](values) == [
+        (2, 20),
+        (3, 30),
+        (4, 40),
+    ]
+    assert ns["n7_hashset_is_subset"]({1, 2}, {1, 2, 3}) is True
+    assert ns["n7_hashset_is_subset"]({1, 4}, {1, 2, 3}) is False

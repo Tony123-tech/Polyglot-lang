@@ -730,8 +730,11 @@ class _ExpressionInferrer:
             if expr.path in {"println", "print", "eprintln", "eprint", "assert"}:
                 return _atomic("()")
             return None
-        if isinstance(expr, (ast.Loop, ast.While, ast.For)):
-            if isinstance(expr, ast.For):
+        if isinstance(expr, (ast.Loop, ast.While, ast.WhileLet, ast.For)):
+            if isinstance(expr, ast.WhileLet):
+                self._infer(expr.value, env)
+                self._infer_block(expr.body, env)
+            elif isinstance(expr, ast.For):
                 self._infer(expr.iter, env)
             return _atomic("()")
         return None

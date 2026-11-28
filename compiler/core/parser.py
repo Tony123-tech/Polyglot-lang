@@ -130,6 +130,7 @@ from compiler.core.ast_nodes import (
     Unary,
     UseDecl,
     While,
+    WhileLet,
 )
 from compiler.core.lexer import Token, TokenType
 
@@ -319,7 +320,7 @@ class Parser:
                             self.advance()
                             break
                     self.advance()
-                args = "".join(t.value for t in self.tokens[start : self.i - 1])
+                args = "".join(t.value for t in self.tokens[start + 1 : self.i - 1])
             self.expect(TokenType.RBRACKET)
             end_tok = self.tokens[self.i - 1]
             attrs.append(
@@ -1008,6 +1009,7 @@ class Parser:
             elif (
                 self.check(TokenType.RBRACE)
                 and not isinstance(e, (For, While, Loop))
+                and not isinstance(e, WhileLet)
                 and not self._ifexpr_has_stmts(e)
             ):
                 tail = e
@@ -1056,6 +1058,12 @@ class Parser:
             self.expect(TokenType.SEMI)
         return DeferStmt(tok.line, tok.col, body)
 
+    def _take_control_label(self) -> str | None:
+        """Consume an optional ``'label`` control-flow label."""
+        if not self.check(TokenType.LIFETIME):
+            return None
+        return self.advance().value.lstrip("'")
+
     def parse_let(self) -> LetStmt:
         tok = self.expect(TokenType.LET)
         mutable = bool(self.eat(TokenType.MUT))
@@ -1066,8 +1074,19 @@ class Parser:
         value = None
         if self.eat(TokenType.EQ):
             value = self.parse_expr()
+        else_branch = None
+        if value is not None and self.eat(TokenType.ELSE):
+            else_branch = self.parse_block()
         self.expect(TokenType.SEMI)
-        return LetStmt(tok.line, tok.col, pattern, ty, value, mutable)
+        return LetStmt(
+            tok.line,
+            tok.col,
+            pattern,
+            ty,
+            value,
+            mutable,
+            else_branch,
+        )
 
     # ---- expressions (Pratt) ----------------------------------------------
 
@@ -1078,7 +1097,7 @@ class Parser:
             tok = self.peek()
 
             # Statement-only nodes (For/While/Loop) cannot be a binary operand.
-            if isinstance(left, (For, While, Loop)) and tok.type not in (
+            if isinstance(left, (For, While, WhileLet, Loop)) and tok.type not in (
                 TokenType.SEMI,
                 TokenType.RBRACE,
             ):
@@ -1321,19 +1340,22 @@ class Parser:
 
         if tok.type == TokenType.BREAK:
             self.advance()
+            label = self._take_control_label()
             value = None if self._at_expr_end() else self.parse_expr()
             end = (
                 value.span[1]
                 if value is not None and getattr(value, "span", None)
                 else tok.pos + len(tok.value)
             )
-            return Break(tok.line, tok.col, value, span=(tok.pos, end))
+            return Break(tok.line, tok.col, value, label, span=(tok.pos, end))
 
         if tok.type == TokenType.CONTINUE:
             self.advance()
+            label = self._take_control_label()
             return Continue(
                 tok.line,
                 tok.col,
+                label,
                 span=(tok.pos, tok.pos + len(tok.value)),
             )
 
@@ -1345,22 +1367,42 @@ class Parser:
         if tok.type == TokenType.MATCH:
             return self.parse_match()
 
+        # labelled loops: 'outer: loop { ... } / while / for
+        loop_label = None
+        if tok.type == TokenType.LIFETIME:
+            loop_label = self._take_control_label()
+            self.expect(TokenType.COLON)
+            tok = self.peek()
+
         # loop
         if tok.type == TokenType.LOOP:
             self.advance()
             body = self.parse_block()
-            return Loop(tok.line, tok.col, body)
+            return Loop(tok.line, tok.col, body, loop_label)
 
-        # while
+        # while / while let
         if tok.type == TokenType.WHILE:
             self.advance()
+            if self.eat(TokenType.LET):
+                pattern = self.parse_pattern()
+                self.expect(TokenType.EQ)
+                was_while_let = self._parsing_iflet_value
+                self._parsing_iflet_value = True
+                self._no_struct_literal += 1
+                try:
+                    value = self.parse_expr()
+                finally:
+                    self._parsing_iflet_value = was_while_let
+                    self._no_struct_literal -= 1
+                body = self.parse_block()
+                return WhileLet(tok.line, tok.col, pattern, value, body, loop_label)
             self._no_struct_literal += 1
             try:
                 cond = self.parse_expr()
             finally:
                 self._no_struct_literal -= 1
             body = self.parse_block()
-            return While(tok.line, tok.col, cond, body)
+            return While(tok.line, tok.col, cond, body, loop_label)
 
         # for
         if tok.type == TokenType.FOR:
@@ -1376,7 +1418,7 @@ class Parser:
                 self._parsing_for_iter = was_parsing_for_iter
                 self._no_struct_literal -= 1
             body = self.parse_block()
-            return For(tok.line, tok.col, pattern, iter_expr, body)
+            return For(tok.line, tok.col, pattern, iter_expr, body, loop_label)
 
         # block expression
         if tok.type == TokenType.LBRACE:

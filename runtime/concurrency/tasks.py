@@ -52,7 +52,7 @@ __all__ = [
     "ctask_yield_round_robin",
 ]
 
-_CODES = frozenset(f"E{value:03d}" for value in range(1, 9))
+_CODES = frozenset(f"E{value:03d}" for value in range(1, 10))
 _STATUSES = frozenset({"pending", "running", "done", "failed", "cancelled"})
 
 

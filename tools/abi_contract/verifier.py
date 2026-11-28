@@ -218,7 +218,7 @@ def _runtime_error_codes() -> dict[str, str]:
 
 
 def verify_error_code_parity() -> list[ContractViolation]:
-    """Verify ``E001``-``E008`` parity across zig/abi.py, runtime diagnostics,
+    """Verify ``E001``-``E009`` parity across zig/abi.py, runtime diagnostics,
     and the Zig ``PillarError`` error union.
 
     Returns a list of :class:`ContractViolation` (empty when clean).
@@ -253,10 +253,10 @@ def verify_error_code_parity() -> list[ContractViolation]:
                 )
             )
 
-    # Zig PillarError must declare exactly E001-E008 (no more, no less).
-    pillar_members = tuple(f"E{index:03d}" for index in range(1, 9))
+    # Zig PillarError must declare exactly E001-E009 (no more, no less).
+    pillar_members = tuple(f"E{index:03d}" for index in range(1, 10))
     expected_pillar = set(pillar_members)
-    # backend.py defines _PILLAR_ERRORS = tuple(f"E{index:03d}" for index in range(1, 9))
+    # backend.py defines _PILLAR_ERRORS = tuple(f"E{index:03d}" for index in range(1, 10))
     if set(pillar_members) != expected_pillar:
         violations.append(
             ContractViolation(
@@ -264,7 +264,7 @@ def verify_error_code_parity() -> list[ContractViolation]:
                 backend="zig",
                 expected=sorted(expected_pillar),
                 actual=sorted(pillar_members),
-                message="Zig PillarError error union does not declare exactly E001-E008",
+                message="Zig PillarError error union does not declare exactly E001-E009",
             )
         )
 

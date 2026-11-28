@@ -2754,3 +2754,48 @@ child-CPU ratio, not wall clock.
 **Lesson:** a timing assertion is only meaningful when the state it measures is
 fresh. `cache_scope` reads like test isolation, but it isolates artifacts, not
 the compiler's cache.
+
+## Bounded expansion batches — syntax, diagnostics, and native lowering
+
+The earlier note that `while let Some(x) = iter.next()` was out of scope is now
+historical: `while let PATTERN = EXPR` is paired in both backends. Python uses a
+loop over an `Option`-returning helper, so it no longer depends on Python's
+`StopIteration` protocol; native emits Rust's own `while let`.
+
+The same batch adds `let else`, struct update `rest`, structural type aliases, a
+single simple `use`, inline `mod`, and labelled `break`/`continue`. Python
+lowers non-innermost labels through flags so the control transfer reaches the
+named loop; native emits Rust labels. External module files, aliases, globs,
+alias generics, and tuple-pattern rewrites stay out of scope.
+
+Standard-library coverage grows in paired steps: Vec gains drain/extract-if,
+resize/fill-from-closure, comparator searches and partition point, and
+equal-length `swap_with_slice`; String gains in-place-style mutators through
+Python rebinding plus iterator materializers; BTreeMap gains first/pop/range and
+HashSet gains `is_subset`; `HashMap::entry(k).insert(v)` is emulated natively
+with `Occupied`/`Vacant` rather than calling Rust's unstable entry insertion.
+Native `extract_if` needs the two-argument `(range, predicate)` form, and
+`rsplit_inclusive` is emitted as reversed `split_inclusive` output.
+
+Diagnostics move too. `E009` joins the registered public code table with errno
+22 and the ownership-fix hint, mirrored in `zig/abi.py` and the ABI contract.
+`PatMacro` is rejected by one shared `E007` helper in both backends, while
+`PatConst` lowers to a constant path. The language server validates with
+recovering parsing so it publishes every syntax error from one document, and it
+converts UTF-16 positions only at the LSP boundary; internal spans stay Python
+character offsets. A shared flow pass warns once per block for unreachable code
+after `return`.
+
+The located runtime guard now covers an out-of-bounds assignment target on the
+Python backend, including compound assignment. That guard is deliberately not
+added to native codegen: doing it honestly would require widening fallible
+functions to `PyResult` throughout the generated crate, so native assignment
+still relies on Rust's bounds panic. That asymmetry is recorded in SPEC 10.54
+rather than hidden behind a claimed parity test.
+
+The native codegen batch emits a small, explicit attribute set (`inline`,
+`cold`, `must_use` on `Result` functions, and validated `repr(transparent)`),
+adds local dead-code allows to generated helpers, lowers immutable `&String` to
+`&str` and immutable `&Vec<T>` to `&[T]`, and keeps an owned-`Vec` PyO3 wrapper
+because generic slices cannot be extracted from Python. Literal comparisons are
+folded to `true`/`false`; no general constant propagation is implied.

@@ -2,7 +2,7 @@
 
 The server speaks JSON-RPC over stdio and implements the small surface needed
 for editor navigation: document sync, go-to-definition, and completion.  It
-also publishes structured E001-E008 diagnostics on open/change/save, using the
+also publishes structured E001-E009 diagnostics on open/change/save, using the
 same front-end validation as ``polyglot check``.  It deliberately avoids a
 third-party LSP dependency so the parser and AST are the only source of truth.
 """
@@ -16,7 +16,7 @@ from typing import Any, BinaryIO
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
-from api.visualizer import diagnostic, span_to_lsp_range
+from api.visualizer import diagnostic, lsp_position_to_offset, span_to_lsp_range
 from compiler.core.ast_nodes import (
     ConstDecl,
     EnumDecl,
@@ -32,7 +32,7 @@ from compiler.core.include_expander import (
     expand_includes,
 )
 from compiler.core.lexer import LexError, lex
-from compiler.core.parser import ParseError, parse, parse_recovering
+from compiler.core.parser import ParseError, parse_recovering
 
 COMPLETION_FUNCTION = 3
 COMPLETION_CLASS = 7
@@ -75,16 +75,19 @@ def _uri_to_path(uri: str) -> str:
 def _validate_document(text: str, uri: str | None = None) -> list[dict[str, Any]]:
     """Run the front-end checks used by ``polyglot check`` on document text.
 
-    Parsing is strict (as in ``load_program``), includes are resolved relative
-    to the document URI when possible, and the Python translator performs the
-    monomorphization/termination checks.  Only the public E001-E008 codes (plus
-    lexer/parser ``SYNTAX``) are surfaced; unrelated internal exceptions are
-    ignored rather than mislabelled as language diagnostics.
+    Parsing is recovering so independent syntax errors are all published in
+    one notification. Includes are resolved relative to the document URI when
+    possible, and the Python translator performs the monomorphization/
+    termination checks. Only the public E001-E009 codes (plus lexer/parser
+    ``SYNTAX``) are surfaced; unrelated internal exceptions are ignored rather
+    than mislabelled as language diagnostics.
     """
     try:
-        program = parse(lex(text))
+        program, errors = parse_recovering(lex(text))
     except (LexError, ParseError) as error:
         return [diagnostic(error, text, phase="parse")]
+    if errors:
+        return [diagnostic(error, text, phase="parse") for error in errors]
 
     if uri:
         try:
@@ -98,7 +101,17 @@ def _validate_document(text: str, uri: str | None = None) -> list[dict[str, Any]
         Translator().translate_program(program)
     except Exception as error:
         code = getattr(error, "code", None)
-        if code in {"E001", "E002", "E003", "E004", "E005", "E006", "E007", "E008"}:
+        if code in {
+            "E001",
+            "E002",
+            "E003",
+            "E004",
+            "E005",
+            "E006",
+            "E007",
+            "E008",
+            "E009",
+        }:
             return [diagnostic(error, text, phase="check")]
     return []
 
@@ -107,7 +120,7 @@ def _validate_document(text: str, uri: str | None = None) -> list[dict[str, Any]
 # keeps LSP severity deterministic and identical to the CLI's interpretation.
 _SEVERITY_BY_CODE: dict[str, int] = {
     "SYNTAX": 1,
-    **{f"E{index:03d}": 1 for index in range(1, 9)},
+    **{f"E{index:03d}": 1 for index in range(1, 10)},
 }
 
 
@@ -153,14 +166,9 @@ def _parse_document(text: str) -> Program:
 
 def _word_at(text: str, position: dict[str, Any]) -> str | None:
     line = int(position.get("line", 0))
-    character = int(position.get("character", 0))
-    lines = text.split("\n")
-    if line < 0 or line >= len(lines):
+    if line < 0 or line >= len(text.split("\n")):
         return None
-    line_text = lines[line]
-    offset = sum(len(part) + 1 for part in lines[:line]) + min(
-        character, len(line_text)
-    )
+    offset = _position_to_offset(text, position)
 
     def is_word_char(index: int) -> bool:
         return 0 <= index < len(text) and (text[index].isalnum() or text[index] == "_")
@@ -199,6 +207,9 @@ def _item_symbols(program: Program) -> list[tuple[str, int, Any]]:
 
 
 def _location(uri: str, name: str, node: Any) -> dict[str, Any]:
+    # No source text is available here, so node columns are the only precise
+    # source position we have; the identifier is ASCII by grammar, hence UTF-16
+    # width equals its Python length.
     line = max(0, int(getattr(node, "line", 1)) - 1)
     character = max(0, int(getattr(node, "col", 1)) - 1)
     return {
@@ -302,12 +313,7 @@ def handle_request(
 
 
 def _position_to_offset(text: str, position: dict[str, Any]) -> int:
-    line = int(position.get("line", 0))
-    character = int(position.get("character", 0))
-    lines = text.split("\n")
-    return sum(len(part) + 1 for part in lines[:line]) + min(
-        character, len(lines[line]) if line < len(lines) else 0
-    )
+    return lsp_position_to_offset(text, position)
 
 
 def _apply_incremental_change(text: str, change: dict[str, Any]) -> str:

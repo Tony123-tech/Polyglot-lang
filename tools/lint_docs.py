@@ -31,9 +31,9 @@ for num in section_nums:
         fail(f"duplicate SPEC section number: {num}")
     seen.add(num)
 
-# 4. All error codes E001–E008 must appear in README
+# 4. All error codes E001–E009 must appear in README
 readme_codes = set(re.findall(r"`E(\d{3})`", readme))
-for i in range(1, 9):
+for i in range(1, 10):
     code = f"{i:03d}"
     if code not in readme_codes:
         fail(f"error code E{code} missing from README")

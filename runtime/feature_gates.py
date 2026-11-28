@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 
+from compiler.analysis.flow_diagnostics import warn_unreachable_after_return
 from compiler.core.ast_nodes import FnDecl, Node, Program
 from runtime.diagnostics import PillarError
 
@@ -40,7 +41,8 @@ def _walk(value: object, seen: set[int] | None = None) -> Iterator[Node]:
 
 
 def validate_program_features(program: Program) -> None:
-    """Reject feature annotations that have no implementation in any backend."""
+    """Reject unavailable feature annotations and flag dead control flow."""
+    warn_unreachable_after_return(program)
     for node in _walk(program):
         if not isinstance(node, FnDecl):
             continue

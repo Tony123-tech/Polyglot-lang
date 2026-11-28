@@ -21,15 +21,16 @@ backends reject a program, the code, the binding and the line pair agree, and
 the Python backend running what native refuses) sits outside that promise.
 
 **Guarded failure.** One of the operations SPEC 2.9.1 lists — integer `/` and `%`
-by zero, Python-backend indexing out of bounds, and `panic!`/`assert!` — failing
-at run time. It must carry a public code, a position and a hint, and must never
-leak the host exception's class name (2.9.3). Runtime failures reuse `E002`.
+by zero, Python-backend index reads and assignment targets out of bounds, and
+`panic!`/`assert!` — failing at run time. It must carry a public code, a position
+and a hint, and must never leak the host exception's class name (2.9.3). Runtime
+failures reuse `E002`; native index assignment is not guarded (10.54).
 
-**Error codes `E001`–`E009`.** Public codes are `E001`–`E008`. `E009` is the
-ownership diagnostic and is deliberately outside the public table
-(`runtime/diagnostics.ERROR_CODES`): it names a rule violation the front end can
-prove before any backend runs, not a failure of a guarded operation. Before 11.26
-`E009` meant an out-of-range cast literal; that case moved to `E008` (2.9.2).
+**Error codes `E001`–`E009`.** Public codes are `E001`–`E009`, including the
+ownership diagnostic `E009` registered in `runtime.diagnostics.ERROR_CODES`: it
+names a rule violation the front end can prove before any backend runs, not a
+failure of a guarded operation. Before 11.26 `E009` meant an out-of-range cast
+literal; that case moved to `E008` (2.9.2).
 
 ## Front end
 

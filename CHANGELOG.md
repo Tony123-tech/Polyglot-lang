@@ -2,6 +2,32 @@
 
 Version history derived from SPECIFICATION.md Section 11.
 
+## Unreleased — Bounded syntax, diagnostics, and codegen expansion
+
+- Paired Python/native support lands for `while let`, `let else`, struct update
+  `rest`, type aliases, simple `use`, inline `mod`, and labelled `break`/
+  `continue`. `PatConst` lowers to a constant path; `PatMacro` is rejected by one
+  shared `E007` helper in both backends.
+- Extended Vec, String, BTreeMap, HashSet, and `HashMap::entry` methods are
+  paired in `tests/test_syntax_batch.py`, `tests/test_native_n3.py`,
+  `tests/test_native_n4.py`, and `tests/test_native_n7_map.py`. Iterator results
+  are materialized at the PyO3 boundary; native `extract_if` keeps the required
+  two-argument form and `swap_with_slice` stays equal-length only.
+- `E009` is a registered public diagnostic with help text and a mirrored ABI
+  model. The language server publishes all recovered syntax errors and converts
+  positions to and from UTF-16. A shared warning flags unreachable code after
+  `return`, and the Python backend reports a located `E002` for an out-of-bounds
+  index assignment; native assignment still uses Rust indexing.
+- Native codegen emits `#[inline]`, `#[cold]`, `#[must_use]` for
+  `Result`-returning functions, and validated `#[repr(transparent)]`. Top-level
+  runtime helpers carry local dead-code allows, immutable `&String`/`&Vec<T>`
+  lower to `&str`/`&[T]` with an owned-`Vec` PyO3 wrapper, and literal
+  comparisons fold to `true`/`false`.
+- SPEC 8.23, 9.22–9.23, 10.59, and 11.33 record the requirements and limits.
+  Final verification: `pytest -q` reports 3596 passed, 5 skipped, 31 deselected;
+  `pytest -q -m slow` reports 31 passed, 3601 deselected. README and SPEC
+  baselines match those results.
+
 ## Unreleased — Contributor experience: a gate that runs without a toolchain
 
 - `pytest -m core_only` (also `make core`) runs the lexer, parser, AST utilities,

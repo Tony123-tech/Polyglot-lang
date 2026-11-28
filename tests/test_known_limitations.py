@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from backends.python.translator import compile_rust
 from backends.rust.codegen import RustCodegen
 from compiler.core.lexer import lex
-from compiler.core.parser import ParseError, parse
+from compiler.core.parser import parse
 
 
 def _run_python(src: str) -> dict:
@@ -139,21 +137,22 @@ fn first_inner(xs: Vec<Vec<i64>>) -> i64 {
 
 
 # ---------------------------------------------------------------------------
-# while let with iter.next()
+# while let with pop()
 # ---------------------------------------------------------------------------
 
 
-def test_while_let_next_is_a_parse_error():
-    with pytest.raises(ParseError, match="expected expression, got LET"):
-        parse(
-            lex(
-                "fn f(mut xs: Vec<i64>) -> i64 {\n"
-                "    let mut total = 0;\n"
-                "    while let Some(x) = xs.next() { total += x; }\n"
-                "    total\n"
-                "}"
-            )
-        )
+def test_while_let_pop_is_supported():
+    ns = _run_python(
+        """
+fn while_let_pop(mut xs: Vec<i64>) -> i64 {
+    let mut total = 0;
+    while let Some(x) = xs.pop() { total += x; }
+    total
+}
+"""
+    )
+    assert ns["while_let_pop"]([1, 2, 3]) == 6
+    assert ns["while_let_pop"]([]) == 0
 
 
 # ---------------------------------------------------------------------------

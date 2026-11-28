@@ -47,7 +47,7 @@ __all__ = [
     "pyruntime_result_unwrap",
 ]
 
-_CODES: Final[frozenset[str]] = frozenset({f"E{index:03d}" for index in range(1, 9)})
+_CODES: Final[frozenset[str]] = frozenset({f"E{index:03d}" for index in range(1, 10)})
 _TYPE_PARTS: Final[dict[str, tuple[int, bool]]] = {
     "i8": (8, True),
     "i16": (16, True),

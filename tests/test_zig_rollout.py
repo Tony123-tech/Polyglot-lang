@@ -897,7 +897,7 @@ def test_error_codes_are_structured(
         (codegen.zgc_fn_decl, ("f",), {"params": "bad"}),
         (codegen.zgc_array_literal, ("123",), {}),
         (abi.zabi_field_offsets, (None,), {}),
-        (abi.zabi_error_map, ("E009",), {"operation": "emit"}),
+        (abi.zabi_error_map, ("E010",), {"operation": "emit"}),
     ],
 )
 def test_invalid_api_inputs_raise_e003(

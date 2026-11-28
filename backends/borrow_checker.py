@@ -38,6 +38,7 @@ from compiler.core.ast_nodes import (
     TypeUnit,
     Unary,
     While,
+    WhileLet,
 )
 
 _COPY_TYPES = frozenset(
@@ -379,9 +380,11 @@ def check_function_borrows(fn: FnDecl, ret_types: dict[str, Any] | None = None) 
                     else ("moved" if "moved" in (ts.get(k), es.get(k)) else "alive")
                 )
             return
-        if isinstance(e, (While, For, Loop)):
+        if isinstance(e, (While, WhileLet, For, Loop)):
             if isinstance(e, While):
                 v_expr(e.cond)
+            elif isinstance(e, WhileLet):
+                v_expr(e.value)
             elif isinstance(e, For):
                 v_expr(e.iter)
             # A loop needs a header fixpoint, not a single pass: a body that

@@ -97,6 +97,7 @@ from compiler.core.ast_nodes import (
     TypeUnit,
     Unary,
     While,
+    WhileLet,
 )
 
 CODE = "E009"
@@ -632,6 +633,10 @@ class MoveChecker:
             self._eval(expr.cond)
             self._loop_body(expr.body)
             return None
+        if isinstance(expr, WhileLet):
+            value_ty = self._eval(expr.value)
+            self._while_let(expr, value_ty)
+            return None
         if isinstance(expr, For):
             self._for(expr)
             return None
@@ -889,6 +894,17 @@ class MoveChecker:
             self.locals = entry
             return
         after = {name: local.clone() for name, local in self.locals.items()}
+        self.locals = _merge(entry, entry, after)
+
+    def _while_let(self, expr: WhileLet, value_ty: str | None) -> None:
+        element = self._element_type(value_ty)
+        entry = {name: local.clone() for name, local in self.locals.items()}
+        self._bind_pattern(expr.pattern, element, expr.line)
+        self._block(expr.body)
+        after = {name: local.clone() for name, local in self.locals.items()}
+        for name in list(after):
+            if name not in entry:
+                del after[name]
         self.locals = _merge(entry, entry, after)
 
     def _for(self, expr: For) -> None:

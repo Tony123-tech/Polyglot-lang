@@ -2,7 +2,7 @@
 
 The frontend frame raises :class:`PolyglotError`, a thin frontend-facing
 specialization of :class:`runtime.diagnostics.PillarError`.  It therefore uses
-the exact same ``E001``–``E008`` surface, formatting, and location payloads as
+the exact same ``E001``–``E009`` surface, formatting, and location payloads as
 the rest of the toolchain while giving frontend callers a single, stable
 exception type to catch.
 
@@ -27,7 +27,7 @@ __all__ = ["ERROR_CODES", "PolyglotError", "frontend_fail"]
 
 
 class PolyglotError(PillarError):
-    """A frontend failure carrying a structured ``E001``–``E008`` diagnostic.
+    """A frontend failure carrying a structured ``E001``–``E009`` diagnostic.
 
     The constructor mirrors :class:`PillarError` and adds a ``phase`` label so
     diagnostics can be attributed to the frontend without changing their

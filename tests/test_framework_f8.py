@@ -51,7 +51,7 @@ def test_context_is_reusable_and_resolves_code_aliases():
     assert context["path"] == "src/main.pg"
     assert context.to_dict()["code_map"] == {"syntax": "E003", "types": "E001"}
     with pytest.raises(ValueError):
-        diag_create_diagnostic_context("x", "parse", code_map={"bad": "E009"})
+        diag_create_diagnostic_context("x", "parse", code_map={"bad": "E010"})
 
 
 def test_pillar_error_carries_code_severity_span_and_phase():
@@ -83,7 +83,7 @@ def test_pillar_error_carries_code_severity_span_and_phase():
     assert converted.severity == "info"
     assert converted.span == (10, 14)
     with pytest.raises(ValueError):
-        diag_create_pillar_error("E009", "bad code")
+        diag_create_pillar_error("E010", "bad code")
 
 
 @pytest.mark.parametrize(

@@ -416,7 +416,9 @@ Polyglot uses stable error codes. When you see an error, look it up
 in the [README's error code table](README.md#error-codes):
 
 - `E001`: type mismatch (e.g. `usize` vs `i64`). Add an `as` cast.
-- `E002`: a `#[terminates]` function could not be proven to terminate.
+- `E002`: a `#[terminates]` function could not be proven to terminate, or a
+  located runtime guard failed (for example division by zero or an out-of-bounds
+  index read on the Python backend).
 - `E003`: a translation error (unsupported construct).
 - `E004`: the generated Rust failed to compile.
 - `E005`: cyclic `include!`.

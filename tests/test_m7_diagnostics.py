@@ -256,7 +256,7 @@ def _json_error(args: list[str]) -> dict:
     payload = json.loads(r.stderr)
     for key in ("code", "message", "line", "col", "span", "source", "fix"):
         assert key in payload
-        assert payload["code"] in {f"E{i:03d}" for i in range(1, 9)}
+        assert payload["code"] in {f"E{i:03d}" for i in range(1, 10)}
     return payload
 
 
@@ -311,8 +311,16 @@ def test_error_format_json_e002_fix_uses_checker_suggestion():
     )
 
 
-def test_public_codes_stop_at_e008():
+def test_public_codes_include_e009():
     from runtime.diagnostics import ERROR_CODES
 
-    assert set(ERROR_CODES) == {f"E{i:03d}" for i in range(1, 9)}
-    assert "E009" not in ERROR_CODES
+    assert set(ERROR_CODES) == {f"E{i:03d}" for i in range(1, 10)}
+    assert "E009" in ERROR_CODES
+    assert "ownership" in ERROR_CODES["E009"]
+
+    from runtime.diagnostics import PillarError
+
+    error = PillarError("E009", "use of moved value")
+    assert error.code == "E009"
+    assert "clone" in error.help_text
+    assert "error[E009]" in error.format()

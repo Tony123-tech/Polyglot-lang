@@ -281,6 +281,29 @@ def btreemap_iter(m):
     return [(k, m[k]) for k in sorted(m.keys())]
 
 
+def btreemap_first_key_value(m):
+    if not m:
+        return _Option.none()
+    key = min(m.keys())
+    return _Option.some((key, m[key]))
+
+
+def btreemap_pop_first(m):
+    if not m:
+        return _Option.none()
+    key = min(m.keys())
+    return _Option.some((key, m.pop(key)))
+
+
+def btreemap_range(m, start, end, inclusive_end):
+    keys = sorted(m.keys())
+    if start is not None:
+        keys = [key for key in keys if key >= start]
+    if end is not None:
+        keys = [key for key in keys if (key <= end if inclusive_end else key < end)]
+    return [(key, m[key]) for key in keys]
+
+
 class _BTreeEntry:
     def __init__(self, mapping, key):
         self.mapping = mapping
@@ -392,6 +415,10 @@ def hashset_is_empty(s):
 
 def hashset_iter(s):
     return list(s)
+
+
+def hashset_is_subset(left, right):
+    return all(value in right for value in left)
 
 
 def hashset_get_mut(s, v):

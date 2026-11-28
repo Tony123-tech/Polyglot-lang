@@ -69,6 +69,20 @@ INDEX_OUT_OF_BOUNDS = """fn main() -> i64 {
 }
 """
 
+INDEX_ASSIGN_OUT_OF_BOUNDS = """fn main() -> i64 {
+    let mut v: Vec<i64> = vec![1, 2, 3];
+    v[5] = 9;
+    v[0]
+}
+"""
+
+INDEX_COMPOUND_ASSIGN = """fn main() -> i64 {
+    let mut v: Vec<i64> = vec![1, 2, 3];
+    v[1] += 10;
+    v[1]
+}
+"""
+
 PANIC = """fn main() -> i64 {
     panic!("boom");
     0
@@ -118,6 +132,23 @@ def test_index_out_of_bounds_reports_the_index_and_the_length():
     failure = caught.value
     assert str(failure) == "index 5 out of bounds for length 3"
     assert (failure.line, failure.col) == (3, 19)
+
+
+def test_index_assignment_reports_a_located_runtime_failure():
+    namespace = _run(INDEX_ASSIGN_OUT_OF_BOUNDS)
+    with pytest.raises(RuntimeFailure) as caught:
+        namespace["main"]()
+    failure = caught.value
+    assert str(failure) == "index 5 out of bounds for length 3"
+    assert (failure.line, failure.col) == (
+        3,
+        INDEX_ASSIGN_OUT_OF_BOUNDS.splitlines()[2].index("[") + 1,
+    )
+
+
+def test_compound_index_assignment_keeps_a_checked_bound():
+    namespace = _run(INDEX_COMPOUND_ASSIGN)
+    assert namespace["main"]() == 12
 
 
 def test_panic_reports_the_message_and_the_call_site():

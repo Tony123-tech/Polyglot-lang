@@ -426,11 +426,11 @@ def test_rust_string_escapes_quotes_backslashes_and_control_characters():
 
 
 def test_error_code_surface_is_fixed():
-    assert set(ERROR_CODES) == {f"E{n:03d}" for n in range(1, 9)}
+    assert set(ERROR_CODES) == {f"E{n:03d}" for n in range(1, 10)}
     with pytest.raises(TypeError):
-        ERROR_CODES["E009"] = "not allowed"  # type: ignore[index]
+        ERROR_CODES["E010"] = "not allowed"  # type: ignore[index]
     with pytest.raises(ValueError):
-        PillarError("E009", "unknown code")
+        PillarError("E010", "unknown code")
 
 
 def test_pillar_error_drops_a_malformed_span_instead_of_crashing():

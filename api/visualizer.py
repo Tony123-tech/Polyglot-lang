@@ -2,7 +2,7 @@
 
 This module is deliberately dependency-free: it turns the parser's AST into a
 JSON tree, runs the monomorphization pass and renders a concrete source view,
-and extracts structured E001-E008 diagnostics. Execution lives in
+and extracts structured E001-E009 diagnostics. Execution lives in
 :mod:`api.visualizer_server`, which shells out to ``api.cli exec`` so that user
 programs never run inside the HTTP server process.
 """
@@ -159,9 +159,8 @@ class FixHint:
         }
 
 
-# Public codes are E001-E008 (``SYNTAX`` covers lexer/parser failures).  There
-# is deliberately no E009: see runtime.diagnostics.ERROR_CODES.
-_FIXABLE_CODES = frozenset({"SYNTAX"} | {f"E{index:03d}" for index in range(1, 9)})
+# Public codes are E001-E009 (``SYNTAX`` covers lexer/parser failures).
+_FIXABLE_CODES = frozenset({"SYNTAX"} | {f"E{index:03d}" for index in range(1, 10)})
 
 _SUPPORTED_MACROS = (
     "println!",
@@ -177,12 +176,41 @@ _SUPPORTED_MACROS = (
 )
 
 
+def _utf16_length(text: str) -> int:
+    """UTF-16 code units for ``text`` (non-BMP code points use a pair)."""
+    return len(text) + sum(1 for character in text if ord(character) > 0xFFFF)
+
+
 def offset_to_lsp_position(source: str, offset: int) -> dict[str, int]:
-    """Convert a 0-based character offset to a 0-based LSP ``Position``."""
+    """Convert a 0-based Python character offset to a 0-based LSP ``Position``.
+
+    LSP 3.17 defaults to UTF-16 positions. Internal spans stay in Python
+    character offsets; only this boundary translates them.
+    """
     offset = max(0, min(int(offset), len(source)))
     line = source.count("\n", 0, offset) + 1
     last_newline = source.rfind("\n", 0, offset)
-    return {"line": line - 1, "character": offset - (last_newline + 1)}
+    return {
+        "line": line - 1,
+        "character": _utf16_length(source[last_newline + 1 : offset]),
+    }
+
+
+def lsp_position_to_offset(source: str, position: dict[str, int]) -> int:
+    """Convert a UTF-16 LSP ``Position`` to a 0-based Python character offset."""
+    line = max(0, int(position.get("line", 0)))
+    character = max(0, int(position.get("character", 0)))
+    lines = source.split("\n")
+    if line >= len(lines):
+        return len(source)
+    line_start = sum(len(part) + 1 for part in lines[:line])
+    line_text = lines[line]
+    units = 0
+    for index, value in enumerate(line_text):
+        if units >= character:
+            return line_start + index
+        units += 2 if ord(value) > 0xFFFF else 1
+    return line_start + len(line_text)
 
 
 def span_to_lsp_range(
@@ -208,16 +236,33 @@ def span_to_lsp_range(
                 "end": offset_to_lsp_position(source, end),
             }
     start_line = max(0, int(line or 1) - 1)
-    start_char = max(0, int(col or 1) - 1)
+    start_col = max(0, int(col or 1) - 1)
+    lines = source.splitlines(keepends=True)
+    if start_line < len(lines):
+        line_text = lines[start_line]
+        start_offset = sum(len(part) for part in lines[:start_line]) + min(
+            start_col, len(line_text)
+        )
+        start = offset_to_lsp_position(source, start_offset)
+    else:
+        # Preserve the reported location even when no source text is available.
+        line_text = ""
+        start = {"line": start_line, "character": start_col}
     width = 1
     if isinstance(span, (tuple, list)) and len(span) == 2:
         try:
             width = max(1, int(span[1]) - int(span[0]))
         except TypeError, ValueError:
             width = 1
+    if start_line < len(lines):
+        end_offset = start["character"] + _utf16_length(
+            line_text[start_col : start_col + width]
+        )
+    else:
+        end_offset = start["character"] + width
     return {
-        "start": {"line": start_line, "character": start_char},
-        "end": {"line": start_line, "character": start_char + width},
+        "start": start,
+        "end": {"line": start["line"], "character": end_offset},
     }
 
 
@@ -1313,6 +1358,7 @@ __all__ = [
     "analyze",
     "diagnostic",
     "fix_hint",
+    "lsp_position_to_offset",
     "offset_to_lsp_position",
     "program_to_source",
     "program_to_tree",

@@ -45,6 +45,7 @@ from compiler.core.ast_nodes import (
     Return,
     Unary,
     While,
+    WhileLet,
 )
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
@@ -720,7 +721,18 @@ def _lower_block(block: Any, fallback: Span) -> tuple[Stmt, ...]:
             )
         elif isinstance(stmt, ExprStmt):
             inner = stmt.expr
-            if isinstance(inner, (Return, IfExpr, While, Loop, Assign, CompoundAssign)):
+            if isinstance(
+                inner,
+                (
+                    Return,
+                    IfExpr,
+                    While,
+                    WhileLet,
+                    Loop,
+                    Assign,
+                    CompoundAssign,
+                ),
+            ):
                 statements.extend(_lower_block_of_expression(inner, span))
             elif isinstance(
                 inner,

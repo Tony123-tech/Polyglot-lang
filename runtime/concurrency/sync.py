@@ -51,7 +51,7 @@ __all__ = [
     "csync_timeout_remaining",
 ]
 
-_CODES = frozenset(f"E{value:03d}" for value in range(1, 9))
+_CODES = frozenset(f"E{value:03d}" for value in range(1, 10))
 _RELEASERS = ("release", "close", "shutdown", "stop")
 
 

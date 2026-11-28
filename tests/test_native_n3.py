@@ -248,6 +248,40 @@ fn vec_split_last(values: Vec<i64>) -> Option<(i64, Vec<i64>)> {
     values.split_last()
 }
 """,
+    "vec_batch_methods": """
+fn vec_batch_drain(mut values: Vec<i64>) -> Vec<i64> {
+    values.drain(1..3);
+    values
+}
+fn vec_batch_extract_if(mut values: Vec<i64>) -> Vec<i64> {
+    values.extract_if(|value| *value % 2 == 0)
+}
+fn vec_batch_resize_with(mut values: Vec<i64>, length: i64) -> Vec<i64> {
+    values.resize_with(length as usize, || 9);
+    values
+}
+fn vec_batch_fill_with(mut values: Vec<i64>) -> Vec<i64> {
+    values.fill_with(|| 7);
+    values
+}
+fn vec_batch_sort_unstable_by(mut values: Vec<i64>) -> Vec<i64> {
+    values.sort_unstable_by(|left, right| right - left);
+    values
+}
+fn vec_batch_partition_point(values: Vec<i64>) -> i64 {
+    values.partition_point(|value| *value < 3) as i64
+}
+fn vec_batch_binary_search_by(values: Vec<i64>, target: i64) -> i64 {
+    values.binary_search_by(|value| *value - target).unwrap_or(999) as i64
+}
+fn vec_batch_binary_search_by_key(values: Vec<i64>, target: i64) -> i64 {
+    values.binary_search_by_key(|value| *value, target).unwrap_or(999) as i64
+}
+fn vec_batch_swap_with_slice(mut values: Vec<i64>, mut other: Vec<i64>) -> Vec<i64> {
+    values.swap_with_slice(&mut other);
+    values
+}
+""",
 }
 
 
@@ -825,3 +859,43 @@ def test_python_vec_sort_empty_reports_a_located_failure():
         namespace["vec_sort"]([])
     assert str(caught.value) == "index 0 out of bounds for length 0"
     assert (caught.value.line, caught.value.col) == (4, 11)
+
+
+@pytest.mark.native
+@pytest.mark.parametrize(
+    ("name", "args", "expected"),
+    [
+        ("vec_batch_drain", ([1, 2, 3, 4, 5],), [1, 4, 5]),
+        ("vec_batch_extract_if", ([1, 2, 3, 4],), [2, 4]),
+        ("vec_batch_resize_with", ([1, 2], 4), [1, 2, 9, 9]),
+        ("vec_batch_fill_with", ([1, 2, 3],), [7, 7, 7]),
+        ("vec_batch_sort_unstable_by", ([1, 2, 3],), [3, 2, 1]),
+        ("vec_batch_partition_point", ([1, 2, 3, 4],), 2),
+        ("vec_batch_binary_search_by", ([1, 3, 5, 7], 5), 2),
+        ("vec_batch_binary_search_by", ([1, 3, 5, 7], 4), 999),
+        ("vec_batch_binary_search_by_key", ([1, 3, 5, 7], 5), 2),
+        ("vec_batch_swap_with_slice", ([1, 2, 3], [8, 9, 10]), [8, 9, 10]),
+    ],
+)
+def test_native_vec_batch_methods(native_ns, name, args, expected):
+    assert native_ns[name](*args) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "args", "expected"),
+    [
+        ("vec_batch_drain", ([1, 2, 3, 4, 5],), [1, 4, 5]),
+        ("vec_batch_extract_if", ([1, 2, 3, 4],), [2, 4]),
+        ("vec_batch_resize_with", ([1, 2], 4), [1, 2, 9, 9]),
+        ("vec_batch_fill_with", ([1, 2, 3],), [7, 7, 7]),
+        ("vec_batch_sort_unstable_by", ([1, 2, 3],), [3, 2, 1]),
+        ("vec_batch_partition_point", ([1, 2, 3, 4],), 2),
+        ("vec_batch_binary_search_by", ([1, 3, 5, 7], 5), 2),
+        ("vec_batch_binary_search_by", ([1, 3, 5, 7], 4), 999),
+        ("vec_batch_binary_search_by_key", ([1, 3, 5, 7], 5), 2),
+        ("vec_batch_swap_with_slice", ([1, 2, 3], [8, 9, 10]), [8, 9, 10]),
+    ],
+)
+def test_python_vec_batch_methods(name, args, expected):
+    namespace = compile_rust(parse(lex(SOURCES["vec_batch_methods"])))
+    assert namespace[name](*args) == expected

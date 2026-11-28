@@ -102,6 +102,7 @@ __all__ = [
     "Unary",
     "UseDecl",
     "While",
+    "WhileLet",
     "is_i64_type",
     "is_isize_type",
     "is_usize_type",
@@ -549,12 +550,24 @@ class Block(Node):
 @dataclass
 class Loop(Node):
     body: Block
+    label: str | None = None
 
 
 @dataclass
 class While(Node):
     cond: Expr
     body: Block
+    label: str | None = None
+
+
+@dataclass
+class WhileLet(Node):
+    """`while let PATTERN = VALUE { ... }`."""
+
+    pattern: Pattern
+    value: Expr
+    body: Block
+    label: str | None = None
 
 
 @dataclass
@@ -562,6 +575,7 @@ class For(Node):
     pattern: Pattern
     iter: Expr
     body: Block
+    label: str | None = None
 
 
 @dataclass
@@ -669,6 +683,7 @@ Expr = (
     | Block
     | Loop
     | While
+    | WhileLet
     | For
     | Closure
     | Range
@@ -698,6 +713,7 @@ class LetStmt(Node):
     ty: Type | None
     value: Expr | None
     mutable: bool = False
+    else_branch: Block | None = None
 
 
 @dataclass

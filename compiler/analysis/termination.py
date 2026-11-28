@@ -32,6 +32,7 @@ from compiler.core.ast_nodes import (
     TypeRef,
     Unary,
     While,
+    WhileLet,
 )
 
 
@@ -475,6 +476,12 @@ def check_function(fn: FnDecl, *, proven_terminating: set[str] | None = None) ->
             }
             visit(value.body, body_bounds)
             return
+        if isinstance(value, WhileLet):
+            fail(
+                "a while-let loop has no supported decreasing variant",
+                "use a bounded `for` loop or a decreasing `while` variant",
+                value,
+            )
         if isinstance(value, For):
             if not isinstance(_unwrap(value.iter), Range):
                 fail(

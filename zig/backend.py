@@ -95,6 +95,7 @@ from compiler.core.ast_nodes import (
     Unary,
     UseDecl,
     While,
+    WhileLet,
 )
 from compiler.core.ast_nodes import (
     Path as AstPath,
@@ -145,7 +146,7 @@ def _fail(
 
 _VECTOR_RE = re.compile(r"^@Vector\((\d+), (f32|f64|[iu]\d+)\)$")
 _VECTOR_ABI_CACHE: dict[str, type[ctypes.Structure]] = {}
-_PILLAR_ERRORS = tuple(f"E{index:03d}" for index in range(1, 9))
+_PILLAR_ERRORS = tuple(f"E{index:03d}" for index in range(1, 10))
 _INT_RE = re.compile(r"^[iu]\d+$")
 
 
@@ -1013,7 +1014,7 @@ fn _zig_assert(condition: bool, message: []const u8, line: u32, col: u32) void {
             ):
                 return True
             if isinstance(statement, ExprStmt) and isinstance(
-                statement.expr, (For, While, Loop)
+                statement.expr, (For, While, WhileLet, Loop)
             ):
                 return True
         return False

@@ -347,7 +347,7 @@ def test_dctx_filter_severity_keeps_records_at_or_above_threshold():
 
 def test_dctx_code_summary_covers_all_eight_codes():
     result = dctx.dctx_code_summary([_RECORD, {**_RECORD, "code": "E008"}])
-    assert set(result["counts"]) == {f"E{number:03d}" for number in range(1, 9)}
+    assert set(result["counts"]) == {f"E{number:03d}" for number in range(1, 10)}
     assert result["counts"]["E003"] == 1 and result["total"] == 2
     assert result["by_code"] == {"E003": 1, "E008": 1}
 

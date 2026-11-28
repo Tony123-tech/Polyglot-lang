@@ -82,7 +82,7 @@ def test_all_entries_resolve_to_documented_callables():
 
 
 def test_polyglot_error_uses_the_shared_e001_to_e008_surface():
-    assert set(ERROR_CODES) == {f"E{code:03d}" for code in range(1, 9)}
+    assert set(ERROR_CODES) == {f"E{code:03d}" for code in range(1, 10)}
     error = PolyglotError("E003", "bad token", line=2, col=5, span=(3, 7))
     assert isinstance(error, PillarError)
     assert error.code == "E003"
@@ -97,7 +97,7 @@ def test_polyglot_error_uses_the_shared_e001_to_e008_surface():
 
 def test_polyglot_error_rejects_unknown_codes_and_frontend_fail_raises():
     with pytest.raises(ValueError, match="unknown diagnostic code"):
-        PolyglotError("E009", "not a public code")
+        PolyglotError("E010", "not a public code")
     with pytest.raises(PolyglotError) as caught:
         frontend_fail("E008", "malformed literal", span=(0, 3))
     assert caught.value.code == "E008"

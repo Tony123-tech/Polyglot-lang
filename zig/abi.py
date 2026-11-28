@@ -4,7 +4,7 @@ The functions here describe calling conventions, struct layout, C-ABI shims and
 opaque address *keys* without invoking a toolchain, allocating executable
 memory, or dereferencing any address.  A raw address is only ever used as a
 key into a caller-supplied Python mapping.  All invalid inputs raise
-:class:`PolyglotError` with the E001-E008 diagnostic surface.
+:class:`PolyglotError` with the E001-E009 diagnostic surface.
 """
 
 from __future__ import annotations
@@ -71,6 +71,7 @@ _ERRORS: Final[dict[str, tuple[int, str, bool]]] = {
     "E006": (2, "missing_artifact", True),
     "E007": (95, "unsupported_feature", False),
     "E008": (84, "malformed_state", False),
+    "E009": (22, "ownership_violation", False),
 }
 
 
@@ -567,7 +568,7 @@ def zabi_enum_repr(
 def zabi_error_map(
     code: str, *, target: str = "native", operation: str = "map"
 ) -> dict[str, Any]:
-    """Map one structured E001-E008 code to a modeled platform error."""
+    """Map one structured E001-E009 code to a modeled platform error."""
     symbol = _text(code, "code")
     if symbol not in _ERRORS:
         _fail("E003", f"invalid diagnostic code: {symbol!r}")

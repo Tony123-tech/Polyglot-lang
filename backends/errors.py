@@ -68,6 +68,22 @@ class UnsupportedNativePatternError(TranslateError):
     code = "E007"
 
 
+def reject_pattern_macro(pattern) -> None:
+    """Reject a parsed macro pattern with the shared E007 diagnostic.
+
+    Macro patterns are parsed for tooling, but neither backend lowers them:
+    Python cannot evaluate an arbitrary macro token stream and native Rust
+    cannot guarantee it compiles in a generated crate. Both backends call this
+    helper so callers see the same code, message and source span.
+    """
+    raise UnsupportedNativePatternError(
+        f"pattern macro {pattern.path}! is not supported",
+        pattern.line,
+        pattern.col,
+        getattr(pattern, "span", None),
+    )
+
+
 class InvalidIntegerParseLiteralError(Exception):
     """Raised when a literal receiver cannot parse as a native integer."""
 

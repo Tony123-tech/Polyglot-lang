@@ -44,12 +44,13 @@ from functools import cmp_to_key, reduce
 from typing import ClassVar
 
 from backends.base import BackendBase
-from backends.errors import TranslateError, check_host_call_arity
+from backends.errors import TranslateError, check_host_call_arity, reject_pattern_macro
 from backends.python.runtime import (
     HOST_TARGET_WIDTH,
     _iflet_match,
     btreemap_contains,
     btreemap_entry,
+    btreemap_first_key_value,
     btreemap_get,
     btreemap_get_mut,
     btreemap_insert_with_prev,
@@ -58,6 +59,8 @@ from backends.python.runtime import (
     btreemap_keys,
     btreemap_len,
     btreemap_new,
+    btreemap_pop_first,
+    btreemap_range,
     btreemap_remove,
     btreemap_values,
     cast_i8,
@@ -77,6 +80,7 @@ from backends.python.runtime import (
     hashset_get_mut,
     hashset_insert,
     hashset_is_empty,
+    hashset_is_subset,
     hashset_iter,
     hashset_len,
     hashset_new,
@@ -176,6 +180,7 @@ from compiler.core.ast_nodes import (
     Unary,
     UseDecl,
     While,
+    WhileLet,
     is_i64_type,
     is_isize_type,
     is_usize_type,
@@ -488,6 +493,25 @@ def _runtime_at(container, index, line: int | None = None, col: int | None = Non
     """Index with a checked bound so failures carry a source position."""
     try:
         return container[index]
+    except IndexError:
+        raise RuntimeFailure(
+            f"index {index} out of bounds for length {len(container)}",
+            line=line,
+            col=col,
+            help_text="check the index against len() of the container",
+        ) from None
+
+
+def _runtime_at_mut(
+    container,
+    index,
+    value,
+    line: int | None = None,
+    col: int | None = None,
+):
+    """Assign through a checked index so failures carry a source position."""
+    try:
+        container[index] = value
     except IndexError:
         raise RuntimeFailure(
             f"index {index} out of bounds for length {len(container)}",
@@ -832,6 +856,96 @@ def _runtime_vec_partition(values, predicate):
     return matching, remaining
 
 
+def _runtime_vec_drain(values, start, end, inclusive):
+    start = 0 if start is None else start
+    end = len(values) if end is None else end + 1 if inclusive else end
+    if not 0 <= start <= end <= len(values):
+        raise IndexError("drain range out of bounds")
+    drained = values[start:end]
+    del values[start:end]
+    return drained
+
+
+def _runtime_vec_extract_if(values, start, end, inclusive, predicate):
+    start = 0 if start is None else start
+    end = len(values) if end is None else end + 1 if inclusive else end
+    if not 0 <= start <= end <= len(values):
+        raise IndexError("extract_if range out of bounds")
+    matched = []
+    index = start
+    while index < end:
+        if predicate(values[index]):
+            matched.append(values.pop(index))
+            end -= 1
+        else:
+            index += 1
+    return matched
+
+
+def _runtime_vec_resize_with(values, length, factory):
+    if length < 0:
+        raise ValueError("resize length must be non-negative")
+    if length < len(values):
+        del values[length:]
+    else:
+        values.extend(factory() for _ in range(length - len(values)))
+
+
+def _runtime_vec_fill_with(values, factory):
+    for index in range(len(values)):
+        values[index] = factory()
+
+
+def _runtime_vec_partition_point(values, predicate):
+    low, high = 0, len(values)
+    while low < high:
+        middle = (low + high) // 2
+        if predicate(values[middle]):
+            low = middle + 1
+        else:
+            high = middle
+    return low
+
+
+def _runtime_vec_binary_search_by(values, compare):
+    low, high = 0, len(values)
+    while low < high:
+        middle = (low + high) // 2
+        order = compare(values[middle])
+        if order < 0:
+            low = middle + 1
+        elif order > 0:
+            high = middle
+        else:
+            return _Result.from_ok(middle)
+    return _Result.from_err(low)
+
+
+def _runtime_vec_binary_search_by_key(values, key, target):
+    return _runtime_vec_binary_search_by(
+        values,
+        lambda value: -1 if key(value) < target else 1 if key(value) > target else 0,
+    )
+
+
+def _runtime_vec_swap_with_slice(values, other):
+    if len(values) != len(other):
+        raise ValueError("destination and source slices have different lengths")
+    for index in range(len(values)):
+        values[index], other[index] = other[index], values[index]
+
+
+def _runtime_struct_rest(value, explicit_fields):
+    """Return fields from ``..base`` excluding explicitly supplied fields."""
+    if isinstance(value, dict):
+        items = value.items()
+    else:
+        items = vars(value).items()
+    return {
+        key: field_value for key, field_value in items if key not in explicit_fields
+    }
+
+
 class _MapSlot:
     """A mutable view of one HashMap entry.
 
@@ -1004,6 +1118,10 @@ class _MapEntry:
 
     def _slot(self):
         return _MapSlot(self._mapping, self._key)
+
+    def insert(self, value):
+        self._mapping[self._key] = value
+        return self._slot()
 
     def or_insert(self, value):
         if self._key not in self._mapping:
@@ -1391,6 +1509,103 @@ def _runtime_string_to_ascii_uppercase(value):
     return value.translate(
         str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     )
+
+
+def _string_char_index(value, byte_index):
+    encoded = value.encode("utf-8")
+    if byte_index < 0 or byte_index > len(encoded):
+        raise ValueError("String index out of bounds")
+    if byte_index < len(encoded) and encoded[byte_index] & 0xC0 == 0x80:
+        raise ValueError("String index is not a char boundary")
+    return len(encoded[:byte_index].decode("utf-8"))
+
+
+def _string_range_bounds(value, start, end, inclusive):
+    start_byte = 0 if start is None else start
+    end_byte = (
+        len(value.encode("utf-8")) if end is None else end + 1 if inclusive else end
+    )
+    first = _string_char_index(value, start_byte)
+    last = _string_char_index(value, end_byte)
+    if first > last:
+        raise ValueError("String range starts after it ends")
+    return first, last
+
+
+def _runtime_string_replace_range(value, start, end, inclusive, replacement):
+    first, last = _string_range_bounds(value, start, end, inclusive)
+    return value[:first] + replacement + value[last:]
+
+
+def _runtime_string_insert_str(value, index, part):
+    position = _string_char_index(value, index)
+    return value[:position] + part + value[position:]
+
+
+def _runtime_string_insert(value, index, character):
+    position = _string_char_index(value, index)
+    return value[:position] + character + value[position:]
+
+
+def _runtime_string_remove(value, index):
+    position = _string_char_index(value, index)
+    return value[:position] + value[position + 1 :], value[position]
+
+
+def _runtime_string_truncate(value, length):
+    return value[: _string_char_index(value, length)]
+
+
+def _runtime_string_split_at(value, index):
+    position = _string_char_index(value, index)
+    return value[:position], value[position:]
+
+
+def _runtime_string_split_off(value, index):
+    position = _string_char_index(value, index)
+    return value[:position], value[position:]
+
+
+def _runtime_string_retain(value, predicate):
+    return "".join(character for character in value if predicate(character))
+
+
+def _runtime_string_match_indices(value, pattern, *, reverse):
+    if not pattern:
+        return []
+    matches = []
+    offset = 0
+    while True:
+        found = value.find(pattern, offset)
+        if found < 0:
+            break
+        matches.append((len(value[:found].encode("utf-8")), pattern))
+        offset = found + len(pattern)
+    return list(reversed(matches)) if reverse else matches
+
+
+def _runtime_string_split_inclusive(value, separator, *, reverse):
+    if not separator:
+        return [value]
+    parts = value.split(separator)
+    result = [part + separator for part in parts[:-1]]
+    if parts[-1]:
+        result.append(parts[-1])
+    return list(reversed(result)) if reverse else result
+
+
+_STRING_MUTATORS = frozenset(
+    {
+        "insert",
+        "insert_str",
+        "remove",
+        "replace_range",
+        "retain",
+        "split_off",
+        "truncate",
+    }
+)
+_STRING_VALUE_MUTATORS = frozenset({"remove", "split_off"})
 
 
 def _runtime_parse(value):
@@ -1838,6 +2053,8 @@ class Translator:
         self._method_return_types: dict[tuple[str, str], str | None] = {}
         self.generic_struct_names: set[str] = set()
         self.generic_type_names: set[str] = set()
+        self.type_aliases: dict[str, Type] = {}
+        self._loop_contexts: list[tuple[str | None, str | None, str | None]] = []
         self._temp_counter = 0
         self._binding_types: dict[str, str] = {}
         self._map_value_types: dict[str, str] = {}
@@ -1873,6 +2090,8 @@ class Translator:
         self.constant_names.clear()
         self.generic_struct_names.clear()
         self.generic_type_names.clear()
+        self.type_aliases.clear()
+        self._loop_contexts.clear()
         self._temp_counter = 0
         self._binding_types.clear()
         self._map_value_types.clear()
@@ -1889,6 +2108,9 @@ class Translator:
         from compiler.analysis.termination import check_program
 
         self._proven_terminating = check_program(program)
+        for item in program.items:
+            if isinstance(item, TypeAlias):
+                self.type_aliases[item.name] = item.ty
         for item in program.items:
             if isinstance(item, StructDecl):
                 self.struct_names.add(item.name)
@@ -2008,6 +2230,7 @@ class Translator:
         ns["_ResultErrSentinel"] = _ResultErrSentinel
         ns["_PythonEnumVariant"] = _PythonEnumVariant
         ns["_clone"] = deepcopy
+        ns["_struct_rest"] = _runtime_struct_rest
         ns["_cmp_to_key"] = cmp_to_key
         ns["_reduce"] = reduce
         ns["_vec_retain"] = _runtime_vec_retain
@@ -2058,6 +2281,14 @@ class Translator:
         ns["_vec_resize"] = _runtime_vec_resize
         ns["_vec_split_off"] = _runtime_vec_split_off
         ns["_vec_partition"] = _runtime_vec_partition
+        ns["_vec_drain"] = _runtime_vec_drain
+        ns["_vec_extract_if"] = _runtime_vec_extract_if
+        ns["_vec_resize_with"] = _runtime_vec_resize_with
+        ns["_vec_fill_with"] = _runtime_vec_fill_with
+        ns["_vec_partition_point"] = _runtime_vec_partition_point
+        ns["_vec_binary_search_by"] = _runtime_vec_binary_search_by
+        ns["_vec_binary_search_by_key"] = _runtime_vec_binary_search_by_key
+        ns["_vec_swap_with_slice"] = _runtime_vec_swap_with_slice
         ns["_string_repeat"] = _runtime_string_repeat
         ns["_string_find"] = _runtime_string_find
         ns["_string_rfind"] = _runtime_string_rfind
@@ -2076,6 +2307,16 @@ class Translator:
         ns["_string_trim_matches_side"] = _runtime_string_trim_matches_side
         ns["_string_to_ascii_lowercase"] = _runtime_string_to_ascii_lowercase
         ns["_string_to_ascii_uppercase"] = _runtime_string_to_ascii_uppercase
+        ns["_string_replace_range"] = _runtime_string_replace_range
+        ns["_string_insert_str"] = _runtime_string_insert_str
+        ns["_string_insert"] = _runtime_string_insert
+        ns["_string_remove"] = _runtime_string_remove
+        ns["_string_truncate"] = _runtime_string_truncate
+        ns["_string_split_at"] = _runtime_string_split_at
+        ns["_string_split_off"] = _runtime_string_split_off
+        ns["_string_retain"] = _runtime_string_retain
+        ns["_string_match_indices"] = _runtime_string_match_indices
+        ns["_string_split_inclusive"] = _runtime_string_split_inclusive
         ns["_result_parse"] = _runtime_parse
         ns["_char_to_digit"] = _runtime_char_to_digit
         ns["_char_is_ascii_alphabetic"] = _runtime_char_is_ascii_alphabetic
@@ -2121,6 +2362,9 @@ class Translator:
         ns["_btreemap_iter"] = btreemap_iter
         ns["_btreemap_entry"] = btreemap_entry
         ns["_btreemap_get_mut"] = btreemap_get_mut
+        ns["_btreemap_first_key_value"] = btreemap_first_key_value
+        ns["_btreemap_pop_first"] = btreemap_pop_first
+        ns["_btreemap_range"] = btreemap_range
         ns["_hashset_new"] = hashset_new
         ns["_hashset_insert"] = hashset_insert
         ns["_hashset_contains"] = hashset_contains
@@ -2129,6 +2373,7 @@ class Translator:
         ns["_hashset_len"] = hashset_len
         ns["_hashset_is_empty"] = hashset_is_empty
         ns["_hashset_iter"] = hashset_iter
+        ns["_hashset_is_subset"] = hashset_is_subset
         if target_width is None:
             ns["_cast"] = _runtime_cast
             ns["_cast_isize"] = cast_isize
@@ -2164,6 +2409,7 @@ class Translator:
         ns["_div"] = _runtime_int_div
         ns["_mod"] = _runtime_int_rem
         ns["_at"] = _runtime_at
+        ns["_at_mut"] = _runtime_at_mut
 
         # Register the namespace as a module so @dataclass can look it up
         # via sys.modules[cls.__module__]. A unique name avoids clobbering
@@ -2509,7 +2755,20 @@ class Translator:
         out: list[ast.stmt] = [cls]
         return out
 
+    def _resolve_alias_type(self, ty: Type | None) -> Type | None:
+        """Expand simple ``type Name = Target;`` aliases without recursion loops."""
+        seen: set[str] = set()
+        while (
+            isinstance(ty, TypeName)
+            and ty.name in self.type_aliases
+            and ty.name not in seen
+        ):
+            seen.add(ty.name)
+            ty = self.type_aliases[ty.name]
+        return ty
+
     def _type_name_of(self, ty: Type) -> str:
+        ty = self._resolve_alias_type(ty) or ty
         if isinstance(ty, TypeName):
             return ty.name
         if isinstance(ty, TypeRef):
@@ -2522,6 +2781,7 @@ class Translator:
 
     def _numeric_type_name(self, ty: Type | None) -> str | None:
         """Return the primitive numeric type name for ``ty``, if any."""
+        ty = self._resolve_alias_type(ty)
         if isinstance(ty, TypeRef):
             return self._numeric_type_name(ty.inner)
         if isinstance(ty, TypeName) and ty.name in _PRIMITIVE_NUMERIC_TYPES:
@@ -2530,6 +2790,7 @@ class Translator:
 
     def _binding_type_name(self, ty: Type | None) -> str | None:
         """Return the named type behind a parameter type, if any."""
+        ty = self._resolve_alias_type(ty)
         if isinstance(ty, TypeRef):
             return self._binding_type_name(ty.inner)
         if isinstance(ty, TypeName):
@@ -2614,25 +2875,31 @@ class Translator:
 
     def translate_stmt(self, s: Stmt) -> list[ast.stmt]:
         if isinstance(s, LetStmt):
+            if s.else_branch is not None:
+                return self._translate_let_else(s)
+            if isinstance(s.value, MethodCall):
+                mutation = self._string_mutation_call(s.value)
+                if mutation is not None and mutation[2]:
+                    lowered = self._lower_string_mutation(s.value)
+                    assert lowered is not None
+                    statements, result = lowered
+                    statements.append(self.translate_let(s, value_expr=result))
+                    return statements
             return [self.translate_let(s)]
         if isinstance(s, ExprStmt):
             expr = s.expr
             if isinstance(expr, Assign):
                 return [self._translate_assign_stmt(expr)]
             if isinstance(expr, CompoundAssign):
-                return [self._translate_compound_assign_stmt(expr)]
+                return self._translate_compound_assign_stmt(expr)
             if isinstance(expr, MacroCall) and expr.path == "write":
                 return [self._translate_write_macro(expr)]
             if isinstance(expr, IfExpr):
                 return [self.translate_if_stmt(expr)]
             if isinstance(expr, IfLet):
                 return self.translate_if_let_stmt(expr)
-            if isinstance(expr, While):
-                return [self.translate_while(expr)]
-            if isinstance(expr, For):
-                return [self.translate_for(expr)]
-            if isinstance(expr, Loop):
-                return [self.translate_loop(expr)]
+            if isinstance(expr, (While, WhileLet, For, Loop)):
+                return self._translate_loop_statement(expr)
             if isinstance(expr, MatchExpr):
                 return self.translate_match_stmt(expr)
             if isinstance(expr, Return):
@@ -2652,11 +2919,18 @@ class Translator:
                     )
                 ]
             if isinstance(expr, Break):
-                return [ast.Break()]
+                return self._break_statements("break", expr.label, expr.line, expr.col)
             if isinstance(expr, Continue):
-                return [ast.Continue()]
+                return self._break_statements(
+                    "continue", expr.label, expr.line, expr.col
+                )
             if isinstance(expr, Block):
                 return self.translate_block_as_body(expr)
+            if isinstance(expr, MethodCall):
+                lowered = self._lower_string_mutation(expr)
+                if lowered is not None:
+                    statements, _ = lowered
+                    return statements
             return [ast.Expr(value=self.translate_expr(expr))]
         if isinstance(s, ItemStmt):
             return self.translate_item(s.item)
@@ -2735,13 +3009,40 @@ class Translator:
                 value,
                 self._numeric_types[e.target.name],
             )
+        if isinstance(e.target, Index) and not isinstance(e.target.index, Range):
+            self._check_type_boundary(
+                self._known_expr_type(e.target.index),
+                "usize",
+                e.target.index.line,
+                e.target.index.col,
+                getattr(e.target.index, "span", None),
+            )
+            return ast.Expr(
+                value=ast.Call(
+                    func=ast.Name(id="_at_mut", ctx=ast.Load()),
+                    args=[
+                        self.translate_expr(e.target.receiver),
+                        self.translate_expr(e.target.index),
+                        value,
+                        *self._position_args(e.target),
+                    ],
+                    keywords=[],
+                )
+            )
         target = self._translate_lvalue(e.target)
         return ast.Assign(targets=[target], value=value)
+
+    @staticmethod
+    def _assign_temp(name: str, value: ast.expr) -> ast.Assign:
+        return ast.Assign(
+            targets=[ast.Name(id=name, ctx=ast.Store())],
+            value=value,
+        )
 
     def _translate_compound_assign_stmt(
         self,
         e: CompoundAssign,
-    ) -> ast.stmt:
+    ) -> list[ast.stmt]:
         if isinstance(e.target, Ident) and e.target.name in self._immutable_bindings:
             raise TranslateError(
                 f"cannot assign to immutable binding `{e.target.name}`; "
@@ -2770,45 +3071,102 @@ class Translator:
                     e.line,
                     e.col,
                 )
-            return ast.Expr(
-                value=ast.Call(
-                    func=ast.Name(id="_map_slot_aug", ctx=ast.Load()),
-                    args=[
-                        self.translate_expr(e.target.operand),
-                        value,
-                        ast.Constant(value=e.op[0]),
-                    ],
-                    keywords=[],
-                ),
+            return [
+                ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id="_map_slot_aug", ctx=ast.Load()),
+                        args=[
+                            self.translate_expr(e.target.operand),
+                            value,
+                            ast.Constant(value=e.op[0]),
+                        ],
+                        keywords=[],
+                    ),
+                )
+            ]
+        if isinstance(e.target, Index) and not isinstance(e.target.index, Range):
+            self._check_type_boundary(
+                self._known_expr_type(e.target.index),
+                "usize",
+                e.target.index.line,
+                e.target.index.col,
+                getattr(e.target.index, "span", None),
             )
+            base = f"_polyglot_index_assign_{self._temp_counter}"
+            self._temp_counter += 1
+            container_name = f"{base}_container"
+            index_name = f"{base}_index"
+            current = ast.Call(
+                func=ast.Name(id="_at", ctx=ast.Load()),
+                args=[
+                    ast.Name(id=container_name, ctx=ast.Load()),
+                    ast.Name(id=index_name, ctx=ast.Load()),
+                    *self._position_args(e.target),
+                ],
+                keywords=[],
+            )
+            combined = self._binary_with_op(e.op[0], current, value)
+            return [
+                self._assign_temp(
+                    container_name, self.translate_expr(e.target.receiver)
+                ),
+                self._assign_temp(index_name, self.translate_expr(e.target.index)),
+                self._assign_temp(base, combined),
+                ast.Expr(
+                    value=ast.Call(
+                        func=ast.Name(id="_at_mut", ctx=ast.Load()),
+                        args=[
+                            ast.Name(id=container_name, ctx=ast.Load()),
+                            ast.Name(id=index_name, ctx=ast.Load()),
+                            ast.Name(id=base, ctx=ast.Load()),
+                            *self._position_args(e.target),
+                        ],
+                        keywords=[],
+                    ),
+                ),
+            ]
         if isinstance(e.target, Ident) and e.target.name in self._numeric_types:
             combined = self._binary_with_op(
                 e.op[0],
                 ast.Name(id=e.target.name, ctx=ast.Load()),
                 value,
             )
-            return ast.Assign(
-                targets=[ast.Name(id=e.target.name, ctx=ast.Store())],
-                value=self._coerce_numeric(
-                    combined,
-                    self._numeric_types[e.target.name],
-                ),
-            )
+            return [
+                ast.Assign(
+                    targets=[ast.Name(id=e.target.name, ctx=ast.Store())],
+                    value=self._coerce_numeric(
+                        combined,
+                        self._numeric_types[e.target.name],
+                    ),
+                )
+            ]
         target = self._translate_lvalue(e.target)
-        return ast.AugAssign(target=target, op=op_map[e.op](), value=value)
+        return [ast.AugAssign(target=target, op=op_map[e.op](), value=value)]
 
     def translate_block_as_body(self, block: Block) -> list[ast.stmt]:
         body: list[ast.stmt] = []
         for stmt in block.stmts:
             body.extend(self.translate_stmt(stmt))
         if block.tail is not None:
-            body.append(ast.Expr(value=self.translate_expr(block.tail)))
+            if isinstance(block.tail, MethodCall):
+                lowered = self._lower_string_mutation(block.tail)
+                if lowered is not None:
+                    statements, result = lowered
+                    body.extend(statements)
+                    body.append(ast.Expr(value=result))
+                else:
+                    body.append(ast.Expr(value=self.translate_expr(block.tail)))
+            else:
+                body.append(ast.Expr(value=self.translate_expr(block.tail)))
         if not body:
             body = [ast.Pass()]
         return body
 
     def _binding_type_with_nested(self, ty: TypeName) -> str:
         """Encode a TypeName preserving nested collection kinds (one level)."""
+        resolved = self._resolve_alias_type(ty)
+        if isinstance(resolved, TypeName):
+            ty = resolved
         if ty.name in {"HashMap", "BTreeMap"} and len(ty.args) >= 2:
             value_ty = ty.args[1]
             if isinstance(value_ty, TypeName) and value_ty.name in {
@@ -2820,11 +3178,11 @@ class Translator:
                 return f"{ty.name}:{value_ty.name}"
         return ty.name
 
-    @staticmethod
-    def _map_value_type_name(ty: Type | None) -> str | None:
+    def _map_value_type_name(self, ty: Type | None) -> str | None:
         """Return V for a HashMap<K, V> / BTreeMap<K, V> annotation."""
+        ty = self._resolve_alias_type(ty)
         if isinstance(ty, TypeRef):
-            return Translator._map_value_type_name(ty.inner)
+            return self._map_value_type_name(ty.inner)
         if not isinstance(ty, TypeName):
             return None
         if ty.name not in {"HashMap", "BTreeMap"} or len(ty.args) < 2:
@@ -2834,7 +3192,9 @@ class Translator:
             value = value.inner
         return value.name if isinstance(value, TypeName) else None
 
-    def translate_let(self, s: LetStmt) -> ast.stmt:
+    def translate_let(
+        self, s: LetStmt, *, value_expr: ast.expr | None = None
+    ) -> ast.stmt:
         if not isinstance(s.pattern, PatIdent):
             raise TranslateError(
                 f"unsupported let pattern {type(s.pattern).__name__}",
@@ -2868,7 +3228,7 @@ class Translator:
                 value=None,
                 simple=1,
             )
-        value = self.translate_expr(s.value)
+        value = value_expr if value_expr is not None else self.translate_expr(s.value)
         if numeric_type is not None:
             value = self._coerce_numeric(value, numeric_type)
         binding_type = (
@@ -2896,12 +3256,213 @@ class Translator:
             self._slot_bindings.discard(s.pattern.name)
         return ast.Assign(targets=[target], value=value)
 
-    def translate_while(self, w: While) -> ast.While:
+    def _translate_let_else(self, s: LetStmt) -> list[ast.stmt]:
+        """Lower ``let PAT = value else { diverge };`` to a guarded binding."""
+        assert s.else_branch is not None and s.value is not None
+        self._validate_pattern_bindings(s.pattern)
+        temp_name = f"_polyglot_let_else_{self._temp_counter}"
+        self._temp_counter += 1
+        subject = ast.Name(id=temp_name, ctx=ast.Load())
+        test, bindings = self._pattern_test_bindings(
+            s.pattern,
+            subject,
+            self._option_result_type(s.value),
+        )
+        if isinstance(test, ast.Constant) and test.value is True:
+            raise TranslateError(
+                "let-else requires a refutable pattern",
+                s.pattern.line,
+                s.pattern.col,
+            )
+        binding_statements: list[ast.stmt] = [
+            ast.Assign(
+                targets=[ast.Name(id=name, ctx=ast.Store())],
+                value=value,
+            )
+            for name, value in bindings.items()
+        ]
+        if isinstance(s.pattern, PatIdent):
+            if s.mutable or s.pattern.mutable:
+                self._immutable_bindings.discard(s.pattern.name)
+        else:
+            for name in bindings:
+                self._immutable_bindings.discard(name)
+        diverge = self.translate_block_as_body(s.else_branch)
+        diverge.append(
+            ast.Raise(
+                exc=ast.Call(
+                    func=ast.Name(id="RuntimeError", ctx=ast.Load()),
+                    args=[ast.Constant(value="let-else branch diverged")],
+                    keywords=[],
+                ),
+                cause=None,
+            )
+        )
+        return [
+            ast.Assign(
+                targets=[ast.Name(id=temp_name, ctx=ast.Store())],
+                value=self.translate_expr(s.value),
+            ),
+            ast.If(test=test, body=binding_statements, orelse=diverge),
+        ]
+
+    @staticmethod
+    def _assign_flag(name: str, value: bool = True) -> ast.Assign:
+        return ast.Assign(
+            targets=[ast.Name(id=name, ctx=ast.Store())],
+            value=ast.Constant(value=value),
+        )
+
+    def _break_statements(
+        self,
+        kind: str,
+        label: str | None,
+        line: int,
+        col: int,
+    ) -> list[ast.stmt]:
+        """Lower ``break``/``continue``, propagating labelled outer targets."""
+        if not self._loop_contexts:
+            raise TranslateError(f"{kind} outside of a loop", line, col)
+        index = len(self._loop_contexts) - 1
+        if label is not None:
+            matches = [
+                i
+                for i, context in enumerate(self._loop_contexts)
+                if context[0] == label
+            ]
+            if not matches:
+                raise TranslateError(f"unknown loop label `{label}`", line, col)
+            index = matches[-1]
+        if index == len(self._loop_contexts) - 1:
+            return [ast.Break() if kind == "break" else ast.Continue()]
+        flag = self._loop_contexts[index][1 if kind == "break" else 2]
+        if flag is None:
+            raise TranslateError(f"loop label `{label}` has no control flag", line, col)
+        return [self._assign_flag(flag), ast.Break()]
+
+    def _flag_check_statements(self) -> list[ast.stmt]:
+        """Emit checks after a loop for control targeting an enclosing loop."""
+        checks: list[ast.stmt] = []
+        for index in reversed(range(len(self._loop_contexts))):
+            _label, break_flag, continue_flag = self._loop_contexts[index]
+            for flag, kind in ((break_flag, "break"), (continue_flag, "continue")):
+                if flag is None:
+                    continue
+                if index == len(self._loop_contexts) - 1:
+                    body: list[ast.stmt] = [
+                        ast.Break() if kind == "break" else ast.Continue()
+                    ]
+                else:
+                    body = [self._assign_flag(flag), ast.Break()]
+                checks.append(
+                    ast.If(
+                        test=ast.Name(id=flag, ctx=ast.Load()),
+                        body=body,
+                        orelse=[],
+                    )
+                )
+        return checks
+
+    def _translate_loop_statement(
+        self, expr: While | WhileLet | For | Loop
+    ) -> list[ast.stmt]:
+        declarations: list[ast.stmt] = []
+        context: tuple[str | None, str | None, str | None] = (
+            None,
+            None,
+            None,
+        )
+        if expr.label is not None:
+            base = f"_polyglot_loop_{self._temp_counter}"
+            self._temp_counter += 1
+            break_flag = f"{base}_break"
+            continue_flag = f"{base}_continue"
+            context = (expr.label, break_flag, continue_flag)
+            declarations = [
+                self._assign_flag(break_flag, False),
+                self._assign_flag(continue_flag, False),
+            ]
+        if isinstance(expr, While):
+            node: ast.stmt = self.translate_while(expr, context)
+        elif isinstance(expr, WhileLet):
+            node = self.translate_while_let(expr, context)
+        elif isinstance(expr, For):
+            node = self.translate_for(expr, context)
+        else:
+            node = self.translate_loop(expr, context)
+        return [*declarations, node, *self._flag_check_statements()]
+
+    def translate_while(
+        self,
+        w: While,
+        context: tuple[str | None, str | None, str | None] = (None, None, None),
+    ) -> ast.While:
         test = self.translate_expr(w.cond)
-        body = self.translate_block_as_body(w.body)
+        self._loop_contexts.append(context)
+        try:
+            body = self.translate_block_as_body(w.body)
+        finally:
+            self._loop_contexts.pop()
         return ast.While(test=test, body=body, orelse=[])
 
-    def translate_for(self, f: For) -> ast.For:
+    def translate_while_let(
+        self,
+        w: WhileLet,
+        context: tuple[str | None, str | None, str | None] = (None, None, None),
+    ) -> ast.While:
+        """Lower ``while let pat = value`` with a refutable pattern test."""
+        self._validate_pattern_bindings(w.pattern)
+        temp_name = f"_polyglot_while_let_{self._temp_counter}"
+        self._temp_counter += 1
+        subject = ast.Name(id=temp_name, ctx=ast.Load())
+        test, bindings = self._pattern_test_bindings(
+            w.pattern,
+            subject,
+            self._option_result_type(w.value),
+        )
+        if isinstance(test, ast.Constant) and test.value is True:
+            raise TranslateError(
+                "while-let requires a refutable pattern",
+                w.pattern.line,
+                w.pattern.col,
+            )
+        self._loop_contexts.append(context)
+        try:
+            body = self.translate_block_as_body(w.body)
+        finally:
+            self._loop_contexts.pop()
+        for name, value in reversed(list(bindings.items())):
+            body.insert(
+                0,
+                ast.Assign(
+                    targets=[ast.Name(id=name, ctx=ast.Store())],
+                    value=value,
+                ),
+            )
+        guard = ast.If(
+            test=ast.UnaryOp(op=ast.Not(), operand=test),
+            body=[ast.Break()],
+            orelse=[],
+        )
+        loop_body = [
+            ast.Assign(
+                targets=[ast.Name(id=temp_name, ctx=ast.Store())],
+                value=self.translate_expr(w.value),
+            ),
+            guard,
+            *body,
+        ]
+        return ast.While(
+            test=ast.Constant(value=True),
+            body=loop_body,
+            orelse=[],
+        )
+
+    def translate_for(
+        self,
+        f: For,
+        context: tuple[str | None, str | None, str | None] = (None, None, None),
+    ) -> ast.For:
         if isinstance(f.pattern, PatIdent):
             target: ast.expr = ast.Name(
                 id=f.pattern.name,
@@ -2923,6 +3484,7 @@ class Translator:
         slot_was_bound = slot_name is not None and slot_name in self._slot_bindings
         if slot_name is not None:
             self._slot_bindings.add(slot_name)
+        self._loop_contexts.append(context)
         try:
             if isinstance(f.pattern, PatIdent):
                 name = f.pattern.name
@@ -2948,6 +3510,7 @@ class Translator:
             else:
                 body = self.translate_block_as_body(f.body)
         finally:
+            self._loop_contexts.pop()
             if slot_name is not None and not slot_was_bound:
                 self._slot_bindings.discard(slot_name)
         return ast.For(target=target, iter=iter_expr, body=body, orelse=[])
@@ -2998,8 +3561,16 @@ class Translator:
             pattern.col,
         )
 
-    def translate_loop(self, lp: Loop) -> ast.While:
-        body = self.translate_block_as_body(lp.body)
+    def translate_loop(
+        self,
+        lp: Loop,
+        context: tuple[str | None, str | None, str | None] = (None, None, None),
+    ) -> ast.While:
+        self._loop_contexts.append(context)
+        try:
+            body = self.translate_block_as_body(lp.body)
+        finally:
+            self._loop_contexts.pop()
         return ast.While(test=ast.Constant(value=True), body=body, orelse=[])
 
     def translate_if_stmt(self, ifx: IfExpr) -> ast.If:
@@ -3561,11 +4132,7 @@ class Translator:
                 comparators=[self._path_to_expr(pat.path)],
             ), {}
         if isinstance(pat, PatMacro):
-            raise TranslateError(
-                f"pattern macro {pat.path}! is not supported",
-                pat.line,
-                pat.col,
-            )
+            reject_pattern_macro(pat)
         if isinstance(pat, PatRef):
             return self._pattern_test_bindings(pat.inner, subject)
         if isinstance(pat, PatOr):
@@ -4020,6 +4587,44 @@ class Translator:
             return self._is_vec_expr(expr.inner)
         return False
 
+    def _is_string_expr(self, expr: Expr) -> bool:
+        if isinstance(expr, LitStr):
+            return True
+        if isinstance(expr, Ident):
+            return self._binding_types.get(expr.name) == "String"
+        if isinstance(expr, MethodCall) and expr.method in {
+            "insert_str",
+            "replace",
+            "replacen",
+            "retain",
+            "split_off",
+            "to_ascii_lowercase",
+            "to_ascii_uppercase",
+            "to_lowercase",
+            "to_string",
+            "to_uppercase",
+            "trim",
+            "trim_end",
+            "trim_end_matches",
+            "trim_matches",
+            "trim_start",
+            "trim_start_matches",
+        }:
+            return True
+        if isinstance(expr, MacroCall) and expr.path == "format":
+            return True
+        if isinstance(expr, Field):
+            receiver_type = self._known_expr_type(expr.receiver)
+            return (
+                self.struct_field_types.get(receiver_type or "", {}).get(
+                    expr.name,
+                )
+                == "String"
+            )
+        if isinstance(expr, Paren):
+            return self._is_string_expr(expr.inner)
+        return False
+
     def _is_user_method_call(self, e: MethodCall) -> bool:
         """True when ``e`` resolves to a method declared in an ``impl`` block."""
         receiver_type = self._expr_struct_type(e.receiver)
@@ -4116,6 +4721,14 @@ class Translator:
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
+        "binary_search_by": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "binary_search_by_key": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "bytes": ("_handle_tail_methods",),
         "chain": (
             "_handle_vec_iterator_methods",
@@ -4159,6 +4772,7 @@ class Translator:
         ),
         "drain": (
             "_handle_collection_methods",
+            "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
         "ends_with": (
@@ -4185,7 +4799,15 @@ class Translator:
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
+        "extract_if": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "fill": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "fill_with": (
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
@@ -4201,6 +4823,7 @@ class Translator:
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
+        "first_key_value": ("_handle_collection_methods",),
         "flatten": (
             "_handle_vec_iterator_methods",
             "_handle_tail_methods",
@@ -4307,6 +4930,7 @@ class Translator:
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
+        "is_subset": ("_handle_collection_methods",),
         "is_sorted_by": (
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
@@ -4383,10 +5007,15 @@ class Translator:
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
+        "partition_point": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
         "pop": (
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
+        "pop_first": ("_handle_collection_methods",),
         "position": (
             "_handle_vec_iterator_methods",
             "_handle_tail_methods",
@@ -4399,6 +5028,7 @@ class Translator:
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
+        "range": ("_handle_collection_methods",),
         "rchunks": (
             "_handle_vec_iterator_methods",
             "_handle_tail_methods",
@@ -4420,6 +5050,10 @@ class Translator:
         "replace": ("_handle_tail_methods",),
         "replacen": ("_handle_tail_methods",),
         "resize": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "resize_with": (
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
@@ -4466,6 +5100,10 @@ class Translator:
         ),
         "sort_unstable": (
             "_handle_string_char_methods",
+            "_handle_tail_methods",
+        ),
+        "sort_unstable_by": (
+            "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
         "sort_unstable_by_key": (
@@ -4520,6 +5158,10 @@ class Translator:
             "_handle_tail_methods",
         ),
         "swap": (
+            "_handle_vec_mutation_methods",
+            "_handle_tail_methods",
+        ),
+        "swap_with_slice": (
             "_handle_vec_mutation_methods",
             "_handle_tail_methods",
         ),
@@ -4752,6 +5394,12 @@ class Translator:
                     args=[recv],
                     keywords=[],
                 )
+            if e.method == "is_subset" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_hashset_is_subset", ctx=ast.Load()),
+                    args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
         if self._is_btreemap_expr(e.receiver):
             if e.method == "insert" and len(e.args) == 2:
                 return ast.Call(
@@ -4823,6 +5471,24 @@ class Translator:
                 return ast.Call(
                     func=ast.Name(id="_btreemap_get_mut", ctx=ast.Load()),
                     args=[recv, self.translate_expr(e.args[0])],
+                    keywords=[],
+                )
+            if e.method == "first_key_value" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_first_key_value", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "pop_first" and not e.args:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_pop_first", ctx=ast.Load()),
+                    args=[recv],
+                    keywords=[],
+                )
+            if e.method == "range" and len(e.args) == 1:
+                return ast.Call(
+                    func=ast.Name(id="_btreemap_range", ctx=ast.Load()),
+                    args=[recv, *self._translate_range_args(e.args[0], e.method)],
                     keywords=[],
                 )
         if (
@@ -5061,6 +5727,33 @@ class Translator:
             )
         return None
 
+    def _translate_range_args(self, expr: Expr, method: str) -> list[ast.expr]:
+        if not isinstance(expr, Range):
+            raise TranslateError(
+                f"{method} expects a range",
+                getattr(expr, "line", 0),
+                getattr(expr, "col", 0),
+            )
+        return [
+            self.translate_opt_expr(expr.start) or ast.Constant(value=None),
+            self.translate_opt_expr(expr.end) or ast.Constant(value=None),
+            ast.Constant(value=expr.inclusive),
+        ]
+
+    def _translate_single_param_closure(self, e: MethodCall) -> ast.expr:
+        closure = e.args[0]
+        if (
+            not isinstance(closure, Closure)
+            or len(closure.params) != 1
+            or not isinstance(closure.params[0][0], PatIdent)
+        ):
+            raise TranslateError(
+                f"{e.method} expects a single identifier parameter",
+                e.line,
+                e.col,
+            )
+        return self._translate_closure(closure)
+
     def _handle_vec_mutation_methods(
         self, e: MethodCall, recv: ast.expr
     ) -> ast.expr | None:
@@ -5097,6 +5790,97 @@ class Translator:
         if e.method == "binary_search" and len(e.args) == 1:
             return ast.Call(
                 func=ast.Name(id="_vec_binary_search", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "binary_search_by" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_binary_search_by", ctx=ast.Load()),
+                args=[recv, self._translate_single_param_closure(e)],
+                keywords=[],
+            )
+        if e.method == "binary_search_by_key" and len(e.args) == 2:
+            return ast.Call(
+                func=ast.Name(id="_vec_binary_search_by_key", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self._translate_closure(e.args[0]),
+                    self.translate_expr(e.args[1]),
+                ],
+                keywords=[],
+            )
+        if e.method == "drain" and len(e.args) == 1 and self._is_vec_expr(e.receiver):
+            return ast.Call(
+                func=ast.Name(id="_vec_drain", ctx=ast.Load()),
+                args=[recv, *self._translate_range_args(e.args[0], e.method)],
+                keywords=[],
+            )
+        if e.method == "extract_if" and len(e.args) in (1, 2):
+            closure = e.args[-1]
+            if (
+                not isinstance(closure, Closure)
+                or len(closure.params) != 1
+                or not isinstance(closure.params[0][0], PatIdent)
+            ):
+                raise TranslateError(
+                    "extract_if expects a single identifier parameter",
+                    e.line,
+                    e.col,
+                )
+            range_args = (
+                [
+                    ast.Constant(value=None),
+                    ast.Constant(value=None),
+                    ast.Constant(value=False),
+                ]
+                if len(e.args) == 1
+                else self._translate_range_args(e.args[0], e.method)
+            )
+            return ast.Call(
+                func=ast.Name(id="_vec_extract_if", ctx=ast.Load()),
+                args=[recv, *range_args, self._translate_closure(closure)],
+                keywords=[],
+            )
+        if e.method == "fill_with" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_fill_with", ctx=ast.Load()),
+                args=[recv, self.translate_expr(e.args[0])],
+                keywords=[],
+            )
+        if e.method == "partition_point" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_partition_point", ctx=ast.Load()),
+                args=[recv, self._translate_single_param_closure(e)],
+                keywords=[],
+            )
+        if e.method == "resize_with" and len(e.args) == 2:
+            return ast.Call(
+                func=ast.Name(id="_vec_resize_with", ctx=ast.Load()),
+                args=[
+                    recv,
+                    self.translate_expr(e.args[0]),
+                    self.translate_expr(e.args[1]),
+                ],
+                keywords=[],
+            )
+        if e.method == "sort_unstable_by" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Attribute(value=recv, attr="sort", ctx=ast.Load()),
+                args=[],
+                keywords=[
+                    ast.keyword(
+                        arg="key",
+                        value=ast.Call(
+                            func=ast.Name(id="_cmp_to_key", ctx=ast.Load()),
+                            args=[self.translate_expr(e.args[0])],
+                            keywords=[],
+                        ),
+                    ),
+                ],
+            )
+        if e.method == "swap_with_slice" and len(e.args) == 1:
+            return ast.Call(
+                func=ast.Name(id="_vec_swap_with_slice", ctx=ast.Load()),
                 args=[recv, self.translate_expr(e.args[0])],
                 keywords=[],
             )
@@ -5415,6 +6199,120 @@ class Translator:
                 keywords=[],
             )
         return None
+
+    def _string_method_call(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+        """Lower a String method that has a dedicated byte-aware helper."""
+
+        def call(name: str, args: list[ast.expr], **keywords: ast.expr) -> ast.expr:
+            return ast.Call(
+                func=ast.Name(id=name, ctx=ast.Load()),
+                args=args,
+                keywords=[
+                    ast.keyword(arg=key, value=value) for key, value in keywords.items()
+                ],
+            )
+
+        if e.method == "replace_range" and len(e.args) == 2:
+            return call(
+                "_string_replace_range",
+                [
+                    recv,
+                    *self._translate_range_args(e.args[0], e.method),
+                    self.translate_expr(e.args[1]),
+                ],
+            )
+        if e.method == "insert_str" and len(e.args) == 2:
+            return call(
+                "_string_insert_str",
+                [recv, self.translate_expr(e.args[0]), self.translate_expr(e.args[1])],
+            )
+        if e.method == "insert" and len(e.args) == 2:
+            return call(
+                "_string_insert",
+                [recv, self.translate_expr(e.args[0]), self.translate_expr(e.args[1])],
+            )
+        if e.method == "remove" and len(e.args) == 1:
+            return call(
+                "_string_remove",
+                [recv, self.translate_expr(e.args[0])],
+            )
+        if e.method == "truncate" and len(e.args) == 1:
+            return call(
+                "_string_truncate",
+                [recv, self.translate_expr(e.args[0])],
+            )
+        if e.method == "split_at" and len(e.args) == 1:
+            return call(
+                "_string_split_at",
+                [recv, self.translate_expr(e.args[0])],
+            )
+        if e.method == "split_off" and len(e.args) == 1:
+            return call(
+                "_string_split_off",
+                [recv, self.translate_expr(e.args[0])],
+            )
+        if e.method == "retain" and len(e.args) == 1:
+            return call(
+                "_string_retain",
+                [recv, self._translate_single_param_closure(e)],
+            )
+        if e.method in ("match_indices", "rmatch_indices") and len(e.args) == 1:
+            return call(
+                "_string_match_indices",
+                [recv, self.translate_expr(e.args[0])],
+                reverse=ast.Constant(value=e.method == "rmatch_indices"),
+            )
+        if e.method in ("split_inclusive", "rsplit_inclusive") and len(e.args) == 1:
+            return call(
+                "_string_split_inclusive",
+                [recv, self.translate_expr(e.args[0])],
+                reverse=ast.Constant(value=e.method == "rsplit_inclusive"),
+            )
+        return None
+
+    def _handle_string_methods(self, e: MethodCall, recv: ast.expr) -> ast.expr | None:
+        if not self._is_string_expr(e.receiver):
+            return None
+        return self._string_method_call(e, recv)
+
+    def _string_mutation_call(self, e: MethodCall) -> tuple[str, ast.expr, bool] | None:
+        if not isinstance(e.receiver, Ident):
+            return None
+        if not self._is_string_expr(e.receiver) or e.method not in _STRING_MUTATORS:
+            return None
+        helper = self._string_method_call(
+            e, ast.Name(id=e.receiver.name, ctx=ast.Load())
+        )
+        if helper is None:
+            return None
+        return e.receiver.name, helper, e.method in _STRING_VALUE_MUTATORS
+
+    def _lower_string_mutation(
+        self, e: MethodCall
+    ) -> tuple[list[ast.stmt], ast.expr] | None:
+        mutation = self._string_mutation_call(e)
+        if mutation is None:
+            return None
+        name, helper, has_value = mutation
+        temp_name = f"_polyglot_string_mut_{self._temp_counter}"
+        self._temp_counter += 1
+        temp = ast.Name(id=temp_name, ctx=ast.Load())
+        target = ast.Name(id=name, ctx=ast.Store())
+        rebound_value: ast.expr = (
+            ast.Subscript(value=temp, slice=ast.Constant(value=0), ctx=ast.Load())
+            if has_value
+            else temp
+        )
+        statements: list[ast.stmt] = [
+            ast.Assign(targets=[ast.Name(id=temp_name, ctx=ast.Store())], value=helper),
+            ast.Assign(targets=[target], value=rebound_value),
+        ]
+        result: ast.expr = (
+            ast.Subscript(value=temp, slice=ast.Constant(value=1), ctx=ast.Load())
+            if has_value
+            else temp
+        )
+        return statements, result
 
     def _handle_string_char_methods(
         self, e: MethodCall, recv: ast.expr
@@ -6122,6 +7020,9 @@ class Translator:
                     args=[self.translate_expr(a) for a in e.args],
                     keywords=[],
                 )
+            string_result = self._handle_string_methods(e, recv)
+            if string_result is not None:
+                return string_result
             for handler in self._method_handlers.get(e.method, ()):
                 result = handler(self, e, recv)
                 if result is not None:
@@ -6333,10 +7234,27 @@ class Translator:
 
     def _translate_struct_literal(self, e: StructLiteral) -> ast.expr:
         name = e.path.split("::")[-1]
+        explicit_names = [key for key, _value in e.fields]
+        rest_fields: ast.expr | None = None
+        if e.rest is not None:
+            rest_fields = ast.Call(
+                func=ast.Name(id="_struct_rest", ctx=ast.Load()),
+                args=[
+                    self.translate_expr(e.rest),
+                    ast.List(
+                        elts=[ast.Constant(value=key) for key in explicit_names],
+                        ctx=ast.Load(),
+                    ),
+                ],
+                keywords=[],
+            )
         if name in self.struct_names:
             keywords: list[ast.keyword] = [
-                ast.keyword(arg=k, value=self.translate_expr(v)) for k, v in e.fields
+                ast.keyword(arg=key, value=self.translate_expr(value))
+                for key, value in e.fields
             ]
+            if rest_fields is not None:
+                keywords.append(ast.keyword(arg=None, value=rest_fields))
             return ast.Call(
                 func=ast.Name(id=name, ctx=ast.Load()),
                 args=[],
@@ -6344,6 +7262,9 @@ class Translator:
             )
         keys: list[ast.expr | None] = [ast.Constant(value=k) for k, _ in e.fields]
         values: list[ast.expr] = [self.translate_expr(v) for _, v in e.fields]
+        if rest_fields is not None:
+            keys.insert(0, None)
+            values.insert(0, rest_fields)
         return ast.Dict(keys=keys, values=values)
 
     def _translate_lvalue(
@@ -6643,6 +7564,7 @@ class Translator:
             if expr.method in {"unwrap", "expect"}:
                 return self._is_map_get_mut_expr(expr.receiver)
             if expr.method in {
+                "insert",
                 "or_insert",
                 "or_insert_with",
                 "or_insert_with_key",
@@ -6832,6 +7754,7 @@ class Translator:
     def translate_type(self, ty: Type | None) -> ast.expr | None:
         if ty is None:
             return None
+        ty = self._resolve_alias_type(ty)
         if isinstance(ty, TypeName):
             if ty.name in self.generic_type_names:
                 return ast.Name(id="int", ctx=ast.Load())

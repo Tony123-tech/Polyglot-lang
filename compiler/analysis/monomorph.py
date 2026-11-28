@@ -773,11 +773,23 @@ class Monomorphizer:
                     arm.body, arm_env, mapping, depth, self_type, expected
                 )
             return expr
-        if isinstance(expr, (ast.Loop, ast.While, ast.For)):
+        if isinstance(expr, (ast.Loop, ast.While, ast.WhileLet, ast.For)):
             if isinstance(expr, ast.While):
                 expr.cond = self._transform_expr(
                     expr.cond, env, mapping, depth, self_type, None
                 )
+            elif isinstance(expr, ast.WhileLet):
+                expr.value = self._transform_expr(
+                    expr.value, env, mapping, depth, self_type, None
+                )
+                body_env = dict(env)
+                expr.pattern = self._transform_pattern(
+                    expr.pattern, body_env, mapping, depth, self_type
+                )
+                expr.body = self._transform_block(
+                    expr.body, body_env, mapping, depth, self_type
+                )
+                return expr
             elif isinstance(expr, ast.For):
                 expr.iter = self._transform_expr(
                     expr.iter, env, mapping, depth, self_type, None

@@ -1,6 +1,6 @@
 """Structured diagnostics shared by the experimental pillar modules.
 
-The project's public error surface is E001–E008.  The experimental modules
+The project's public error surface is E001–E009.  The experimental modules
 reuse those codes rather than inventing a parallel namespace, so a caller can
 keep one diagnostic pipeline.  The mapping is deliberate:
 
@@ -12,6 +12,7 @@ E005  dependency cycle
 E006  missing module, snapshot, or artifact
 E007  unsupported native pattern or unavailable platform feature
 E008  malformed serialized state or literal encoding
+E009  ownership, move, drop, or borrow violation
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from types import MappingProxyType
 from typing import Final
 
 # A read-only mapping: extending it at runtime would silently widen the public
-# diagnostic contract, so the exact E001-E008 set is enforced here.
+# diagnostic contract, so the exact E001-E009 set is enforced here.
 ERROR_CODES: Final[Mapping[str, str]] = MappingProxyType(
     {
         "E001": "type, layout, or ABI boundary",
@@ -33,6 +34,7 @@ ERROR_CODES: Final[Mapping[str, str]] = MappingProxyType(
         "E006": "missing module, snapshot, or artifact",
         "E007": "unsupported native pattern or platform feature",
         "E008": "malformed serialized state or literal encoding",
+        "E009": "ownership, move, drop, or borrow violation",
     }
 )
 
@@ -152,6 +154,7 @@ _DEFAULT_HELP: Final[Mapping[str, str]] = MappingProxyType(
         "E006": "check that the referenced module, snapshot, or artifact exists",
         "E007": "use the Python fallback on this platform",
         "E008": "rebuild the snapshot/certificate and verify its digest",
+        "E009": "clone the value or end the borrow before the move",
     }
 )
 

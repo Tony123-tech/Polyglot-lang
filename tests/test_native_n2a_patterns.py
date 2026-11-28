@@ -913,9 +913,10 @@ def test_pattern_macro_parses(pattern):
 @pytest.mark.native
 def test_pattern_macro_nested_in_tuple(native_backend):
     source = _macro_pattern_source("(m!(), y)")
-    with pytest.raises(RustCompileError) as error:
+    with pytest.raises(UnsupportedNativePatternError) as error:
         native_backend.compile(parse(lex(source)))
-    assert "error[E004]:" in error.value.pretty()
+    assert error.value.code == "E007"
+    assert "pattern macro m!" in str(error.value)
 
 
 @pytest.mark.native
@@ -1225,8 +1226,11 @@ def test_python_box_pattern_parity():
 
 def test_python_pattern_macro_raises_translate_error():
     program = parse(lex(_macro_pattern_source("m!()")))
-    with pytest.raises(TranslateError, match="pattern macro m!"):
+    with pytest.raises(
+        UnsupportedNativePatternError, match="pattern macro m!"
+    ) as error:
         compile_rust(program)
+    assert error.value.code == "E007"
 
 
 @pytest.mark.skip(
@@ -1343,9 +1347,10 @@ fn unresolved_constant(value: i64) -> i64 {
 @pytest.mark.native
 def test_error_unsupported_macro(native_backend):
     source = _macro_pattern_source("unsupported!()")
-    with pytest.raises(RustCompileError) as error:
+    with pytest.raises(UnsupportedNativePatternError) as error:
         native_backend.compile(parse(lex(source)))
-    assert "unsupported" in error.value.pretty()
+    assert error.value.code == "E007"
+    assert "unsupported" in str(error.value)
 
 
 def test_error_two_slice_rests():
@@ -1441,8 +1446,11 @@ fn invalid(value: (i64, i64)) -> i64 {
 
 
 def test_python_unsupported_pattern_has_translate_error():
-    with pytest.raises(TranslateError, match="pattern macro unsupported!") as error:
+    with pytest.raises(
+        UnsupportedNativePatternError, match="pattern macro unsupported!"
+    ) as error:
         compile_rust(parse(lex(_macro_pattern_source("unsupported!()"))))
+    assert error.value.code == "E007"
     assert error.value.line == 4
     assert error.value.col > 0
 

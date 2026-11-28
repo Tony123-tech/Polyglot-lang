@@ -62,7 +62,7 @@ _SCALARS: Final[dict[str, str]] = {
     "none": "none",
     "str": "str",
 }
-_CODES: Final[frozenset[str]] = frozenset({f"E{index:03d}" for index in range(1, 9)})
+_CODES: Final[frozenset[str]] = frozenset({f"E{index:03d}" for index in range(1, 10)})
 _FALLBACK_POLICIES: Final[frozenset[str]] = frozenset(
     {"fallback", "native_only", "strict"}
 )

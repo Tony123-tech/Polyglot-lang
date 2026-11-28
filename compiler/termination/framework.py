@@ -42,6 +42,7 @@ from compiler.core.ast_nodes import (
     TupleExpr,
     Unary,
     While,
+    WhileLet,
 )
 from compiler.core.lexer import lex
 from compiler.core.parser import parse
@@ -772,7 +773,9 @@ def term_infer_loop_bound_certificates(
     diagnostics: list[TerminationDiagnostic] = []
 
     loops = [
-        node for node in _walk_local(fn.body) if isinstance(node, (For, While, Loop))
+        node
+        for node in _walk_local(fn.body)
+        if isinstance(node, (For, While, WhileLet, Loop))
     ]
     for index, loop in enumerate(loops):
         loop_span = _span(loop, span)

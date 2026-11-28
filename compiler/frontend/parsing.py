@@ -776,6 +776,11 @@ def parse_loop_body(source: str) -> dict:
     elif isinstance(node, ast.While):
         kind = "while"
         header = f"while {_PRINTER.expr(node.cond)}"
+    elif isinstance(node, ast.WhileLet):
+        kind = "while let"
+        header = (
+            f"while let {_PRINTER.pattern(node.pattern)} = {_PRINTER.expr(node.value)}"
+        )
     elif isinstance(node, ast.Loop):
         kind, header = "loop", "loop"
     else:

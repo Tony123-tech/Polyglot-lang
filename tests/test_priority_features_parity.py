@@ -74,6 +74,15 @@ fn pf_entry_with_key(values: HashMap<String, i64>, key: String) -> i64 {
     *values.entry(key).or_insert_with_key(|k| k.len() as i64)
 }
 """,
+    "pf_while_let": """
+fn pf_while_let(mut xs: Vec<i64>) -> i64 {
+    let mut total = 0;
+    while let Some(x) = xs.pop() {
+        total += x;
+    }
+    total
+}
+""",
 }
 
 
@@ -331,3 +340,20 @@ def test_native_entry_combinators(native_ns):
     assert native_ns["pf_entry_modify_default"]({}, "a") == 0
     assert native_ns["pf_entry_modify_default"]({"a": 5}, "a") == 6
     assert native_ns["pf_entry_with_key"]({}, "abc") == 3
+
+
+# ---------------------------------------------------------------------------
+# while let
+# ---------------------------------------------------------------------------
+
+
+def test_python_while_let():
+    ns = _python_ns(SOURCES["pf_while_let"])
+    assert ns["pf_while_let"]([1, 2, 3]) == 6
+    assert ns["pf_while_let"]([]) == 0
+
+
+@pytest.mark.native
+def test_native_while_let(native_ns):
+    assert native_ns["pf_while_let"]([1, 2, 3]) == 6
+    assert native_ns["pf_while_let"]([]) == 0

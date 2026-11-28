@@ -401,7 +401,7 @@ def test_interop_wire_formats_and_manifest():
     translated = it.pyinterop_error_translation("E004", "tool missing")
     assert translated["diagnostic"]["payload"] is None
     assert translated["attribution"] == "cpython-interop"
-    _expect("E003", lambda: it.pyinterop_error_translation("E009", "bad"))
+    _expect("E003", lambda: it.pyinterop_error_translation("E010", "bad"))
     manifest = it.pyinterop_extension_manifest(
         "native.mod", symbols=["add"], registry={"add": len}
     )
@@ -611,7 +611,7 @@ def test_runtime_assertions_panic_match_and_enum_codecs():
     _expect("E002", lambda: rt.pyruntime_assert_eq(1, 2))
     _expect("E002", lambda: rt.pyruntime_assert_ne(1, 1))
     _expect("E002", lambda: rt.pyruntime_panic("boom"))
-    _expect("E003", lambda: rt.pyruntime_panic("boom", code="E009"))
+    _expect("E003", lambda: rt.pyruntime_panic("boom", code="E010"))
     coverage = rt.pyruntime_match_exhaustiveness(["A"], variants=["A", "B"])
     assert not coverage["exhaustive"] and coverage["missing"] == ["B"]
     assert rt.pyruntime_match_exhaustiveness(["A"], wildcard=True)["exhaustive"]

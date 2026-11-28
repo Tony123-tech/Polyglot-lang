@@ -1032,6 +1032,23 @@ class _Lowerer:
                 span=_span(node),
                 meta={"loop": "while"},
             )
+        if isinstance(node, ast.WhileLet):
+            value = self._lower_expr(node.value, env)
+            local = dict(env)
+            for name in _pattern_names(node.pattern):
+                local[name] = UNKNOWN_TYPE
+            body = self._lower_block(node.body, local)
+            return HirExpr(
+                "loop",
+                UNIT_TYPE,
+                args=(value, body),
+                span=_span(node),
+                meta={
+                    "loop": "while_let",
+                    "pattern": _pattern_repr(node.pattern),
+                    "bindings": _pattern_names(node.pattern),
+                },
+            )
         if isinstance(node, ast.For):
             iterable = self._lower_expr(node.iter, env)
             local = dict(env)

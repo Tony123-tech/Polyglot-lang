@@ -21,7 +21,7 @@ polyglot visualizer --host 0.0.0.0   # only on a trusted network
 | Monomorphization summary | Chips such as `Box → Box_i64` and `identity → identity_i64`; click a chip to jump to the concrete declaration. |
 | AST | Collapsible tree with color-coded categories: functions, structs, enums, impl blocks, generics, types, patterns, literals, statements, and expressions. Click a node to select its source span; double-click to expand or collapse. |
 | Monomorphization inspector | Side-by-side generic source and fully concrete output. Added and removed lines are tinted. |
-| Diagnostics | E001–E008, syntax errors, and backend failures. Selecting a diagnostic highlights its exact character span in the editor. |
+| Diagnostics | E001–E009, syntax errors, and backend failures. Selecting a diagnostic highlights its exact character span in the editor. |
 | Python backend | Console output, compile time, run time, peak RSS, exit code, and return value. |
 | Native backend | The same metrics from the Rust + PyO3 extension. |
 
