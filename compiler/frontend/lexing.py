@@ -17,7 +17,6 @@ from typing import Any, Final, NoReturn
 from compiler.core.lexer import (
     KEYWORDS,
     SIMPLE_ESCAPES,
-    Lexer,
     LexError,
     Token,
     TokenType,
@@ -35,6 +34,12 @@ from compiler.frontend.lexeme import (
 )
 from compiler.frontend.lexeme import (
     token_end as _token_end_char_offset,
+)
+from compiler.frontend.lexer_recovery import (
+    RecoveringLexer,
+    RecoveryLexError,
+    dispatch_one,
+    recovery_stop,
 )
 
 __all__ = [
@@ -194,59 +199,6 @@ def _records(source: str) -> list[dict[str, Any]]:
 def _normalize(source: str) -> str:
     """Collapse CRLF and lone CR line endings to LF."""
     return source.replace("\r\n", "\n").replace("\r", "\n")
-
-
-class _LexFailure(Exception):
-    """Catchable, located form of a lexer error used by validation."""
-
-    def __init__(self, message: str, line: int, col: int):
-        super().__init__(message)
-        self.message = message
-        self.line = line
-        self.col = col
-
-
-class _RecoveringLexer(Lexer):
-    """Real lexer whose ``error`` reports failures as values."""
-
-    def error(  # type: ignore[override]
-        self, msg: str, line: int | None = None, col: int | None = None
-    ) -> NoReturn:
-        raise _LexFailure(
-            msg, self.line if line is None else line, self.col if col is None else col
-        )
-
-
-def _dispatch_one(lexer: Lexer) -> None:
-    """Run exactly one token dispatch step of ``Lexer.lex``."""
-    line, col, pos = lexer.line, lexer.col, lexer.i
-    ch = lexer.peek()
-    if ch == "r" and lexer._is_raw_string_start():
-        lexer.lex_raw_string(line, col, pos)
-    elif lexer.src.startswith('"""', pos):
-        lexer.lex_multiline_string(line, col, pos)
-    elif ch == '"':
-        lexer.lex_string(line, col, pos)
-    elif ch == "'":
-        lexer.lex_quote(line, col, pos)
-    elif ch.isalpha() or ch == "_":
-        lexer.lex_ident(line, col, pos)
-    elif ch.isdigit():
-        lexer.lex_number(line, col, pos)
-    elif lexer.lex_operator(line, col, pos):
-        return
-    else:
-        raise _LexFailure(f"unexpected character {ch!r}", line, col)
-
-
-def _recovery_stop(source: str, start: int) -> int:
-    """First newline, semicolon or brace at or after *start*."""
-    candidates = [
-        found
-        for found in (source.find(mark, start + 1) for mark in ("\n", ";", "}"))
-        if found >= 0
-    ]
-    return min(candidates) if candidates else len(source)
 
 
 def _problem_kind(source: str, start: int) -> str:
@@ -893,12 +845,12 @@ def lex_token_distance(source: str, first: str, second: str) -> int | None:
 def lex_validate_source(source: str) -> list[dict]:
     """Collect lexical diagnostics with recovery, without raising for source errors."""
     text = _require_source(source)
-    lexer = _RecoveringLexer(text)
+    lexer = RecoveringLexer(text)
     diagnostics: list[dict] = []
     while True:
         try:
             lexer.skip_whitespace_and_comments()
-        except _LexFailure as error:
+        except RecoveryLexError as error:
             start = _offset_from_line_col(text, error.line, error.col)
             diagnostics.append(
                 _diagnostic(
@@ -916,9 +868,9 @@ def lex_validate_source(source: str) -> list[dict]:
         start = lexer.i
         line, col = lexer.line, lexer.col
         try:
-            _dispatch_one(lexer)
-        except _LexFailure as error:
-            stop = _recovery_stop(text, start)
+            dispatch_one(lexer)
+        except RecoveryLexError as error:
+            stop = recovery_stop(text, start)
             if stop <= start:
                 stop = min(len(text), start + 1)
             diagnostics.append(

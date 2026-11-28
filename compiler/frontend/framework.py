@@ -24,11 +24,11 @@ from __future__ import annotations
 
 import copy
 from dataclasses import fields, is_dataclass
-from typing import Any, Final, NoReturn
+from typing import Any, Final
 
 import compiler.core.ast_nodes as ast
 from api.visualizer import SourcePrinter, program_to_source
-from compiler.core.lexer import SIMPLE_ESCAPES, Lexer, Token, TokenType, lex
+from compiler.core.lexer import SIMPLE_ESCAPES, Token, TokenType, lex
 from compiler.core.parser import ParseError, Parser
 from compiler.frontend.lexeme import (
     char_literal_end as _char_literal_end,
@@ -41,6 +41,12 @@ from compiler.frontend.lexeme import (
 )
 from compiler.frontend.lexeme import (
     token_end as _token_end_char_offset,
+)
+from compiler.frontend.lexer_recovery import (
+    RecoveringLexer,
+    RecoveryLexError,
+    dispatch_one,
+    recovery_stop,
 )
 
 __all__ = [
@@ -684,59 +690,6 @@ def lex_raw_and_interpolated_strings(source: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-class _RecoveryLexError(Exception):
-    """Internal, catchable form of a lexer error."""
-
-    def __init__(self, message: str, line: int, col: int):
-        super().__init__(message)
-        self.message = message
-        self.line = line
-        self.col = col
-
-
-class _RecoveringLexer(Lexer):
-    """Lexer whose errors are recoverable values rather than raised LexError."""
-
-    def error(  # type: ignore[override]
-        self, msg: str, line: int | None = None, col: int | None = None
-    ) -> NoReturn:
-        raise _RecoveryLexError(
-            msg, self.line if line is None else line, self.col if col is None else col
-        )
-
-
-def _lex_one_token(lexer: Lexer) -> None:
-    """Run exactly the dispatch portion of ``Lexer.lex`` for one token."""
-    line, col, pos = lexer.line, lexer.col, lexer.i
-    ch = lexer.peek()
-    if ch == "r" and _raw_string_prefix(lexer.src, pos) is not None:
-        lexer.lex_raw_string(line, col, pos)
-    elif lexer.src.startswith('"""', pos):
-        lexer.lex_multiline_string(line, col, pos)
-    elif ch == '"':
-        lexer.lex_string(line, col, pos)
-    elif ch == "'":
-        lexer.lex_quote(line, col, pos)
-    elif ch.isalpha() or ch == "_":
-        lexer.lex_ident(line, col, pos)
-    elif ch.isdigit():
-        lexer.lex_number(line, col, pos)
-    elif lexer.lex_operator(line, col, pos):
-        return
-    else:
-        raise _RecoveryLexError(f"unexpected character {ch!r}", line, col)
-
-
-def _recovery_stop(source: str, start: int) -> int:
-    """First statement-safe boundary at or after *start*."""
-    candidates = [
-        boundary
-        for boundary in (source.find(mark, start + 1) for mark in ("\n", ";", "}"))
-        if boundary >= 0
-    ]
-    return min(candidates) if candidates else len(source)
-
-
 def _unterminated_kind(source: str, start: int) -> str:
     if source.startswith("/*", start):
         return "COMMENT"
@@ -755,13 +708,13 @@ def lex_recover_unterminated_token(source: str) -> dict[str, Any]:
     covering the malformed text is emitted, and lexing resumes at the next
     newline, semicolon or closing brace so later statements still tokenize.
     """
-    lexer = _RecoveringLexer(source)
+    lexer = RecoveringLexer(source)
     tokens: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]] = []
     while True:
         try:
             lexer.skip_whitespace_and_comments()
-        except _RecoveryLexError as error:
+        except RecoveryLexError as error:
             start = _line_col_to_offset(source, error.line, error.col)
             lexer.i, lexer.line, lexer.col = start, error.line, error.col
             diagnostics.append(
@@ -774,7 +727,7 @@ def lex_recover_unterminated_token(source: str) -> dict[str, Any]:
                     kind=_unterminated_kind(source, start),
                 )
             )
-            stop = _recovery_stop(source, start)
+            stop = recovery_stop(source, start)
             if stop <= start:
                 stop = min(len(source), start + 1)
             while lexer.i < stop:
@@ -786,9 +739,9 @@ def lex_recover_unterminated_token(source: str) -> dict[str, Any]:
         start = lexer.i
         line, col = lexer.line, lexer.col
         try:
-            _lex_one_token(lexer)
-        except _RecoveryLexError as error:
-            stop = _recovery_stop(source, start)
+            dispatch_one(lexer)
+        except RecoveryLexError as error:
+            stop = recovery_stop(source, start)
             if stop <= start:
                 stop = min(len(source), start + 1)
             kind = _unterminated_kind(source, start)

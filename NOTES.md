@@ -2724,6 +2724,14 @@ scanned to end of file — and both are on the stricter contract now. The same
 round made `api.visualizer.line_col_to_offset` public and deleted the
 byte-identical `_offset_for_line_col` from `api/visualizer_server.py`.
 
+Second batch merged: the recovery machinery (`RecoveringLexer`,
+`RecoveryLexError`, `dispatch_one`, `recovery_stop`) moved to
+`compiler/frontend/lexer_recovery.py`. The two copies differed only in the
+exception class they raised, so the class is shared and both modules catch it.
+That leaves one block between `lexing.py` and `framework.py` — the eight-line
+recovery loop, whose per-error payload differs (`_byte_offset` records vs
+`_make_record`) — and it is left alone deliberately.
+
 ## The incremental-rebuild test was timing a warm scope
 
 **Symptom:** `pytest -q` failed
